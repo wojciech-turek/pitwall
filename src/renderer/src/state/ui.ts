@@ -13,6 +13,7 @@ export type DialogState =
   | { type: 'archive'; sessionId: string }
   | { type: 'subproject-settings'; subProjectId: string }
   | { type: 'settings' }
+  | { type: 'update' }
   | { type: 'discard-file'; sessionId: string; tabId: string; name: string }
 
 export interface UiState {

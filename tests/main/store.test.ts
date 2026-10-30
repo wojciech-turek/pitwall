@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtemp, rm, readdir, writeFile, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { Store, newId } from '../../src/main/store'
+import { Store, newId, settingsFrom } from '../../src/main/store'
 import { DEFAULT_SETTINGS, type Project } from '@shared/types'
 
 let dir: string
@@ -43,9 +43,16 @@ describe('Store', () => {
 
   test('settings persist', async () => {
     const s = await Store.open(f)
-    await s.update((d) => { d.settings = { monoFont: 'Menlo', monoFontSize: 15 } })
+    await s.update((d) => { d.settings = { monoFont: 'Menlo', monoFontSize: 15, checkForUpdates: false } })
     const s2 = await Store.open(f)
-    expect(s2.state.settings).toEqual({ monoFont: 'Menlo', monoFontSize: 15 })
+    expect(s2.state.settings).toEqual({ monoFont: 'Menlo', monoFontSize: 15, checkForUpdates: false })
+  })
+
+  test('a state file from before the update check means checking is on', async () => {
+    await writeFile(f, JSON.stringify({ version: 1, projects: [], subProjects: [], sessions: [], settings: { monoFont: 'Menlo', monoFontSize: 15 } }))
+    const s = await Store.open(f)
+    expect(s.state.settings).toEqual({ monoFont: 'Menlo', monoFontSize: 15, checkForUpdates: true })
+    expect(DEFAULT_SETTINGS.checkForUpdates).toBe(true)
   })
 
   test('corrupt file falls back to .bak', async () => {
@@ -111,4 +118,27 @@ test('newId format', () => {
   expect(newId('s')).toMatch(/^s_[a-z0-9]{8}$/)
   expect(newId('sp')).toMatch(/^sp_[a-z0-9]{8}$/)
   expect(newId('p')).not.toBe(newId('p'))
+})
+
+describe('settingsFrom (what the renderer may save)', () => {
+  const current = { monoFont: 'Menlo', monoFontSize: 15, checkForUpdates: false }
+
+  test('takes valid fields, trimming and clamping', () => {
+    expect(settingsFrom({ monoFont: ' Iosevka ', monoFontSize: 40.4, checkForUpdates: true }, current))
+      .toEqual({ monoFont: 'Iosevka', monoFontSize: 32, checkForUpdates: true })
+    expect(settingsFrom({ monoFont: 'Iosevka', monoFontSize: 2, checkForUpdates: false }, DEFAULT_SETTINGS))
+      .toEqual({ monoFont: 'Iosevka', monoFontSize: 8, checkForUpdates: false })
+  })
+
+  test('saving fonts alone keeps the update setting', () => {
+    expect(settingsFrom({ monoFont: 'Iosevka', monoFontSize: 14 }, current).checkForUpdates).toBe(false)
+    expect(settingsFrom({ monoFont: 'Iosevka', monoFontSize: 14, checkForUpdates: 'no' }, current).checkForUpdates).toBe(false)
+    expect(settingsFrom({ monoFont: 'Iosevka', monoFontSize: 14 }, { monoFont: 'x', monoFontSize: 13 } as never).checkForUpdates).toBe(true)
+  })
+
+  test('invalid fonts fall back to the defaults', () => {
+    expect(settingsFrom(null, current)).toEqual({ ...DEFAULT_SETTINGS, checkForUpdates: false })
+    expect(settingsFrom({ monoFont: '   ', monoFontSize: 'big' }, current))
+      .toEqual({ monoFont: DEFAULT_SETTINGS.monoFont, monoFontSize: DEFAULT_SETTINGS.monoFontSize, checkForUpdates: false })
+  })
 })

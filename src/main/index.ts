@@ -18,7 +18,9 @@ import { KeyedMutex } from './sessions/mutex'
 import { resolveShellEnv } from './shell-env'
 import { Store } from './store'
 import { Tmux } from './tmux'
+import { releasesUrl, UpdateChecker } from './updates'
 import { UsageTracker } from './usage'
+import { APP_VERSION } from '@shared/version'
 
 // A dev build is unmistakable: its own name, and below its own Dock icon.
 const DEV = !app.isPackaged
@@ -39,6 +41,7 @@ let disposeIpc: (() => void) | null = null
 let disposeChanges: (() => void) | null = null
 let disposePr: (() => void) | null = null
 let disposeUsage: (() => void) | null = null
+let disposeUpdates: (() => void) | null = null
 
 const send = (channel: string, ...args: unknown[]): void => {
   if (win && !win.isDestroyed()) win.webContents.send(channel, ...args)
@@ -162,8 +165,19 @@ async function bootstrap(): Promise<void> {
   await usage.load()
   usage.start()
   disposeUsage = () => usage.stop()
+  // A dev build looks for releases only when pointed at a feed (PITWALL_RELEASES_URL).
+  const updates = new UpdateChecker({
+    current: APP_VERSION,
+    url: releasesUrl(process.env, DEV),
+    fetch: (url, init) => fetch(url, init),
+    now: Date.now,
+    timers: { setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (t) => clearTimeout(t as NodeJS.Timeout) },
+    enabled: () => store.state.settings.checkForUpdates !== false
+  })
+  updates.start()
+  disposeUpdates = () => updates.stop()
   disposeIpc = registerIpc({
-    manager: mgr, changes, store, git, tmux, projects, bridge, paths, exec, env, home, mutex, usage, send, dev: DEV,
+    manager: mgr, changes, store, git, tmux, projects, bridge, paths, exec, env, home, mutex, usage, updates, send, dev: DEV,
     onViewing: (ids) => {
       visibleIds = ids
       mgr.setViewing(ids, win?.isFocused() ?? false)
@@ -211,6 +225,8 @@ if (!isPrimaryInstance) {
     disposePr = null
     disposeUsage?.()
     disposeUsage = null
+    disposeUpdates?.()
+    disposeUpdates = null
     manager?.dispose()
   })
 

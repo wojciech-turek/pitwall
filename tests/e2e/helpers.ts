@@ -44,6 +44,8 @@ export async function makeE2eEnv(): Promise<E2eEnv> {
     PITWALL_SSH_DIR: sshDir,
     PITWALL_TEST_PICK_FOLDER: repo.root,
     PITWALL_DISABLE_NOTIFICATIONS: '1',
+    // Never ask the real GitHub for releases (a packaged app would); updates.spec points this at its own server.
+    PITWALL_RELEASES_URL: '',
     // Never chain the real user's status line into test sessions.
     CLAUDE_CONFIG_DIR: join(tmp, 'claude-config'),
     STUB_CLAUDE_LOG: join(tmp, 'claude.log')

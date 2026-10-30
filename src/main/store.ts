@@ -1,7 +1,7 @@
 import { randomInt } from 'node:crypto'
 import { copyFile, mkdir, open, readFile, rename } from 'node:fs/promises'
 import { dirname } from 'node:path'
-import { DEFAULT_SETTINGS, type PersistedState } from '@shared/types'
+import { DEFAULT_SETTINGS, type AppSettings, type PersistedState } from '@shared/types'
 
 function emptyState(): PersistedState {
   return { version: 1, projects: [], subProjects: [], sessions: [], settings: { ...DEFAULT_SETTINGS } }
@@ -10,13 +10,28 @@ function emptyState(): PersistedState {
 function parseState(text: string): PersistedState {
   const raw = JSON.parse(text)
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('state is not an object')
+  const settings = { ...DEFAULT_SETTINGS, ...(raw.settings ?? {}) }
   return {
     version: 1,
     projects: Array.isArray(raw.projects) ? raw.projects : [],
     subProjects: Array.isArray(raw.subProjects) ? raw.subProjects : [],
     sessions: Array.isArray(raw.sessions) ? raw.sessions : [],
-    settings: { ...DEFAULT_SETTINGS, ...(raw.settings ?? {}) }
+    // A state file from before the update check has no checkForUpdates: checking is on.
+    settings: { ...settings, checkForUpdates: settings.checkForUpdates !== false }
   }
+}
+
+/**
+ * Settings the renderer asked to save, made valid. A field it left out or got wrong keeps the current value
+ * (fonts: the default), so saving the fonts never turns update checks back on or off.
+ */
+export function settingsFrom(input: unknown, current: AppSettings): AppSettings {
+  const s = input && typeof input === 'object' ? (input as Record<string, unknown>) : {}
+  const monoFont = typeof s.monoFont === 'string' && s.monoFont.trim() ? s.monoFont.trim() : DEFAULT_SETTINGS.monoFont
+  const size = Number(s.monoFontSize)
+  const monoFontSize = Number.isFinite(size) ? Math.min(32, Math.max(8, Math.round(size))) : DEFAULT_SETTINGS.monoFontSize
+  const checkForUpdates = typeof s.checkForUpdates === 'boolean' ? s.checkForUpdates : current.checkForUpdates !== false
+  return { monoFont, monoFontSize, checkForUpdates }
 }
 
 async function tryLoad(file: string): Promise<PersistedState | 'missing' | 'corrupt'> {

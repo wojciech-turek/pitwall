@@ -14,10 +14,15 @@ export interface Session {
   worktreePath?: string; branch?: string; branchCreatedByPitwall: boolean; baseBranch?: string; baseCommit?: string
   createdAt: number; lastViewedAt: number; archivedAt?: number; lastMessage?: string; pr?: PrInfo
 }
-export interface AppSettings { monoFont: string; monoFontSize: number }
+export interface AppSettings {
+  monoFont: string; monoFontSize: number
+  /** Look for newer releases on GitHub (at launch, then once a day). */
+  checkForUpdates: boolean
+}
 export const DEFAULT_SETTINGS: AppSettings = {
   monoFont: '"SF Mono","JetBrains Mono",Menlo,monospace',
-  monoFontSize: 13
+  monoFontSize: 13,
+  checkForUpdates: true
 }
 export interface PersistedState {
   version: 1; projects: Project[]; subProjects: SubProject[]; sessions: Session[]; settings: AppSettings
@@ -53,6 +58,9 @@ export interface GhAccount { login: string; active: boolean; ok: boolean }
 export interface UsageWindow { usedPercentage: number; /** ms */ resetsAt: number }
 export interface ClaudeUsage { fiveHour?: UsageWindow; sevenDay?: UsageWindow; /** When Claude reported it (ms). */ updatedAt: number }
 export interface RepoIdentity { sshCommand?: string; name?: string; email?: string }
+/** A published release. `notes` is untrusted Markdown from GitHub: never render it as HTML. */
+export interface ReleaseInfo { version: string; name: string; notes: string; url: string; publishedAt: number }
+export interface UpdateState { current: string; checkedAt: number | null; newer: ReleaseInfo[] /* newest first, strictly newer than current */ }
 
 export type StartStep = 'identity' | 'worktree' | 'files' | 'tmux' | 'claude'
 export interface StartProgress { requestId: string; step: StartStep; state: 'running' | 'done' | 'failed' | 'warning'; message?: string }

@@ -1,6 +1,6 @@
 import type {
   AppSettings, AppSnapshot, ArchiveCheck, ArchiveResult, ChangedFile, ClaudeUsage, EnvVar, FileContent, FileEntry, GhAccount, GitIdentity, NewSessionDefaults, NewSessionInput, Project, RepoIdentity,
-  StartProgress, StartResult, SubProject, TermKind
+  StartProgress, StartResult, SubProject, TermKind, UpdateState
 } from './types'
 
 export interface ProjectInput { name: string; identity: GitIdentity; extraEnv: EnvVar[] }
@@ -56,6 +56,11 @@ export interface PitwallApi {
   /** Build version, and whether this is a dev (unpackaged) run. */
   appInfo(): Promise<{ version: string; dev: boolean }>
   onUsage(cb: (u: ClaudeUsage | null) => void): () => void
+  /** What the last update check found (nothing until one succeeds). */
+  getUpdateState(): Promise<UpdateState>
+  /** Checks GitHub now, even with automatic checks off; never fails (a failed check leaves checkedAt as it was). */
+  checkForUpdates(): Promise<UpdateState>
+  onUpdateState(cb: (s: UpdateState) => void): () => void
   onMenuCommand(cb: (c: MenuCommand) => void): () => void
   /** Absolute path of a dropped file ('' if it has none). Synchronous, preload-only. */
   pathForFile(file: File): string
@@ -98,6 +103,8 @@ export const IPC = {
   setSettings: 'pitwall:setSettings',
   getUsage: 'pitwall:getUsage',
   appInfo: 'pitwall:appInfo',
+  getUpdateState: 'pitwall:getUpdateState',
+  checkForUpdates: 'pitwall:checkForUpdates',
   // main -> renderer
   snapshot: 'pitwall:snapshot',
   startProgress: 'pitwall:startProgress',
@@ -105,5 +112,6 @@ export const IPC = {
   termExit: 'pitwall:termExit',
   focusSession: 'pitwall:focusSession',
   menuCommand: 'pitwall:menuCommand',
-  usage: 'pitwall:usage'
+  usage: 'pitwall:usage',
+  updateState: 'pitwall:updateState'
 } as const

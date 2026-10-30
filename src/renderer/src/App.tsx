@@ -13,6 +13,7 @@ import NewSessionDialog from './components/NewSessionDialog'
 import RightPanel from './components/RightPanel'
 import SubProjectSettingsDialog from './components/dialogs/SubProjectSettingsDialog'
 import SettingsDialog from './components/dialogs/SettingsDialog'
+import UpdateDialog from './components/dialogs/UpdateDialog'
 import { useMenuCommands } from './state/menuCommands'
 import { usePruneTerminals } from './components/MainArea'
 import PaneLayout from './components/PaneLayout'
@@ -29,6 +30,7 @@ function DialogHost(): React.JSX.Element | null {
     case 'archive': return <ArchiveDialog key={dialog.sessionId} sessionId={dialog.sessionId} />
     case 'subproject-settings': return <SubProjectSettingsDialog key={dialog.subProjectId} subProjectId={dialog.subProjectId} />
     case 'settings': return <SettingsDialog />
+    case 'update': return <UpdateDialog />
   }
 }
 

@@ -1,11 +1,11 @@
 import { ipcMain, shell } from 'electron'
 import { IPC } from '@shared/api'
-import { DEFAULT_SETTINGS, type AppSettings, type NewSessionInput, type TermKind } from '@shared/types'
+import type { NewSessionInput, TermKind } from '@shared/types'
 import type { ChangesService } from './changes'
 import type { Exec } from './exec'
 import { formatAgentReference, listSessionFiles, readForEditor, writeFromEditor } from './files'
 import type { GitClient } from './git'
-import type { Store } from './store'
+import { settingsFrom, type Store } from './store'
 import { claudeTmuxName, type Tmux } from './tmux'
 import { listGhAccounts, listSshKeys } from './identity'
 import type { AppPaths } from './paths'
@@ -15,6 +15,7 @@ import { archiveSession, checkArchive } from './sessions/archive'
 import type { SessionManager } from './sessions/manager'
 import type { KeyedMutex } from './sessions/mutex'
 import { APP_VERSION } from '@shared/version'
+import type { UpdateChecker } from './updates'
 import type { UsageTracker } from './usage'
 
 export interface IpcDeps {
@@ -31,6 +32,7 @@ export interface IpcDeps {
   home: string
   mutex: KeyedMutex
   usage: Pick<UsageTracker, 'current' | 'onChange'>
+  updates: Pick<UpdateChecker, 'state' | 'checkNow' | 'onChange'>
   /** True for an unpackaged (dev) run. */
   dev: boolean
   /** Sends to the renderer; a no-op when there is no window. */
@@ -52,6 +54,8 @@ export function registerIpc(d: IpcDeps): () => void {
   handle(IPC.getSnapshot, () => manager.snapshot())
   handle(IPC.getUsage, () => d.usage.current())
   handle(IPC.appInfo, () => ({ version: APP_VERSION, dev: d.dev }))
+  handle(IPC.getUpdateState, () => d.updates.state())
+  handle(IPC.checkForUpdates, () => d.updates.checkNow())
   handle(IPC.listSshKeys, () => listSshKeys(paths.sshDir))
   handle(IPC.listGhAccounts, () => listGhAccounts(paths.ghBin, exec, env))
   handle(IPC.createProject, (i: Parameters<ProjectService['createProject']>[0]) => projects.createProject(i))
@@ -105,12 +109,7 @@ export function registerIpc(d: IpcDeps): () => void {
       return { ok: false, message: "Cursor isn't installed." }
     }
   })
-  handle(IPC.setSettings, (s: AppSettings) => {
-    const monoFont = typeof s?.monoFont === 'string' && s.monoFont.trim() ? s.monoFont.trim() : DEFAULT_SETTINGS.monoFont
-    const size = Number(s?.monoFontSize)
-    const monoFontSize = Number.isFinite(size) ? Math.min(32, Math.max(8, Math.round(size))) : DEFAULT_SETTINGS.monoFontSize
-    return store.update((d) => { d.settings = { monoFont, monoFontSize } })
-  })
+  handle(IPC.setSettings, (s: unknown) => store.update((d) => { d.settings = settingsFrom(s, d.settings) }))
 
   on(IPC.setViewing, (ids: unknown) =>
     d.onViewing(Array.isArray(ids) && ids.every((x) => typeof x === 'string') ? (ids as string[]) : [])
@@ -121,9 +120,11 @@ export function registerIpc(d: IpcDeps): () => void {
 
   const unsub = manager.onSnapshot((s) => send(IPC.snapshot, s))
   const unsubUsage = d.usage.onChange((u) => send(IPC.usage, u))
+  const unsubUpdates = d.updates.onChange((u) => send(IPC.updateState, u))
   return () => {
     unsub()
     unsubUsage()
+    unsubUpdates()
     for (const ch of Object.values(IPC)) {
       ipcMain.removeHandler(ch)
       ipcMain.removeAllListeners(ch)

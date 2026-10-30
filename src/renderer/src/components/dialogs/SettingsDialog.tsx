@@ -5,6 +5,7 @@ import { useUi } from '../../state/ui'
 import { useToast } from '../../state/toast'
 import { cleanIpcError } from '../../state/errors'
 import { useAppInfo } from '../../state/appInfo'
+import { setUpdateState } from '../../state/updates'
 
 export default function SettingsDialog(): React.JSX.Element | null {
   const snap = useSnapshot()
@@ -13,14 +14,38 @@ export default function SettingsDialog(): React.JSX.Element | null {
   const info = useAppInfo()
   const [font, setFont] = useState(snap?.settings.monoFont ?? '')
   const [size, setSize] = useState(String(snap?.settings.monoFontSize ?? 13))
+  const [checkUpdates, setCheckUpdates] = useState(snap?.settings.checkForUpdates !== false)
+  const [checking, setChecking] = useState(false)
+  const [checkResult, setCheckResult] = useState('')
   if (!snap) return null
   const save = async (): Promise<void> => {
     const n = Number(size)
     try {
-      await window.pitwall.setSettings({ monoFont: font.trim() || snap.settings.monoFont, monoFontSize: Number.isFinite(n) && n > 0 ? n : snap.settings.monoFontSize })
+      await window.pitwall.setSettings({
+        monoFont: font.trim() || snap.settings.monoFont,
+        monoFontSize: Number.isFinite(n) && n > 0 ? n : snap.settings.monoFontSize,
+        checkForUpdates: checkUpdates
+      })
       closeDialog()
     } catch (e) {
       toast(cleanIpcError(e))
+    }
+  }
+  const checkNow = async (): Promise<void> => {
+    setChecking(true)
+    setCheckResult('')
+    try {
+      const before = await window.pitwall.getUpdateState()
+      const after = await window.pitwall.checkForUpdates()
+      setUpdateState(after)
+      // A failed check leaves checkedAt as it was.
+      if (after.checkedAt === null || after.checkedAt === before.checkedAt) setCheckResult("Couldn't reach GitHub.")
+      else if (after.newer.length > 0) setCheckResult(`Pitwall ${after.newer[0].version} is available.`)
+      else setCheckResult("You're up to date.")
+    } catch {
+      setCheckResult("Couldn't reach GitHub.")
+    } finally {
+      setChecking(false)
     }
   }
   return (
@@ -37,6 +62,23 @@ export default function SettingsDialog(): React.JSX.Element | null {
           </label>
         </div>
         <p className="muted-text help">Applies to terminals, the file editor and diffs.</p>
+        <div className="settings-updates">
+          <label className="check-row">
+            <input type="checkbox" data-testid="setting-check-updates" checked={checkUpdates}
+              onChange={(e) => setCheckUpdates(e.target.checked)} />
+            Check for updates on GitHub
+          </label>
+          <p className="settings-note">Pitwall asks GitHub for its list of releases when it starts and once a day. Nothing about you is sent.</p>
+          <div className="check-now-row">
+            <button type="button" className="btn small" data-testid="check-updates-now" disabled={checking}
+              onClick={() => { void checkNow() }}>
+              Check now
+            </button>
+            <span className="check-now-result" data-testid="check-updates-result" role="status">
+              {checking ? 'Checking…' : checkResult}
+            </span>
+          </div>
+        </div>
         {info && (
           <p className="muted-text help" data-testid="settings-version" style={{ marginTop: 12 }}>
             Pitwall {info.version}{info.dev ? ' (dev build)' : ''}

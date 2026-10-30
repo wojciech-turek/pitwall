@@ -26,6 +26,9 @@ body { background: var(--bg-app); color: var(--text); font-family: var(--font-ui
 .count { display: inline-flex; align-items: center; gap: 6px; }
 .count.zero { opacity: .4; }
 .count-dot { width: 7px; height: 7px; border-radius: 50%; }
+.titlebar-right { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.update-pill { -webkit-app-region: no-drag; flex: none; height: 22px; padding: 0 10px; border-radius: 11px; border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); font: inherit; font-size: 11.5px; font-weight: 600; white-space: nowrap; cursor: pointer; }
+.update-pill:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); border-color: var(--accent); }
 
 /* ---------- sidebar ---------- */
 .sidebar { display: flex; flex-direction: column; min-height: 0; }
@@ -288,6 +291,43 @@ body.pane-resizing-column, body.pane-resizing-column * { cursor: row-resize !imp
 .btn.header-open:hover { color: var(--text); background: var(--bg-hover); }
 .muted-text.help { word-break: normal; line-height: 1.5; margin: 0; }
 .dialog .form + .dialog-actions { margin-top: 16px; }
+
+/* ---------- settings: updates ---------- */
+.settings-updates { display: flex; flex-direction: column; gap: 6px; padding-top: 12px; border-top: 1px solid var(--border); }
+.form label.check-row { flex-direction: row; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text); cursor: pointer; }
+input[type="checkbox"] { flex: none; width: 14px; height: 14px; margin: 0; padding: 0; accent-color: var(--accent); cursor: pointer; }
+.settings-note { margin: 0 0 0 22px; font-size: 11.5px; line-height: 1.45; color: var(--text-faint); }
+.check-now-row { display: flex; align-items: center; gap: 10px; margin: 4px 0 0 22px; }
+.check-now-row .btn.small { align-self: center; }
+.check-now-result { font-size: 12px; color: var(--text-muted); }
+
+/* ---------- update dialog ---------- */
+.update-current { margin: -6px 0 12px; font-size: 12.5px; color: var(--text-muted); }
+.update-releases { max-height: min(52vh, 460px); overflow-y: auto; background: var(--bg-app); border: 1px solid var(--border); border-radius: 8px; }
+.update-release { padding: 12px 14px 14px; }
+.update-release + .update-release { border-top: 1px solid var(--border); }
+.update-release-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
+.update-release-version { font-family: var(--font-mono); font-size: 13px; font-weight: 600; color: var(--accent); }
+.update-release-date { font-size: 11.5px; color: var(--text-faint); }
+.update-release-empty { margin: 0; font-size: 12px; color: var(--text-faint); }
+.update-howto { margin: 12px 0 0; font-size: 12px; line-height: 1.5; color: var(--text-muted); }
+
+/* ---------- markdown (release notes) ---------- */
+.markdown { font-size: 12.5px; line-height: 1.55; color: var(--text); overflow-wrap: anywhere; }
+.markdown > :first-child { margin-top: 0; }
+.markdown > :last-child { margin-bottom: 0; }
+.markdown p { margin: 0 0 8px; }
+.markdown h3, .markdown h4 { margin: 14px 0 6px; font-size: 13px; font-weight: 600; }
+.markdown h5, .markdown h6 { margin: 14px 0 6px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); }
+.markdown ul, .markdown ol { margin: 0 0 8px; padding-left: 18px; }
+.markdown li { margin: 3px 0; }
+.markdown li::marker { color: var(--text-faint); }
+.markdown strong { font-weight: 600; }
+.markdown code { font-family: var(--font-mono); font-size: 11.5px; padding: 1px 4px; border-radius: 4px; background: var(--bg-elevated); }
+.markdown pre { margin: 0 0 8px; padding: 8px 10px; border-radius: 6px; background: var(--bg-elevated); overflow-x: auto; }
+.markdown pre code { padding: 0; background: none; white-space: pre; }
+.markdown a { color: var(--accent); text-decoration: none; }
+.markdown a:hover { text-decoration: underline; }
 
 /* ---------- hover card ---------- */
 .hover-card { position: fixed; z-index: 150; pointer-events: none; padding: 10px 12px; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.5); font-size: 12px; line-height: 1.45; }

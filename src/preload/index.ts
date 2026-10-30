@@ -64,6 +64,9 @@ const api: PitwallApi = {
   getUsage: () => ipcRenderer.invoke(IPC.getUsage),
   appInfo: () => ipcRenderer.invoke(IPC.appInfo),
   onUsage: (cb) => subscribe(IPC.usage, cb),
+  getUpdateState: () => ipcRenderer.invoke(IPC.getUpdateState),
+  checkForUpdates: () => ipcRenderer.invoke(IPC.checkForUpdates),
+  onUpdateState: (cb) => subscribe(IPC.updateState, cb),
   onMenuCommand: (cb) => subscribe(IPC.menuCommand, cb),
   pathForFile: (file) => {
     try {
