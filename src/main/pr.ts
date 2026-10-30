@@ -151,7 +151,9 @@ export class PrPoller {
       const t = d.sessions.find((x) => x.id === sessionId)
       if (t) t.pr = pr
     })
-    if (before && before.state !== 'MERGED' && pr.state === 'MERGED') {
+    // A muted project's PR badge still updates; it just doesn't notify.
+    const muted = store.state.projects.find((p) => p.id === sub.projectId)?.muted === true
+    if (before && before.state !== 'MERGED' && pr.state === 'MERGED' && !muted) {
       notifier.notify({ sessionId, title: `PR #${pr.number} merged`, body: `Archive "${s.title}"?` })
     }
   }

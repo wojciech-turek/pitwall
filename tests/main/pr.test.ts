@@ -70,7 +70,7 @@ describe('fetchPr', () => {
   })
 })
 
-function setup(o: { remote?: boolean; ghAccount?: string; pr?: Session['pr']; archived?: boolean } = {}) {
+function setup(o: { remote?: boolean; ghAccount?: string; pr?: Session['pr']; archived?: boolean; muted?: boolean } = {}) {
   const calls: { args: string[]; env?: Record<string, string> }[] = []
   let json: unknown[] = []
   const fakeExec = async (file: string, args: string[], opts?: { env?: Record<string, string> }) => {
@@ -84,7 +84,10 @@ function setup(o: { remote?: boolean; ghAccount?: string; pr?: Session['pr']; ar
     ...(o.pr && id === 's1' ? { pr: o.pr } : {}), ...(o.archived ? { archivedAt: 1 } : {})
   })
   const state = {
-    projects: [{ id: 'p', name: 'p', identity: { sshKeyPath: '', ghAccount: o.ghAccount ?? 'dev-work', gitName: '', gitEmail: '' }, extraEnv: [], createdAt: 0 }],
+    projects: [{
+      id: 'p', name: 'p', identity: { sshKeyPath: '', ghAccount: o.ghAccount ?? 'dev-work', gitName: '', gitEmail: '' }, extraEnv: [],
+      createdAt: 0, ...(o.muted ? { muted: true } : {})
+    }],
     subProjects: [{ id: 'sp', projectId: 'p', name: 'n', path: '/w', kind: 'repo', createdAt: 0 }],
     sessions: [mk('s1'), mk('s2')]
   } as unknown as PersistedState
@@ -180,6 +183,17 @@ describe('PrPoller', () => {
     await waitFor(async () => t2.state.sessions.every((s) => s.pr))
     t2.poller.stop()
     expect(t2.notes).toEqual([])
+  })
+
+  test('a muted project gets no "PR merged" notification, but its PR badge still updates', async () => {
+    const openPr = { number: 5, url: 'u', title: 'Ship it', state: 'OPEN' as const, checks: 'passing' as const, updatedAt: 1 }
+    const t = setup({ pr: openPr, muted: true })
+    t.setJson([{ number: 5, url: 'u', title: 'Ship it', state: 'MERGED', updatedAt: '2026-10-30T10:00:00Z', statusCheckRollup: [] }])
+    t.poller.start()
+    await waitFor(async () => t.state.sessions[0].pr?.state === 'MERGED')
+    await waitFor(async () => t.state.sessions[1].pr)
+    t.poller.stop()
+    expect(t.notes).toEqual([])
   })
 
   test('stop clears timers and subscription', async () => {
