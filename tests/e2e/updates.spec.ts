@@ -4,12 +4,13 @@ import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { join } from 'node:path'
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test'
-import { launchApp, makeE2eEnv, shot, type E2eEnv } from './helpers'
+import { WINDOWS } from '../helpers/processes'
+import { launchApp, makeE2eEnv, PACKAGED_EXE, shot, type E2eEnv } from './helpers'
 
 // Runs against the dev build, or the packaged app with PACKAGED=1. Never against the real GitHub: the app is pointed
 // at a local server that serves a releases list like GitHub's.
 const PACKAGED = process.env.PACKAGED === '1'
-const packagedExe = join(process.cwd(), 'release/mac-arm64/Pitwall.app/Contents/MacOS/Pitwall')
+const packagedExe = PACKAGED_EXE
 
 const CURRENT = (JSON.parse(readFileSync('package.json', 'utf8')) as { version: string }).version
 const [major, minor] = CURRENT.split('.').map(Number)
@@ -23,8 +24,11 @@ const NOTES = [
   SCRIPT_LINE, '',
   '<img src=x onerror="window.__pwned = true">'
 ].join('\r\n')
-const HOWTO = 'To update, download the DMG, quit Pitwall and drag the new app into Applications. ' +
-  'Your agents keep running and reconnect when you reopen it.'
+const HOWTO = WINDOWS
+  ? 'To update, download the setup .exe for your PC (x64, or arm64 for Windows on ARM), quit Pitwall and run it. ' +
+    'Updating stops running agents; they resume their conversations when you reopen Pitwall.'
+  : 'To update, download the DMG, quit Pitwall and drag the new app into Applications. ' +
+    'Your agents keep running and reconnect when you reopen it.'
 
 const release = (tag: string, o: Record<string, unknown>): Record<string, unknown> => ({
   tag_name: tag, name: tag, draft: false, prerelease: false, published_at: '2026-10-29T12:00:00Z',

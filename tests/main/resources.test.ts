@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { resolvePaths, type AppPaths } from '../../src/main/paths'
 import { installResources, resourcesDir } from '../../src/main/resources'
+import { WINDOWS } from '../helpers/processes'
 
 let tmp: string
 let paths: AppPaths
@@ -18,7 +19,7 @@ const launch = () => join(paths.binDir, 'pitwall-launch')
 describe('installResources', () => {
   test('installs scripts executable and the tmux config', async () => {
     await installResources(paths)
-    expect((await stat(launch())).mode & 0o777).toBe(0o755)
+    if (!WINDOWS) expect((await stat(launch())).mode & 0o777).toBe(0o755) // (no POSIX modes on Windows)
     expect(await readFile(launch(), 'utf8')).toBe(await readFile(join(resourcesDir(), 'bin', 'pitwall-launch'), 'utf8'))
     expect(await readFile(paths.tmuxConf, 'utf8')).toContain('prefix None')
   })
@@ -33,7 +34,8 @@ describe('installResources', () => {
     expect(after.mtimeMs).toBe(before.mtimeMs)
   })
 
-  test('a changed script is replaced by rename, never rewritten in place under a running reader', async () => {
+  // sh reads a running script as it goes; Windows runs no sh scripts (PowerShell reads a script whole first).
+  test.skipIf(WINDOWS)('a changed script is replaced by rename, never rewritten in place under a running reader', async () => {
     await installResources(paths)
     await writeFile(launch(), '#!/bin/sh\necho old version\n')
     const before = await stat(launch())

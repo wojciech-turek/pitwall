@@ -5,13 +5,15 @@ import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test'
 import { waitFor } from '../helpers/wait'
-import { launchApp, makeE2eEnv, paneText, SESSION_BACKEND, sessionIdOf, shot, tmux, type E2eEnv } from './helpers'
+import { WINDOWS } from '../helpers/processes'
+import { launchApp, makeE2eEnv, PACKAGED_EXE, paneText, SESSION_BACKEND, sessionIdOf, shot, tmux, type E2eEnv } from './helpers'
 
-// The app as the Dock/Finder starts it: minimal PATH, no LANG/LC_*, no CLAUDE* vars.
+// The app as the Dock/Finder starts it: minimal PATH, no LANG/LC_*, no CLAUDE* vars. (Windows starts apps with the
+// user's whole environment, so there it's a plain launch: the trust hint, one instance and the navigation guard.)
 // Runs against the dev build, or against the packaged app with PACKAGED=1 (the title matches `-g packaged`).
 const PACKAGED = process.env.PACKAGED === '1'
 const repoRoot = process.cwd()
-const packagedExe = join(repoRoot, 'release/mac-arm64/Pitwall.app/Contents/MacOS/Pitwall')
+const packagedExe = PACKAGED_EXE
 const TRUST_HINT = 'Claude hasn\'t reported in yet. If it\'s asking whether to trust this folder, choose ' +
   '"Yes, I trust this folder" — the default is "No, exit".'
 
@@ -28,8 +30,8 @@ test.afterAll(async () => {
 })
 
 function finderEnv(): Record<string, string> {
-  const env: Record<string, string> = { PATH: '/usr/bin:/bin:/usr/sbin:/sbin' }
-  for (const k of ['HOME', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR']) if (process.env[k]) env[k] = process.env[k]!
+  const env: Record<string, string> = WINDOWS ? { ...e.env } : { PATH: '/usr/bin:/bin:/usr/sbin:/sbin' }
+  if (!WINDOWS) for (const k of ['HOME', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR']) if (process.env[k]) env[k] = process.env[k]!
   for (const [k, v] of Object.entries(e.env)) if (k.startsWith('PITWALL_') || k.startsWith('STUB_')) env[k] = v
   env.STUB_CLAUDE_SILENT = '1' // like real Claude sitting on its folder-trust prompt: no hook fires
   env.STUB_CLAUDE_ENV_FILE = join(e.tmp, 'claude.env')
@@ -73,7 +75,7 @@ test('Finder-like launch (dev, or packaged with PACKAGED=1): start returns at on
   }
   // Whatever the backend: what Claude itself started with.
   const claudeEnv = await readFile(join(e.tmp, 'claude.env'), 'utf8')
-  expect(claudeEnv).toMatch(/^LANG=[A-Za-z_]+\.UTF-8$/m)
+  if (!WINDOWS) expect(claudeEnv).toMatch(/^LANG=[A-Za-z_]+\.UTF-8$/m) // (Windows: no LANG; the console is UTF-16)
   expect(claudeEnv).not.toMatch(/^(CLAUDECODE|CLAUDE_CODE_ENTRYPOINT|CLAUDE_PID|ELECTRON_RUN_AS_NODE)=/m)
 
   // I1: the trust hint after 20 s of silence, gone once Claude reports in.

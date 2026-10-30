@@ -5,6 +5,7 @@ import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { exec } from '../../src/main/exec'
 import { GitClient } from '../../src/main/git'
+import { forwardSlashes } from '../../src/main/hooks/settings'
 import { sessionDir } from '../../src/main/paths'
 import { KeyedMutex } from '../../src/main/sessions/mutex'
 import { prepareNewSession, startSession, writeSessionFiles, type StarterDeps } from '../../src/main/sessions/starter'
@@ -13,6 +14,7 @@ import type { SessionBackend } from '../../src/main/backend'
 import { claudeTmuxName } from '../../src/main/tmux'
 import type { NewSessionInput, Project, Session, StartProgress, SubProject } from '../../src/shared/types'
 import { makeTestEnv } from '../helpers/env'
+import { WINDOWS } from '../helpers/processes'
 import { makeRepo } from '../helpers/repo'
 import { waitFor } from '../helpers/wait'
 
@@ -82,7 +84,8 @@ const start = (i: NewSessionInput) => startSession(i, deps, (p) => progress.push
 const branchesOf = async (root: string, env: Record<string, string>) =>
   (await run('git', ['branch', '--format=%(refname:short)'], { cwd: root, env })).stdout.split('\n').filter(Boolean)
 
-describe('startSession', () => {
+// Sessions in tmux (macOS); on Windows the host runs them (tests/host/relaunch.test.ts, the e2e suite).
+describe.skipIf(WINDOWS)('startSession', () => {
   test('repo session happy path', async () => {
     const { r, sp } = await addRepo()
     const res = await start(input(sp))
@@ -322,7 +325,8 @@ describe('writeSessionFiles', () => {
   }
   const envSh = (s: Session) => readFile(join(sessionDir(t.paths, s.id), 'env.sh'), 'utf8')
 
-  test('hooks.json runs pitwall-statusline with the session folder', async () => {
+  // macOS's sh hooks (the platform's own; Windows' are below).
+  test.skipIf(WINDOWS)('hooks.json runs pitwall-statusline with the session folder', async () => {
     const s = await folderSession()
     await writeSessionFiles(s, deps)
     const settings = JSON.parse(await readFile(join(sessionDir(t.paths, s.id), 'hooks.json'), 'utf8'))
@@ -342,24 +346,25 @@ describe('writeSessionFiles', () => {
       expect(settings.hooks[e]).toEqual([{ hooks: [{
         type: 'command',
         command: 'C:/WINDOWS/System32/WindowsPowerShell/v1.0/powershell.exe',
-        args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', join(t.paths.binDir, 'pitwall-hook.ps1'),
-          join(dir, 'events.jsonl'), s.id],
+        args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', forwardSlashes(join(t.paths.binDir, 'pitwall-hook.ps1')),
+          forwardSlashes(join(dir, 'events.jsonl')), s.id],
         timeout: 10
       }] }])
     }
     expect(settings.statusLine).toEqual({
       type: 'command',
-      command: `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '${join(t.paths.binDir, 'pitwall-statusline.ps1')}' '${dir}'`,
+      command: `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '${forwardSlashes(join(t.paths.binDir, 'pitwall-statusline.ps1'))}' '${forwardSlashes(dir)}'`,
       padding: 0
     })
     const vars = JSON.parse(await readFile(join(dir, 'env.json'), 'utf8'))
     expect(vars.PITWALL_GIT_BASH).toBeUndefined() // no user status line to chain
-    // A user status line is chained in Git Bash when Claude Code would find one.
+    // A user status line is chained in Git Bash when Claude Code would find one (any program there stands in for it).
+    const bash = WINDOWS ? process.execPath : '/bin/sh'
     await writeFile(join(s.cwd, '.claude', 'settings.json'), JSON.stringify({ statusLine: { type: 'command', command: '~/sl.sh' } }))
-    deps = mkDeps({ platform: 'win32', env: { ...t.env, CLAUDE_CODE_GIT_BASH_PATH: '/bin/sh' } })
+    deps = mkDeps({ platform: 'win32', env: { ...t.env, CLAUDE_CODE_GIT_BASH_PATH: bash } })
     await writeSessionFiles(s, deps)
     expect(JSON.parse(await readFile(join(dir, 'env.json'), 'utf8'))).toMatchObject({
-      PITWALL_USER_STATUSLINE: '~/sl.sh', PITWALL_GIT_BASH: '/bin/sh'
+      PITWALL_USER_STATUSLINE: '~/sl.sh', PITWALL_GIT_BASH: bash
     })
   })
 

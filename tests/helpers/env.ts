@@ -6,6 +6,7 @@ import { resolvePaths, type AppPaths } from '../../src/main/paths'
 import { installResources } from '../../src/main/resources'
 import { Tmux } from '../../src/main/tmux'
 import { TmuxBackend } from '../../src/main/tmux-backend'
+import { WINDOWS } from './processes'
 import { tmuxSocketPath } from './tmux-socket'
 
 export { tmuxSocketPath }
@@ -56,8 +57,10 @@ export async function makeTestEnv(): Promise<{
     tmux,
     backend: new TmuxBackend(tmux, env),
     async cleanup() {
-      await tmux.killServer().catch(() => {})
-      await rm(tmuxSocketPath(socket, env), { force: true })
+      if (!WINDOWS) { // (no tmux there)
+        await tmux.killServer().catch(() => {})
+        await rm(tmuxSocketPath(socket, env), { force: true })
+      }
       await rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   }

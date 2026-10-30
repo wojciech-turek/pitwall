@@ -9,6 +9,7 @@ import { claudeTmuxName, Tmux } from '../../src/main/tmux'
 import { TmuxBackend } from '../../src/main/tmux-backend'
 import type { TermKind } from '../../src/shared/types'
 import { makeTestEnv, tmuxSocketPath } from '../helpers/env'
+import { WINDOWS } from '../helpers/processes'
 import { waitFor } from '../helpers/wait'
 
 let t: Awaited<ReturnType<typeof makeTestEnv>>
@@ -17,7 +18,9 @@ let data: string
 let exits: Array<[string, TermKind, number]>
 let inputs: Array<[string, TermKind, string]>
 
+// tmux (macOS). On Windows only the tests with a stand-in backend run (the app's host attaches asynchronously too).
 beforeEach(async () => {
+  if (WINDOWS) return
   t = await makeTestEnv()
   data = ''; exits = []; inputs = []
   await t.tmux.newSession({ name: claudeTmuxName('s1'), cwd: t.tmp, argv: ['cat'] })
@@ -28,9 +31,9 @@ beforeEach(async () => {
     onUserInput: (i, k, d) => { inputs.push([i, k, d]) }
   })
 })
-afterEach(async () => { bridge.closeAll(); await t.cleanup() })
+afterEach(async () => { bridge?.closeAll(); await t?.cleanup() })
 
-describe('PtyBridge', () => {
+describe.skipIf(WINDOWS)('PtyBridge', () => {
   test('open → write → data comes back', async () => {
     await bridge.open('s1', 'claude', 100, 30)
     bridge.write('s1', 'claude', 'ping\r')
@@ -85,7 +88,7 @@ describe('PtyBridge', () => {
   })
 })
 
-describe('PtyBridge waiting on ensureTarget', () => {
+describe.skipIf(WINDOWS)('PtyBridge waiting on ensureTarget', () => {
   // attachCommand runs right before pty.spawn (in TmuxBackend.attach), so recording it shows whether a pty was spawned.
   function spyBridge(ensureTarget: () => Promise<void>) {
     const attaches: string[] = []
@@ -207,7 +210,7 @@ describe('PtyBridge with a backend that attaches asynchronously', () => {
   })
 })
 
-describe('UTF-8 in a Finder-launched app', () => {
+describe.skipIf(WINDOWS)('UTF-8 in a Finder-launched app', () => {
   // Claude's TUI glyphs; a non-UTF-8 tmux client prints `A_ _ _ h_llo _` instead.
   const GLYPHS = 'A❯ ⏺ ⎿ héllo ❯'
   const FINDER = { PATH: '/usr/bin:/bin:/usr/sbin:/sbin', HOME: os.homedir() }

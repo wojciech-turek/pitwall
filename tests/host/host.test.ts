@@ -1,18 +1,16 @@
-import { execFile, spawn } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { existsSync, statSync } from 'node:fs'
 import { mkdir, readFile, rm, utimes, writeFile } from 'node:fs/promises'
 import * as net from 'node:net'
 import { join } from 'node:path'
-import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { hostKeyFile, hostLogFile, hostPidFile, hostSocketPath } from '../../src/host/paths'
 import { encodeData, encodeJson, PROTOCOL } from '../../src/host/protocol'
 import type { Attachment } from '../../src/main/backend'
 import { HostBackend } from '../../src/main/host-backend'
 import { alive, hostLaunch, hostPids, makeHostBackend, makeHostDirs, rawClient, stopHost } from '../helpers/host'
+import { residentKb, WINDOWS } from '../helpers/processes'
 import { waitFor } from '../helpers/wait'
-
-const run = promisify(execFile)
 
 // A stand-in agent: says it's ready and answers each line; `flood` writes as fast as the terminal takes it until
 // `stop`, then says how much it wrote.
@@ -197,7 +195,8 @@ describe('lifecycle', () => {
     expect(await hostPids(dataDir)).toEqual([])
   })
 
-  test('pidfile, log and an owner-only socket in the data dir', async () => {
+  // (Windows: a named pipe, not a file; its default ACL admits only this user.)
+  test.skipIf(WINDOWS)('pidfile, log and an owner-only socket in the data dir', async () => {
     const b = app()
     await startAgent(b, 'pw-f')
     expect(await pidFromFile()).toBe(b.hostPid)
@@ -209,7 +208,8 @@ describe('lifecycle', () => {
     expect(log).toContain('started pw-f')
   })
 
-  test('a host that died leaves a socket, a pidfile and maybe a lock: the next one cleans up and starts', async () => {
+  // (A Unix socket file outlives its server; a Windows named pipe goes with it.)
+  test.skipIf(WINDOWS)('a host that died leaves a socket, a pidfile and maybe a lock: the next one cleans up and starts', async () => {
     const b = app()
     await startAgent(b, 'pw-old')
     const oldPid = b.hostPid!
@@ -252,7 +252,7 @@ describe('lifecycle', () => {
     await waitFor(async () => !alive(pid), 8000, 'idle once the last terminal is gone')
   })
 
-  test("a host that holds the socket but doesn't answer is never replaced (that would run every agent twice)", async () => {
+  test.skipIf(WINDOWS)("a host that holds the socket but doesn't answer is never replaced (that would run every agent twice)", async () => {
     await staleSocket() // as a host with a full queue looks: there, but refusing connections
     const wedged = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1e5)', '--', '--data', dataDir], { stdio: 'ignore' })
     try {
@@ -267,7 +267,7 @@ describe('lifecycle', () => {
     }
   })
 
-  test('a pidfile naming a live process that is not a host (a reused pid) does not block a new host', async () => {
+  test.skipIf(WINDOWS)('a pidfile naming a live process that is not a host (a reused pid) does not block a new host', async () => {
     await staleSocket()
     await writeFile(hostPidFile(dataDir), `${process.pid}\n`) // alive, but this test, not a host
     const b = app()
@@ -275,10 +275,21 @@ describe('lifecycle', () => {
     expect(await pidFromFile()).toBe(b.hostPid)
   })
 
-  test('killSession ends the whole foreground job, not just its first process', async () => {
+  test.skipIf(WINDOWS)('killSession ends the whole foreground job, not just its first process', async () => {
     const b = app()
     const marker = join(tmp, 'child.pid')
     await b.newSession({ name: 'pw-job', cwd, argv: ['/bin/sh', '-c', `sleep 600 & echo $! > '${marker}'; wait`] })
+    const child = Number((await waitFor(async () => (await readFile(marker, 'utf8').catch(() => '')).trim(), 8000, 'child pid')))
+    await b.killSession('pw-job')
+    await waitFor(async () => !alive(child), 8000, 'child gone')
+  })
+
+  test.runIf(WINDOWS)("Windows: killSession ends what the program started in its console too", async () => {
+    const b = app()
+    const marker = join(tmp, 'child.pid')
+    const parent = `const c = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1e5)'], { stdio: 'inherit' });` +
+      `require('node:fs').writeFileSync(${JSON.stringify(marker)}, String(c.pid)); setInterval(() => {}, 1e5)`
+    await b.newSession({ name: 'pw-job', cwd, argv: [process.execPath, '-e', parent] })
     const child = Number((await waitFor(async () => (await readFile(marker, 'utf8').catch(() => '')).trim(), 8000, 'child pid')))
     await b.killSession('pw-job')
     await waitFor(async () => !alive(child), 8000, 'child gone')
@@ -460,8 +471,7 @@ describe('output bursts', () => {
     const hostPid = b.hostPid!
     let peakKb = 0
     const sample = async (): Promise<void> => {
-      const { stdout } = await run('/bin/ps', ['-o', 'rss=', '-p', String(hostPid)])
-      peakKb = Math.max(peakKb, Number(stdout.trim()))
+      peakKb = Math.max(peakKb, await residentKb(hostPid))
     }
     await b.sendKeys('pw-flood', ['flood', 'Enter'])
     await new Promise((r) => setTimeout(r, 300))

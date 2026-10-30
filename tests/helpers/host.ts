@@ -1,17 +1,14 @@
-import { execFile } from 'node:child_process'
 import { mkdtemp, realpath } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as net from 'node:net'
-import { promisify } from 'node:util'
 import { expect, inject } from 'vitest'
 import { checkProof, newNonce, proofFor, readHostKey } from '../../src/host/auth'
 import { hostSocketPath } from '../../src/host/paths'
 import { encodeJson, FrameDecoder, PROTOCOL, type Frame } from '../../src/host/protocol'
 import { HostBackend, type HostLaunch } from '../../src/main/host-backend'
+import { commandLines, runsHost } from './processes'
 import { waitFor } from './wait'
-
-const run = promisify(execFile)
 
 /** A fresh data dir (its path has a space, like "Application Support") in a new temp folder. */
 export async function makeHostDirs(): Promise<{ tmp: string; dataDir: string }> {
@@ -34,13 +31,9 @@ export function makeHostBackend(dataDir: string, o: { idleMs?: number; env?: Rec
   return new HostBackend({ dataDir, appVersion: 'test', launch: o.start === false ? null : hostLaunch(dataDir, o) })
 }
 
-/** Every host process running for `dataDir` (from ps), whether or not it is listening. */
+/** Every host process running for `dataDir` (from ps, or Win32_Process), whether or not it is listening. */
 export async function hostPids(dataDir: string): Promise<number[]> {
-  const { stdout } = await run('/bin/ps', ['-axww', '-o', 'pid=,command='], { maxBuffer: 32 * 1024 * 1024 })
-  const arg = `--data ${dataDir}`
-  return stdout.split('\n')
-    .filter((l) => l.includes(inject('hostScript')) && (l.endsWith(arg) || l.includes(`${arg} --`)))
-    .map((l) => Number(l.trim().split(/\s+/)[0]))
+  return (await commandLines('--data')).filter((p) => runsHost(p.cmd, inject('hostScript'), dataDir)).map((p) => p.pid)
 }
 
 /** Stops the host for `dataDir` and makes sure no host process is left (killing any that won't stop). */

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, test } from 'vitest'
 import { checkProof, HostKeyError, newNonce, proofFor, readHostKey, writeHostKey } from '../../src/host/auth'
 import { hostKeyFile } from '../../src/host/paths'
 import { makeHostDirs } from '../helpers/host'
+import { WINDOWS } from '../helpers/processes'
 import { rm } from 'node:fs/promises'
 
 let tmp: string
@@ -17,7 +18,7 @@ afterEach(async () => { await rm(tmp, { recursive: true, force: true }) })
 
 test('each host writes a fresh key, readable only by this user, and the app reads the same one', () => {
   const a = writeHostKey(dataDir)
-  expect(statSync(hostKeyFile(dataDir)).mode & 0o777).toBe(0o600)
+  if (!WINDOWS) expect(statSync(hostKeyFile(dataDir)).mode & 0o777).toBe(0o600) // (Windows: the AppData ACL)
   expect(readHostKey(dataDir)).toEqual(a)
   const b = writeHostKey(dataDir)
   expect(b).not.toEqual(a)
@@ -31,7 +32,7 @@ test('a missing, malformed or loosely protected key is refused, and says why', (
   expect(() => readHostKey(dataDir)).toThrow('is not a host key')
   writeHostKey(dataDir)
   chmodSync(hostKeyFile(dataDir), 0o640)
-  expect(() => readHostKey(dataDir)).toThrow(`${hostKeyFile(dataDir)} can be read by other users`)
+  if (!WINDOWS) expect(() => readHostKey(dataDir)).toThrow(`${hostKeyFile(dataDir)} can be read by other users`)
   expect(() => readHostKey(dataDir, 'win32')).not.toThrow() // Windows: the user's AppData ACL protects it
 })
 

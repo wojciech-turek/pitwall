@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
 import { HostBackend } from '../../src/main/host-backend'
+import { commandLines, runsHost, WINDOWS } from '../helpers/processes'
 import { tmuxSocketPath } from '../helpers/tmux-socket'
 import { makeRepo } from '../helpers/repo'
 import { waitFor } from '../helpers/wait'
@@ -17,6 +18,14 @@ const repoRoot = process.cwd()
 /** Where the app under test keeps sessions (PITWALL_SESSION_BACKEND=host, or Windows: the Pitwall host; else tmux). */
 export const SESSION_BACKEND: 'tmux' | 'host' =
   process.platform === 'win32' || process.env.PITWALL_SESSION_BACKEND === 'host' ? 'host' : 'tmux'
+
+/** The app `pnpm package` (macOS) or `pnpm package:win` (Windows, this machine's architecture) builds. */
+export const PACKAGED_EXE = WINDOWS
+  ? join(repoRoot, 'release', process.arch === 'arm64' ? 'win-arm64-unpacked' : 'win-unpacked', 'Pitwall.exe')
+  : join(repoRoot, 'release/mac-arm64/Pitwall.app/Contents/MacOS/Pitwall')
+
+/** The key the app's shortcuts use with a letter: ⌘ on macOS, Ctrl on Windows. */
+export const MOD = WINDOWS ? 'Control' : 'Meta'
 
 /**
  * The stub claude and gh: the sh scripts; on Windows the Node ones through their .cmd shims (no sh there). With
@@ -70,11 +79,13 @@ export async function makeE2eEnv(): Promise<E2eEnv> {
   return {
     tmp, dataDir, socket, repo, env,
     cleanup: async () => {
-      await tmux(socket, 'kill-server').catch(() => undefined)
-      await rm(tmuxSocketPath(socket, env), { force: true })
+      if (!WINDOWS) { // (no tmux there)
+        await tmux(socket, 'kill-server').catch(() => undefined)
+        await rm(tmuxSocketPath(socket, env), { force: true })
+      }
       await stopHost(dataDir)
       await repo.cleanup()
-      await rm(tmp, { recursive: true, force: true })
+      await rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
     }
   }
 }
@@ -151,11 +162,7 @@ export async function sendKeys(e: E2eEnv, sessionId: string, ...keys: string[]):
 
 /** Host processes serving `dataDir` (dev: Electron running out/host/index.js; packaged: Pitwall running its copy). */
 export async function hostPids(dataDir: string): Promise<number[]> {
-  const { stdout } = await run('/bin/ps', ['-axww', '-o', 'pid=,command='], { maxBuffer: 32 * 1024 * 1024 })
-  const arg = `host/index.js --data ${dataDir}`
-  return stdout.split('\n')
-    .filter((l) => l.endsWith(arg) || l.includes(`${arg} --`))
-    .map((l) => Number(l.trim().split(/\s+/)[0]))
+  return (await commandLines('--data')).filter((p) => runsHost(p.cmd, 'host/index.js', dataDir)).map((p) => p.pid)
 }
 
 /** Ends the app's host and its agents (a test never leaves one running). */

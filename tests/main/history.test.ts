@@ -6,6 +6,7 @@ import {
   CappedText, historySources, lineText, queryTerms, SessionHistory, TEXT_CAP, type HistorySource
 } from '../../src/main/history'
 import type { AppSnapshot, Project, Session, SessionView, SubProject } from '../../src/shared/types'
+import { WINDOWS } from '../helpers/processes'
 
 let tmp: string
 
@@ -133,7 +134,8 @@ describe('historySources', () => {
   })
   const sub = (id: string, projectId: string): SubProject => ({ id, projectId, name: `Sub ${id}`, kind: 'folder', path: '/x', createdAt: 0 })
 
-  test("config dir: the project's CLAUDE_CONFIG_DIR, else the app's, else ~/.claude; updatedAt: latest event or archivedAt", () => {
+  // (POSIX paths: the same lookup on Windows builds C:\ paths with backslashes.)
+  test.skipIf(WINDOWS)("config dir: the project's CLAUDE_CONFIG_DIR, else the app's, else ~/.claude; updatedAt: latest event or archivedAt", () => {
     const running: SessionView = { ...session('a', { subProjectId: 'sp_a', createdAt: 5 }), status: 'read', lastActivityAt: 900 }
     const fresh: SessionView = { ...session('b', { subProjectId: 'sp_b', createdAt: 7 }), status: 'starting' }
     const archived = session('c', { subProjectId: 'sp_a', archivedAt: 1234 })

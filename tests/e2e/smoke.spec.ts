@@ -5,8 +5,10 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test'
 import { waitFor } from '../helpers/wait'
+import { WINDOWS } from '../helpers/processes'
 import {
-  hasSession, hostPids, launchApp, makeE2eEnv, paneText, sendKeys, SESSION_BACKEND, sessionIdOf, sessionNames, shot, tmux, type E2eEnv
+  hasSession, hostPids, launchApp, makeE2eEnv, MOD, PACKAGED_EXE, paneText, sendKeys, SESSION_BACKEND, sessionIdOf, sessionNames, shot, tmux,
+  type E2eEnv
 } from './helpers'
 
 const run = promisify(execFile)
@@ -126,7 +128,7 @@ test.describe('dev build', () => {
     await page.locator('.cm-content').click()
     await page.keyboard.type('x')
     await expect(page.locator('.tab-dirty')).toHaveCount(1)
-    await page.keyboard.press('Meta+s')
+    await page.keyboard.press(`${MOD}+s`)
     await expect(page.locator('.tab-dirty')).toHaveCount(0)
     await shot(page, '8-file-editor')
     await page.getByTestId('send-to-agent').click()
@@ -178,7 +180,9 @@ test.describe('dev build window', () => {
     })()`)
 
     expect(await dropOn('[data-testid="terminal-claude"]')).toBe(false) // handled, default prevented
-    await waitFor(async () => /'\/[^'\n]*\/drop me\.txt'/.test(await paneText(e, sessionId)), 15_000, 'dropped path in prompt')
+    // Quoted as the platform's shell would need it: '/…/drop me.txt' on macOS, "C:\…\drop me.txt" on Windows.
+    const dropped = WINDOWS ? /"[A-Za-z]:\\[^"\n]*\\drop me\.txt"/ : /'\/[^'\n]*\/drop me\.txt'/
+    await waitFor(async () => dropped.test(await paneText(e, sessionId)), 15_000, 'dropped path in prompt')
     expect(await paneText(e, sessionId)).not.toMatch(/echo: .*drop me\.txt/) // pasted, never submitted
 
     expect(await dropOn('.sidebar')).toBe(false) // anywhere else: swallowed
@@ -202,7 +206,9 @@ test.describe('dev build window', () => {
     await expect(page.getByTestId('session-row')).toHaveCount(1)
   })
 
+  // macOS keeps the app running with no window (the Dock reopens it); on Windows closing the last window quits.
   test('closing the window stops viewing; reopening for a notification selects the session', async () => {
+    test.skip(WINDOWS, 'macOS: an app without windows')
     const row = page.getByTestId('session-row')
     await row.click()
     await expect(row).toHaveClass(/selected/)
@@ -374,7 +380,7 @@ test.describe('dev build changes', () => {
     await page.getByTestId('session-menu').click()
     await page.getByTestId('session-archive').click()
     await expect(page.getByTestId('archive-dialog')).toBeVisible()
-    await expect(page.getByTestId('archive-actions')).toContainText(/Delete worktree .*worktrees\/tax-service\/fix-tax-rounding/)
+    await expect(page.getByTestId('archive-actions')).toContainText(/Delete worktree .*worktrees[\\/]tax-service[\\/]fix-tax-rounding/)
     await expect(page.getByTestId('archive-actions')).toContainText('Delete branch pitwall/fix-tax-rounding')
     await expect(page.getByTestId('archive-warning')).toContainText('uncommitted file')
     await shot(page, '11-archive-dialog')
@@ -428,7 +434,8 @@ test.describe('dev build changes', () => {
     const failingId = await waitFor(() => sessionIdOf(e), 15_000, 'tmux session')
     await waitFor(async () => (await paneText(e, failingId)).includes('STUB CLAUDE READY'), 15_000, 'STUB CLAUDE READY')
     expect(await wtDirs()).toHaveLength(1)
-    await setTeardown('echo teardown-said-no; exit 5')
+    // Teardown runs in sh on macOS, in cmd.exe on Windows.
+    await setTeardown(WINDOWS ? 'echo teardown-said-no& exit /b 5' : 'echo teardown-said-no; exit 5')
     await openArchive()
     await expect(page.getByTestId('teardown-failed')).toContainText('exit code 5', { timeout: 30_000 })
     await expect(page.getByTestId('teardown-output')).toContainText('teardown-said-no')
@@ -455,7 +462,7 @@ test.describe('dev build changes', () => {
     expect(await wtDirs()).toHaveLength(0)
 
     await startSession('Teardown works')
-    await setTeardown(`touch ${ok}`)
+    await setTeardown(WINDOWS ? `type nul > "${ok}"` : `touch ${ok}`)
     await openArchive()
     await expect(page.getByTestId('archive-dialog')).toHaveCount(0, { timeout: 30_000 })
     expect(existsSync(ok)).toBe(true)
@@ -467,7 +474,7 @@ test.describe('packaged app', () => {
   test.skip(!PACKAGED, 'set PACKAGED=1 (after pnpm package)')
 
   test('packaged app launches and starts a session', async () => {
-    const exe = join(process.cwd(), 'release/mac-arm64/Pitwall.app/Contents/MacOS/Pitwall')
+    const exe = PACKAGED_EXE
     expect(existsSync(exe)).toBe(true)
     ;({ app, page } = await launchApp(e.env, exe))
     await expect(page.getByTestId('create-first-project')).toBeVisible()

@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test'
 import { waitFor } from '../helpers/wait'
-import { launchApp, makeE2eEnv, paneText, sessionIdOf, type E2eEnv } from './helpers'
+import { launchApp, makeE2eEnv, PACKAGED_EXE, paneText, sessionIdOf, type E2eEnv } from './helpers'
 
 // A Finder drag goes through Chromium's own drag pipeline (hit testing, dragenter, native File paths).
 // CDP Input.dispatchDragEvent drives that same pipeline, unlike a DragEvent dispatched from page JS.
@@ -20,7 +20,7 @@ test.afterAll(async () => {
 })
 
 test('files dragged from Finder or Cursor onto the Claude terminal paste their paths', async () => {
-  const exe = PACKAGED ? join(process.cwd(), 'release/mac-arm64/Pitwall.app/Contents/MacOS/Pitwall') : undefined
+  const exe = PACKAGED ? PACKAGED_EXE : undefined
   ;({ app, page } = await launchApp(e.env, exe))
   await page.getByTestId('create-first-project').click()
   await page.getByTestId('project-name-input').fill('Acme')

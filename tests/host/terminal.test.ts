@@ -4,6 +4,7 @@ import { ModeTracker } from '../../src/host/modes'
 import { hostPidFile, hostSocketPath } from '../../src/host/paths'
 import { replayBytes, stripForReplay, trimStart } from '../../src/host/replay'
 import { screenText } from '../../src/host/screen'
+import { WINDOWS } from '../helpers/processes'
 
 const feed = (m: ModeTracker, ...chunks: string[]): ModeTracker => {
   for (const c of chunks) m.feed(Buffer.from(c, 'latin1'))
@@ -147,7 +148,8 @@ describe('keys', () => {
 })
 
 describe('host paths', () => {
-  test('a socket in the data dir; a short one in the temp dir when that would be too long', () => {
+  // (macOS paths, built with the platform's own separator: they read differently on Windows.)
+  test.skipIf(WINDOWS)('a socket in the data dir; a short one in the temp dir when that would be too long', () => {
     expect(hostSocketPath('/Users/me/Library/Application Support/pitwall', { platform: 'darwin' }))
       .toBe('/Users/me/Library/Application Support/pitwall/host.sock')
     const long = `/Users/me/${'x'.repeat(100)}/pitwall`
@@ -162,7 +164,7 @@ describe('host paths', () => {
     expect(a).not.toBe(b)
   })
 
-  test('pidfile beside the socket', () => {
+  test.skipIf(WINDOWS)('pidfile beside the socket', () => {
     expect(hostPidFile('/d')).toBe('/d/host.pid')
   })
 })

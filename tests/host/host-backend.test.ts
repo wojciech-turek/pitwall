@@ -9,6 +9,7 @@ import { DATA_CHUNK, encodeData, encodeJson, FrameDecoder, PROTOCOL } from '../.
 import { sessionBackendKind } from '../../src/main/backend'
 import { HostBackend } from '../../src/main/host-backend'
 import { makeHostDirs } from '../helpers/host'
+import { WINDOWS } from '../helpers/processes'
 import { waitFor } from '../helpers/wait'
 
 // HostBackend against fake hosts, for what a real host rarely does.
@@ -146,16 +147,20 @@ test('an error from the host reaches the caller with its message', async () => {
 // pid it would like the user to kill.
 const HOSTILE = { pid: 31337, appVersion: '\x1b]52;c;ZXZpbA==\x07\x1b[2J evil 1.0' }
 
-test.each([
+type Impostor = [what: string, o: Parameters<typeof fakeHost>[1], arrange: () => void, why: string]
+const IMPOSTORS: Impostor[] = [
   ['a wrong proof', { proof: 'wrong' as const, helloFields: HOSTILE }, () => {}, "couldn't prove it is one (its proof doesn't match the host key)"],
   ['no proof', { proof: 'none' as const, helloFields: HOSTILE }, () => {}, "couldn't prove it is one (its proof doesn't match the host key)"],
   ['no host key', { helloFields: HOSTILE }, () => rmSync(hostKeyFile(dataDir)), "couldn't prove it is one (there is no host key at"],
   ['a host key others can read', { helloFields: HOSTILE }, () => chmodSync(hostKeyFile(dataDir), 0o644), 'can be read by other users'],
   ['an error, unproven', { proof: 'none' as const, helloFields: { ...HOSTILE, error: 'kill 31337 \x1b[31mNOW-PLEASE' } }, () => {}, "couldn't prove it is one"],
   ['another protocol, unproven, with escapes in its version', { proof: 'none' as const, helloFields: { ...HOSTILE, protocol: PROTOCOL + 1, error: 'OUTDATED-HOST' } }, () => {},
-    "doesn't speak this version of Pitwall (or isn't Pitwall). Quit other Pitwall versions, or restart your Mac."],
+    `doesn't speak this version of Pitwall (or isn't Pitwall). Quit other Pitwall versions, or restart your ${WINDOWS ? 'PC' : 'Mac'}.`],
   ['another protocol, with a wrong proof', { proof: 'wrong' as const, helloFields: { ...HOSTILE, protocol: PROTOCOL + 1 } }, () => {}, "doesn't speak this version of Pitwall"]
-])('an impostor (%s) is refused without repeating a word it said, and is sent nothing but hello', async (_what, o, arrange, why) => {
+]
+
+// (A key's POSIX mode means nothing on Windows: the AppData ACL protects it there, and its mode isn't checked.)
+test.each(IMPOSTORS.filter(([what]) => !(WINDOWS && what === 'a host key others can read')))('an impostor (%s) is refused without repeating a word it said, and is sent nothing but hello', async (_what, o, arrange, why) => {
   const fake = await fakeHost(() => {}, o)
   arrange()
   const b = backend({ launch: { file: process.execPath, args: ['-e', ''], env: {} } })
@@ -215,7 +220,8 @@ test('a character split between two data frames arrives whole', async () => {
   b.disconnect()
 })
 
-test('PITWALL_SESSION_BACKEND=host picks the host; anything else stays on tmux', () => {
+// macOS's choice; Windows always uses the host (windows-platform.test.ts).
+test.skipIf(WINDOWS)('PITWALL_SESSION_BACKEND=host picks the host; anything else stays on tmux', () => {
   expect(sessionBackendKind({ PITWALL_SESSION_BACKEND: 'host' })).toBe('host')
   expect(sessionBackendKind({})).toBe('tmux')
   expect(sessionBackendKind({ PITWALL_SESSION_BACKEND: 'tmux' })).toBe('tmux')
