@@ -7,6 +7,7 @@ import { formatAgentReference, listSessionFiles, readForEditor, writeFromEditor 
 import type { GitClient } from './git'
 import { settingsFrom, type Store } from './store'
 import { claudeTmuxName, type Tmux } from './tmux'
+import type { SessionHistory } from './history'
 import { listGhAccounts, listSshKeys } from './identity'
 import type { AppPaths } from './paths'
 import type { ProjectService } from './projects'
@@ -31,6 +32,7 @@ export interface IpcDeps {
   env: Record<string, string>
   home: string
   mutex: KeyedMutex
+  history: Pick<SessionHistory, 'search'>
   usage: Pick<UsageTracker, 'current' | 'onChange'>
   updates: Pick<UpdateChecker, 'state' | 'checkNow' | 'onChange' | 'hasFeed'>
   /** True for an unpackaged (dev) run. */
@@ -98,6 +100,9 @@ export function registerIpc(d: IpcDeps): () => void {
   handle(IPC.checkArchive, (id: string) => checkArchive(id, archiveDeps()))
   handle(IPC.archiveSession, (id: string, confirmed: boolean, skipTeardown?: boolean) =>
     archiveSession(id, { confirmedDataLoss: confirmed, skipTeardown: !!skipTeardown }, archiveDeps()))
+  handle(IPC.searchSessions, (query: unknown) => (typeof query === 'string' ? d.history.search(query) : []))
+  handle(IPC.resumeSession, (id: string, requestId: string) =>
+    manager.resume(id, requestId, (p) => send(IPC.startProgress, p)))
   handle(IPC.openExternal, async (url: string) => {
     // Only web links; never let the renderer open file: or custom-scheme URLs.
     if (/^https?:\/\//i.test(url)) await shell.openExternal(url)

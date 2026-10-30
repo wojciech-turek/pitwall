@@ -11,6 +11,7 @@ import { eventsFile, sessionDir } from '../paths'
 import { claudeTmuxName, shellTmuxName } from '../tmux'
 import { isAnswerInput } from './input'
 import { notificationBody } from './notify-text'
+import { resumeSession } from './resume'
 import {
   assertSessionFolder, launchTmuxFor, prepareNewSession, startSession, writeSessionFiles, type StarterDeps
 } from './starter'
@@ -31,6 +32,14 @@ interface Tracked {
 }
 
 const PERSIST_DEBOUNCE_MS = 250
+
+/** `past` plus every id in `seen` (oldest first) except the last, the current one; no duplicates. */
+function pastIds(past: string[], seen: string[]): string[] {
+  const current = seen.at(-1)
+  const out: string[] = []
+  for (const x of [...past, ...seen.slice(0, -1)]) if (x && x !== current && !out.includes(x)) out.push(x)
+  return out
+}
 
 export class SessionManager {
   private tracked = new Map<string, Tracked>()
@@ -135,6 +144,18 @@ export class SessionManager {
       await this.track(res.sessionId)
       this.publish()
       void this.warnIfSilent(res.sessionId)
+    }
+    return res
+  }
+
+  /** Brings an archived session back and tracks it like a newly started one. */
+  async resume(sessionId: string, requestId: string, onProgress: (p: StartProgress) => void): Promise<StartResult> {
+    const res = await resumeSession(sessionId, requestId, this.deps, onProgress)
+    if (res.ok) {
+      this.errors.delete(sessionId)
+      await this.track(sessionId)
+      this.publish()
+      void this.warnIfSilent(sessionId)
     }
     return res
   }
@@ -296,10 +317,14 @@ export class SessionManager {
       if (!s || this.disposed) return
       const tailer = new EventTailer(eventsFile(this.deps.paths, id), (e) => this.onLive(id, e))
       const t: Tracked = { rt: initialRuntime, tailer, viewedAt: s.lastViewedAt, inputSent: false }
-      for (const e of await tailer.readAll()) t.rt = reduceRuntime(t.rt, e)
+      const sids: string[] = [] // every conversation id the log mentions, in order
+      for (const e of await tailer.readAll()) {
+        t.rt = reduceRuntime(t.rt, e)
+        if (e.sid && e.sid !== sids.at(-1)) sids.push(e.sid)
+      }
       if (this.disposed || this.tracking.get(id) !== p) return
       this.tracked.set(id, t)
-      await this.syncSid(id, t.rt.claudeSessionId, t.rt.lastMessage)
+      await this.syncSid(id, sids, t.rt.lastMessage)
       tailer.start()
     })().catch((e) => {
       // Never cache a failure: a later track() retries.
@@ -336,17 +361,28 @@ export class SessionManager {
     }
   }
 
-  /** Records a new Claude conversation id (after /clear) in the store and the launcher's claude-id file. */
-  private async syncSid(id: string, sid: string | undefined, lastMessage?: string): Promise<void> {
+  /**
+   * Records a new Claude conversation id (after /clear) in the store and the launcher's claude-id file. `sids` are the
+   * ids seen, oldest first; the last is the current one. Earlier ones go to pastClaudeIds, so they stay searchable.
+   */
+  private async syncSid(id: string, sids: string[], lastMessage?: string): Promise<void> {
     const s = this.session(id)
     if (!s) return
+    const sid = sids.at(-1)
     const sidChanged = !!sid && sid !== s.claudeSessionId
+    const before = s.pastClaudeIds ?? []
+    const past = sid ? pastIds(before, [s.claudeSessionId, ...sids]) : before
+    const pastChanged = past.join('\n') !== before.join('\n')
     const messageChanged = lastMessage !== undefined && lastMessage !== s.lastMessage
-    if (!sidChanged && !messageChanged) return
+    if (!sidChanged && !pastChanged && !messageChanged) return
     await this.deps.store.update((d) => {
       const x = d.sessions.find((y) => y.id === id)
       if (!x) return
-      if (sid) x.claudeSessionId = sid
+      if (sid) {
+        x.pastClaudeIds = pastIds(x.pastClaudeIds ?? [], [x.claudeSessionId, ...sids])
+        if (x.pastClaudeIds.length === 0) delete x.pastClaudeIds
+        x.claudeSessionId = sid
+      }
       if (lastMessage !== undefined) x.lastMessage = lastMessage
     })
     if (sid && sidChanged) {
@@ -369,7 +405,7 @@ export class SessionManager {
       this.warnings.delete(id)
       for (const w of [...(this.waiters.get(id) ?? [])]) w()
     }
-    void this.syncSid(id, e.sid ?? undefined, e.e === 'Stop' && e.msg != null ? e.msg : undefined).catch(() => {})
+    void this.syncSid(id, e.sid ? [e.sid] : [], e.e === 'Stop' && e.msg != null ? e.msg : undefined).catch(() => {})
     if (before !== after && (after === 'needs_you' || after === 'unread')) this.maybeNotify(s, after, t.rt)
     this.updateBadge()
     for (const cb of [...this.eventCbs]) cb(id, e)

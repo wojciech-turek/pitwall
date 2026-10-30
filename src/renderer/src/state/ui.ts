@@ -11,6 +11,7 @@ export type DialogState =
   | { type: 'identity-confirm'; projectId: string; result: Extract<AddFolderResult, { status: 'needs_identity_confirm' }> }
   | { type: 'new-session'; subProjectId: string }
   | { type: 'archive'; sessionId: string }
+  | { type: 'resume'; sessionId: string }
   | { type: 'subproject-settings'; subProjectId: string }
   | { type: 'settings' }
   | { type: 'update' }

@@ -129,6 +129,11 @@ export class GitClient {
     await this.run(repoRoot, ['worktree', 'remove', ...(force ? ['--force'] : []), path], WORKTREE_TIMEOUT_MS)
   }
 
+  /** Forgets worktrees whose folders were deleted, so their branches and paths are free again. */
+  async pruneWorktrees(repoRoot: string): Promise<void> {
+    await this.run(repoRoot, ['worktree', 'prune'])
+  }
+
   async deleteBranch(repoRoot: string, name: string): Promise<void> {
     await this.run(repoRoot, ['branch', '-D', name])
   }

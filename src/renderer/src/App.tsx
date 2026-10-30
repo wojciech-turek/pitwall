@@ -9,6 +9,7 @@ import { useSnapshot } from './state/snapshot'
 import { useToast } from './state/toast'
 import DiscardFileDialog from './components/dialogs/DiscardFileDialog'
 import ArchiveDialog from './components/dialogs/ArchiveDialog'
+import ResumeDialog from './components/dialogs/ResumeDialog'
 import NewSessionDialog from './components/NewSessionDialog'
 import RightPanel from './components/RightPanel'
 import SubProjectSettingsDialog from './components/dialogs/SubProjectSettingsDialog'
@@ -28,6 +29,7 @@ function DialogHost(): React.JSX.Element | null {
     case 'new-session': return <NewSessionDialog key={dialog.subProjectId} subProjectId={dialog.subProjectId} />
     case 'discard-file': return <DiscardFileDialog sessionId={dialog.sessionId} tabId={dialog.tabId} name={dialog.name} />
     case 'archive': return <ArchiveDialog key={dialog.sessionId} sessionId={dialog.sessionId} />
+    case 'resume': return <ResumeDialog key={dialog.sessionId} sessionId={dialog.sessionId} />
     case 'subproject-settings': return <SubProjectSettingsDialog key={dialog.subProjectId} subProjectId={dialog.subProjectId} />
     case 'settings': return <SettingsDialog />
     case 'update': return <UpdateDialog />

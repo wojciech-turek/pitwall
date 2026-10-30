@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { app, BrowserWindow, dialog, Menu, powerMonitor, shell } from 'electron'
 import { IPC } from '@shared/api'
 import { exec } from './exec'
+import { historySources, SessionHistory } from './history'
 import { buildMenuTemplate } from './menu'
 import { GitClient } from './git'
 import { ChangesService } from './changes'
@@ -182,8 +183,9 @@ async function bootstrap(): Promise<void> {
   const onResume = (): void => updates.start()
   powerMonitor.on('resume', onResume)
   disposeUpdates = () => { powerMonitor.removeListener('resume', onResume); updates.stop() }
+  const history = new SessionHistory(() => historySources(mgr.snapshot(), home, env))
   disposeIpc = registerIpc({
-    manager: mgr, changes, store, git, tmux, projects, bridge, paths, exec, env, home, mutex, usage, updates, send, dev: DEV,
+    manager: mgr, changes, store, git, tmux, projects, bridge, paths, exec, env, home, mutex, history, usage, updates, send, dev: DEV,
     onViewing: (ids) => {
       visibleIds = ids
       mgr.setViewing(ids, win?.isFocused() ?? false)

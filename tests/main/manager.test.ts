@@ -240,6 +240,17 @@ describe('SessionManager', () => {
     const want = `${s.claudeSessionId}-cleared`
     await waitFor(async () => store.state.sessions[0].claudeSessionId === want, 8000, 'sid update')
     await waitFor(async () => (await readFile(join(sessionDir(t.paths, s.id), 'claude-id'), 'utf8')).trim() === want)
+    // The earlier conversation stays searchable.
+    expect(store.state.sessions[0].pastClaudeIds).toEqual([s.claudeSessionId])
+  })
+
+  test('earlier conversation ids: oldest first, no duplicates, never the current one', async () => {
+    await addSession('a', { pastClaudeIds: ['c-0'] }, [
+      { e: 'SessionStart', sid: 'c-1' }, { e: 'SessionStart', sid: 'c-2' }, { e: 'SessionStart', sid: 'c-1' }
+    ])
+    await ready()
+    await waitFor(async () => store.state.sessions[0].claudeSessionId === 'c-1', 8000, 'sid')
+    expect(store.state.sessions[0].pastClaudeIds).toEqual(['c-0', 'claude-a', 'c-2'])
   })
 
   test('start tracks the session live and clears the warning after the first event', async () => {

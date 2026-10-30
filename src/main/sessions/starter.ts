@@ -3,7 +3,7 @@ import { access, mkdir, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { writeFileAtomic } from '../atomic'
 import type {
-  NewSessionDefaults, NewSessionInput, Session, StartProgress, StartResult, StartStep, SubProject
+  NewSessionDefaults, NewSessionInput, Project, Session, StartProgress, StartResult, StartStep, SubProject
 } from '@shared/types'
 import { defaultBranchName, slugify } from '@shared/slug'
 import type { Exec } from '../exec'
@@ -28,14 +28,51 @@ export interface StarterDeps {
   mutex: KeyedMutex
 }
 
-class StepError extends Error {
+export class StepError extends Error {
   constructor(readonly step: StartStep, message: string) {
     super(message)
   }
 }
 
-const msg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
+export const msg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 const exists = (p: string) => access(p).then(() => true, () => false)
+
+/** Progress reporting for starting (or resuming) a session: each step is reported running, then done or failed. */
+export function progressSteps(requestId: string, onProgress: (p: StartProgress) => void) {
+  let current: StartStep = 'identity'
+  const emit = (step: StartStep, state: StartProgress['state'], message?: string) => {
+    try {
+      onProgress({ requestId, step, state, ...(message ? { message } : {}) })
+    } catch {
+      // a broken listener must not break the start
+    }
+  }
+  const run = async <T>(s: StartStep, fn: () => Promise<T>, doneMessage?: string): Promise<T> => {
+    current = s
+    emit(s, 'running')
+    try {
+      const v = await fn()
+      emit(s, 'done', doneMessage)
+      return v
+    } catch (e) {
+      emit(s, 'failed', msg(e))
+      throw e instanceof StepError ? e : new StepError(s, msg(e))
+    }
+  }
+  return { emit, run, get step() { return current } }
+}
+
+/** The project's SSH key exists and its GitHub account can give a token. */
+export async function checkIdentity(project: Project, deps: StarterDeps): Promise<void> {
+  const key = project.identity.sshKeyPath
+  const keyPath = key === '~' || key.startsWith('~/') ? join(deps.home, key.slice(2)) : key
+  if (key && !(await exists(keyPath))) throw new Error(`SSH key not found: ${key}`)
+  if (!project.identity.ghAccount) return
+  const token = await getGhToken(deps.paths.ghBin, project.identity.ghAccount, deps.exec, deps.env)
+  if (token === null) {
+    throw new Error(`Couldn't get a GitHub token for ${project.identity.ghAccount}. Check \`gh auth status\`.`)
+  }
+}
 
 function findSubProject(deps: StarterDeps, id: string): SubProject {
   const sp = deps.store.state.subProjects.find((s) => s.id === id)
@@ -115,19 +152,13 @@ async function doStart(
   deps: StarterDeps,
   onProgress: (p: StartProgress) => void
 ): Promise<StartResult> {
-  const emit = (step: StartStep, state: StartProgress['state'], message?: string) => {
-    try {
-      onProgress({ requestId: input.requestId, step, state, ...(message ? { message } : {}) })
-    } catch {
-      // a broken listener must not break the start
-    }
-  }
+  const steps = progressSteps(input.requestId, onProgress)
+  const { emit, run } = steps
   const { paths, git, tmux } = deps
   const id = newId('s')
   const dir = sessionDir(paths, id)
   const created = { worktree: undefined as string | undefined, branch: undefined as string | undefined, tmux: false }
   let repoRoot: string | undefined
-  let step: StartStep = 'identity'
 
   const rollback = async () => {
     const attempt = async (fn: () => Promise<unknown>) => {
@@ -144,19 +175,6 @@ async function doStart(
     await attempt(() => rm(dir, { recursive: true, force: true }))
   }
 
-  const run = async <T>(s: StartStep, fn: () => Promise<T>, doneMessage?: string): Promise<T> => {
-    step = s
-    emit(s, 'running')
-    try {
-      const v = await fn()
-      emit(s, 'done', doneMessage)
-      return v
-    } catch (e) {
-      emit(s, 'failed', msg(e))
-      throw e instanceof StepError ? e : new StepError(s, msg(e))
-    }
-  }
-
   try {
     const sub = deps.store.state.subProjects.find((s) => s.id === input.subProjectId)
     if (!sub) throw new StepError('identity', 'Sub-project not found.')
@@ -164,16 +182,7 @@ async function doStart(
     if (!project) throw new StepError('identity', 'Project not found.')
     repoRoot = sub.kind === 'repo' ? sub.repoRoot : undefined
 
-    await run('identity', async () => {
-      const key = project.identity.sshKeyPath
-      const keyPath = key === '~' || key.startsWith('~/') ? join(deps.home, key.slice(2)) : key
-      if (key && !(await exists(keyPath))) throw new Error(`SSH key not found: ${key}`)
-      if (!project.identity.ghAccount) return
-      const token = await getGhToken(paths.ghBin, project.identity.ghAccount, deps.exec, deps.env)
-      if (token === null) {
-        throw new Error(`Couldn't get a GitHub token for ${project.identity.ghAccount}. Check \`gh auth status\`.`)
-      }
-    })
+    await run('identity', () => checkIdentity(project, deps))
 
     const title = input.title.trim() || 'Untitled'
     const slug = slugify(title)
@@ -257,7 +266,7 @@ async function doStart(
     return { ok: true, sessionId: id }
   } catch (e) {
     await rollback()
-    const s = e instanceof StepError ? e.step : step
+    const s = e instanceof StepError ? e.step : steps.step
     return { ok: false, step: s, error: msg(e) }
   }
 }

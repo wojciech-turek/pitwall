@@ -1,5 +1,5 @@
 import type {
-  AppSettings, AppSnapshot, ArchiveCheck, ArchiveResult, ChangedFile, ClaudeUsage, EnvVar, FileContent, FileEntry, GhAccount, GitIdentity, NewSessionDefaults, NewSessionInput, Project, RepoIdentity,
+  AppSettings, AppSnapshot, ArchiveCheck, ArchiveResult, ChangedFile, ClaudeUsage, EnvVar, FileContent, FileEntry, GhAccount, GitIdentity, HistoryHit, NewSessionDefaults, NewSessionInput, Project, RepoIdentity,
   StartProgress, StartResult, SubProject, TermKind, UpdateState
 } from './types'
 
@@ -52,6 +52,13 @@ export interface PitwallApi {
   readDiff(sessionId: string, rel: string): Promise<{ original: string; modified: string; binary: boolean; tooLarge: boolean }>
   checkArchive(sessionId: string): Promise<ArchiveCheck>
   archiveSession(sessionId: string, confirmedDataLoss: boolean, skipTeardown?: boolean): Promise<ArchiveResult>
+  /**
+   * Running and archived sessions whose title or Claude conversation has every word of the query; at most 50, title
+   * matches first, then the most recent. An empty query returns [] and starts reading transcripts in the background.
+   */
+  searchSessions(query: string): Promise<HistoryHit[]>
+  /** Brings an archived session back and continues its conversation; progress arrives on onStartProgress. */
+  resumeSession(sessionId: string, requestId: string): Promise<StartResult>
   openExternal(url: string): Promise<void>
   openInCursor(sessionId: string): Promise<{ ok: boolean; message?: string }>
   setSettings(s: AppSettings): Promise<void>
@@ -109,6 +116,8 @@ export const IPC = {
   readDiff: 'pitwall:readDiff',
   checkArchive: 'pitwall:checkArchive',
   archiveSession: 'pitwall:archiveSession',
+  searchSessions: 'pitwall:searchSessions',
+  resumeSession: 'pitwall:resumeSession',
   openExternal: 'pitwall:openExternal',
   openInCursor: 'pitwall:openInCursor',
   setSettings: 'pitwall:setSettings',

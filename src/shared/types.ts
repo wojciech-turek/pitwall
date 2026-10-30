@@ -18,6 +18,8 @@ export interface Session {
   createdAt: number; lastViewedAt: number; archivedAt?: number; lastMessage?: string; pr?: PrInfo
   /** Set by "Mark as unread"; cleared when the user opens the session. */
   markedUnread?: boolean
+  /** Earlier Claude conversation ids (before a /clear), oldest first; searched with the current one. */
+  pastClaudeIds?: string[]
 }
 export interface AppSettings {
   monoFont: string; monoFontSize: number
@@ -80,6 +82,16 @@ export interface NewSessionDefaults {
   /** The repo's main branch; never offered as an existing branch, so it stays free to check out elsewhere. */
   defaultBranch: string | null
   branches: { name: string; checkedOutAt?: string }[]
+}
+
+/** A session whose title or Claude conversation matches a search. */
+export interface HistoryHit {
+  sessionId: string; title: string; archived: boolean; projectName: string; subProjectName: string
+  matchedIn: 'title' | 'conversation'
+  /** About 60 characters either side of the first match in the conversation ('' if none). */
+  snippet: string
+  /** Latest event of a running session, or when it was archived (ms). */
+  updatedAt: number
 }
 
 export interface ArchiveCheck {
