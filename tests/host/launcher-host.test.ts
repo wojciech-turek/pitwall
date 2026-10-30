@@ -19,8 +19,8 @@ import { waitFor } from '../helpers/wait'
 
 const run = promisify(execFile)
 const fixtures = resolve(__dirname, '..', 'fixtures', 'bin')
-/** The stub claude each scenario runs with: the sh one (as on macOS). */
-const STUBS: Array<[string, string]> = [['sh stub', join(fixtures, 'claude')]]
+/** The stub claude each scenario runs with: the sh one (as on macOS) and the Node one (as on Windows). */
+const STUBS: Array<[string, string]> = [['sh stub', join(fixtures, 'claude')], ['Node stub', join(fixtures, 'claude.mjs')]]
 
 const TITLE = "Fix 'tax' $ rounding 🧾"
 const ID = 'uuid-1'

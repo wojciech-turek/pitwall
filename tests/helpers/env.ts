@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { delimiter, join, resolve } from 'node:path'
 import { exec } from '../../src/main/exec'
 import { resolvePaths, type AppPaths } from '../../src/main/paths'
 import { installResources } from '../../src/main/resources'
@@ -34,8 +34,9 @@ export async function makeTestEnv(): Promise<{
       PITWALL_WORKTREES_DIR: join(tmp, 'worktrees'),
       PITWALL_SSH_DIR: join(tmp, 'ssh'),
       PITWALL_TMUX_SOCKET: socket,
-      PITWALL_CLAUDE_BIN: join(fixtures, 'claude'),
-      PITWALL_GH_BIN: join(fixtures, 'gh')
+      // Windows has no sh: the Node stubs, through their .cmd shims.
+      PITWALL_CLAUDE_BIN: join(fixtures, process.platform === 'win32' ? 'claude.cmd' : 'claude'),
+      PITWALL_GH_BIN: join(fixtures, process.platform === 'win32' ? 'gh.cmd' : 'gh')
     },
     tmp
   )
@@ -43,7 +44,8 @@ export async function makeTestEnv(): Promise<{
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v
   delete env.TMUX
   delete env.TMUX_PANE
-  env.PATH = `${fixtures}:${env.PATH ?? '/usr/bin:/bin'}`
+  const pathKey = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH' // `Path` on Windows
+  env[pathKey] = `${fixtures}${delimiter}${env[pathKey] ?? '/usr/bin:/bin'}`
   env.HOME = tmp
   await installResources(paths)
   const tmux = new Tmux({ socket, confPath: paths.tmuxConf, env, exec })

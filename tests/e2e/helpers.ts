@@ -14,8 +14,19 @@ let envCounter = 0
 export const SCREENS = process.env.PITWALL_E2E_SCREENS || join(process.cwd(), 'test-results/screens')
 const repoRoot = process.cwd()
 
-/** Where the app under test keeps sessions (PITWALL_SESSION_BACKEND=host: the Pitwall host; otherwise tmux). */
-export const SESSION_BACKEND: 'tmux' | 'host' = process.env.PITWALL_SESSION_BACKEND === 'host' ? 'host' : 'tmux'
+/** Where the app under test keeps sessions (PITWALL_SESSION_BACKEND=host, or Windows: the Pitwall host; else tmux). */
+export const SESSION_BACKEND: 'tmux' | 'host' =
+  process.platform === 'win32' || process.env.PITWALL_SESSION_BACKEND === 'host' ? 'host' : 'tmux'
+
+/**
+ * The stub claude and gh: the sh scripts; on Windows the Node ones through their .cmd shims (no sh there). With
+ * PITWALL_E2E_NODE_STUBS=1 macOS runs the Node ones too, to show they behave the same.
+ */
+export function stubBin(name: 'claude' | 'gh'): string {
+  const dir = join(repoRoot, 'tests/fixtures/bin')
+  if (process.platform === 'win32') return join(dir, `${name}.cmd`)
+  return join(dir, process.env.PITWALL_E2E_NODE_STUBS === '1' ? `${name}.mjs` : name)
+}
 
 export interface E2eEnv {
   tmp: string
@@ -44,8 +55,8 @@ export async function makeE2eEnv(): Promise<E2eEnv> {
     PITWALL_DATA_DIR: dataDir,
     PITWALL_WORKTREES_DIR: join(tmp, 'worktrees'),
     PITWALL_TMUX_SOCKET: socket,
-    PITWALL_CLAUDE_BIN: join(repoRoot, 'tests/fixtures/bin/claude'),
-    PITWALL_GH_BIN: join(repoRoot, 'tests/fixtures/bin/gh'),
+    PITWALL_CLAUDE_BIN: stubBin('claude'),
+    PITWALL_GH_BIN: stubBin('gh'),
     PITWALL_SSH_DIR: sshDir,
     PITWALL_TEST_PICK_FOLDER: repo.root,
     PITWALL_DISABLE_NOTIFICATIONS: '1',
