@@ -283,7 +283,9 @@ describe('SessionManager', () => {
 
   test("the launcher's warnings show as banners until Claude's next launch; blocked scripts aren't a trust prompt", async () => {
     t.env.STUB_CLAUDE_SILENT = '1'
-    const m = await ready(800)
+    // Long enough for the warning to be read first, even on a busy machine.
+    const m = await ready(5000)
+    const t0 = Date.now()
     const res = await m.start({ requestId: 'r', subProjectId: 'sp_1', title: 'Blocked', branchMode: 'new', branch: '' }, () => {})
     if (!res.ok) throw new Error(res.error)
     const id = res.sessionId
@@ -293,7 +295,7 @@ describe('SessionManager', () => {
     await ev(id, { e: 'pitwall:warning', kind: 'gh', msg: 'Signed out' })
     await waitFor(async () => m.snapshot().sessions[0].launchWarnings?.length === 2, 8000, 'banners')
     expect(m.snapshot().sessions[0].launchWarnings).toEqual(['Windows blocked the scripts', 'Signed out'])
-    await new Promise((r) => setTimeout(r, 1500))
+    await new Promise((r) => setTimeout(r, Math.max(0, t0 + 5800 - Date.now()))) // past the first-event timeout
     expect(m.snapshot().sessions[0].startWarning).toBeUndefined()
     await ev(id, { e: 'pitwall:launch', mode: 'resume' })
     await waitFor(async () => m.snapshot().sessions[0].launchWarnings === undefined, 8000, 'banners cleared')
