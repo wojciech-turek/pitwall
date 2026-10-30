@@ -70,7 +70,8 @@ export async function snapshotLeftovers(
     const rows = parsePs(await (o.ps ?? defaultPs)())
     const byPid = new Map(rows.map((r) => [r.pid, r]))
     const roots = panePids.filter((p) => byPid.get(p)?.ppid === serverPid)
-    return descendants(rows, roots, ancestors(rows, process.pid))
+    // Pitwall, its parents and its own children are never touched (ppid too, in case ps missed our row).
+    return descendants(rows, roots, [...ancestors(rows, process.pid), process.pid, process.ppid])
   } catch {
     return new Map()
   }
