@@ -119,7 +119,7 @@ test('⌘K over a focused terminal: Esc gives the keyboard back, Enter on a sess
   await menu('CmdOrCtrl+K')
   await expect.poll(focusIn).toBe('palette')
   // near the bottom-left of the window, outside the palette, whatever the screen size
-  const [w, h] = await page.evaluate(() => [innerWidth, innerHeight])
+  const [w, h] = await page.evaluate<[number, number]>('[innerWidth, innerHeight]')
   await page.mouse.click(Math.round(w * 0.3), h - 20)
   await expect(palette()).toHaveCount(0)
   await expect.poll(focusIn).toBe(`terminal:${beta}`)
