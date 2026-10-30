@@ -107,7 +107,8 @@ export interface ArchiveCheck {
   willDeleteBranch: boolean; willRemoveWorktree: boolean; worktreePath?: string
 }
 export type ArchiveResult =
-  | { ok: true }
+  /** leftFolder: archived, but files in use kept the worktree's folder from being deleted (Windows); delete it later. */
+  | { ok: true; leftFolder?: string }
   | { ok: false; needsConfirm: ArchiveCheck }
   | { ok: false; teardownFailed: { exitCode: number | null; timedOut: boolean; output: string } }
   | { ok: false; error: string }

@@ -4,12 +4,14 @@ import Dialog from './Dialog'
 import { useSnapshot } from '../../state/snapshot'
 import { useUi } from '../../state/ui'
 import { cleanIpcError } from '../../state/errors'
+import { useToast } from '../../state/toast'
 
 const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`
 
 export default function ArchiveDialog({ sessionId }: { sessionId: string }): React.JSX.Element {
   const closeDialog = useUi((s) => s.closeDialog)
   const forgetSession = useUi((s) => s.forgetSession)
+  const toast = useToast((s) => s.show)
   const snap = useSnapshot()
   const [check, setCheck] = useState<ArchiveCheck | null>(null)
   const [busy, setBusy] = useState(false)
@@ -36,6 +38,7 @@ export default function ArchiveDialog({ sessionId }: { sessionId: string }): Rea
       if (r.ok) {
         forgetSession(sessionId)
         closeDialog()
+        if (r.leftFolder) toast(`Archived. Some files were in use, so ${r.leftFolder} is still there: delete it later.`)
         return
       }
       if ('needsConfirm' in r) setCheck(r.needsConfirm) // state changed since the dialog opened: show the new warning

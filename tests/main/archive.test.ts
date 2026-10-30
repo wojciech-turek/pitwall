@@ -1,6 +1,6 @@
 import { execFile, spawn } from 'node:child_process'
-import { access, appendFile, mkdir, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { access, appendFile, chmod, mkdir, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { exec } from '../../src/main/exec'
@@ -238,6 +238,86 @@ describe('archive', () => {
     expect(manager.snapshot().sessions).toHaveLength(1)
     // Its terminals were closed for the archive: they offer to reattach instead of staying frozen.
     expect(detached.sort()).toEqual([`${s.id}:claude`, `${s.id}:shell`])
+  })
+
+  // Windows, with a file in the worktree in use: git unregisters the worktree and deletes the rest, then fails.
+  class HalfRemovingGit extends GitClient {
+    tries = 0
+    override async removeWorktree(repoRoot: string, path: string, force: boolean): Promise<void> {
+      this.tries++
+      if (this.tries === 1) await super.removeWorktree(repoRoot, path, force)
+      await mkdir(join(path, 'held'), { recursive: true }) // what was in use
+      throw new Error(this.tries === 1 ? `failed to delete '${path}/held': Permission denied` : `'${path}' is not a working tree`)
+    }
+  }
+
+  test('git unregisters the worktree but leaves part of its folder: the rest is deleted and archiving finishes, no relaunch', async () => {
+    const { r, sp } = await addRepo()
+    const git = new HalfRemovingGit(exec, r.env)
+    const deps = setup(r.env, git)
+    const s = await startOne(sp)
+    expect(await archiveSession(s.id, { confirmedDataLoss: false }, deps)).toEqual({ ok: true })
+    expect(git.tries).toBe(1) // not retried: git no longer knows the worktree
+    expect(await has(s.worktreePath!)).toBe(false)
+    expect(await branchesOf(r)).toEqual(['main'])
+    expect(await t.backend.hasSession(claudeTmuxName(s.id))).toBe(false) // never relaunched into the remains
+    expect(store.state.sessions[0].archivedAt).toBeGreaterThan(0)
+    expect(detached).toEqual([])
+  })
+
+  // (POSIX modes stand in for a folder Windows won't let go of.)
+  test.skipIf(WINDOWS)("a folder that can't be deleted at all: archived anyway, and the result names the folder left behind", async () => {
+    const { r, sp } = await addRepo()
+    const git = new HalfRemovingGit(exec, r.env)
+    const deps = setup(r.env, git)
+    const s = await startOne(sp)
+    const parent = dirname(s.worktreePath!)
+    const realRemove = git.removeWorktree.bind(git)
+    git.removeWorktree = async (repoRoot, path, force) => {
+      await realRemove(repoRoot, path, force).catch(async (e) => {
+        await chmod(parent, 0o500) // nothing under it can be deleted now
+        throw e
+      })
+    }
+    try {
+      expect(await archiveSession(s.id, { confirmedDataLoss: false }, deps)).toEqual({ ok: true, leftFolder: s.worktreePath })
+      expect(await has(s.worktreePath!)).toBe(true)
+      expect(store.state.sessions[0].archivedAt).toBeGreaterThan(0)
+      expect(await branchesOf(r)).toEqual(['main'])
+    } finally {
+      await chmod(parent, 0o700)
+    }
+  })
+
+  test.runIf(WINDOWS)("Windows: a program working in the worktree (an editor's terminal): archived, its folder named as left over", async () => {
+    const { r, sp, deps } = await addRepo()
+    const s = await startOne(sp)
+    const holder = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1e5)'], { cwd: s.worktreePath!, stdio: 'ignore' })
+    try {
+      const res = await archiveSession(s.id, { confirmedDataLoss: false }, deps)
+      expect(res).toEqual({ ok: true, leftFolder: s.worktreePath })
+      expect(await branchesOf(r)).toEqual(['main'])
+      expect(await t.backend.hasSession(claudeTmuxName(s.id))).toBe(false)
+      expect(store.state.sessions[0].archivedAt).toBeGreaterThan(0)
+    } finally {
+      holder.kill()
+    }
+  })
+
+  test('a removal that fails while git still has the worktree is tried again, then reported (the agent goes back in)', async () => {
+    const { r, sp } = await addRepo()
+    let tries = 0
+    class BusyGit extends GitClient {
+      override async removeWorktree(): Promise<void> {
+        tries++
+        throw new Error('Device or resource busy')
+      }
+    }
+    const deps = { ...setup(r.env, new BusyGit(exec, r.env)), removeRetryMs: 10 }
+    const s = await startOne(sp)
+    expect(await archiveSession(s.id, { confirmedDataLoss: false }, deps)).toEqual({ ok: false, error: expect.stringContaining('busy') })
+    expect(tries).toBe(3)
+    expect(await t.backend.hasSession(claudeTmuxName(s.id))).toBe(true)
   })
 
   test('unknown session never throws', async () => {
