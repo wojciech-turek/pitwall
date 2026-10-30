@@ -26,7 +26,7 @@ export interface PitwallApi {
   addFolder(projectId: string): Promise<AddFolderResult>
   confirmAddFolder(projectId: string, path: string, overwriteIdentity: boolean): Promise<AddFolderResult>
   removeSubProject(id: string): Promise<{ ok: boolean; message?: string }>
-  updateSubProject(id: string, patch: { setupCommand?: string }): Promise<void>
+  updateSubProject(id: string, patch: { setupCommand?: string; teardownCommand?: string }): Promise<void>
   prepareNewSession(subProjectId: string): Promise<NewSessionDefaults>
   startSession(i: NewSessionInput): Promise<StartResult>
   onStartProgress(cb: (p: StartProgress) => void): () => void
@@ -51,7 +51,7 @@ export interface PitwallApi {
   listChanges(sessionId: string): Promise<{ base: string; baseLabel: string; files: ChangedFile[] }>
   readDiff(sessionId: string, rel: string): Promise<{ original: string; modified: string; binary: boolean; tooLarge: boolean }>
   checkArchive(sessionId: string): Promise<ArchiveCheck>
-  archiveSession(sessionId: string, confirmedDataLoss: boolean): Promise<ArchiveResult>
+  archiveSession(sessionId: string, confirmedDataLoss: boolean, skipTeardown?: boolean): Promise<ArchiveResult>
   openExternal(url: string): Promise<void>
   openInCursor(sessionId: string): Promise<{ ok: boolean; message?: string }>
   setSettings(s: AppSettings): Promise<void>

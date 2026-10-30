@@ -7,7 +7,7 @@ export interface Project { id: string; name: string; identity: GitIdentity; extr
 export type SubProjectKind = 'repo' | 'folder'
 export interface SubProject {
   id: string; projectId: string; name: string; path: string; kind: SubProjectKind
-  repoRoot?: string; relPath?: string; setupCommand?: string; createdAt: number
+  repoRoot?: string; relPath?: string; setupCommand?: string; teardownCommand?: string; createdAt: number
 }
 export type PrState = 'OPEN' | 'CLOSED' | 'MERGED'
 export type ChecksState = 'passing' | 'failing' | 'pending' | 'none'
@@ -86,4 +86,8 @@ export interface ArchiveCheck {
   uncommittedFiles: number; unpushedCommits: number; hasRemote: boolean; branch?: string
   willDeleteBranch: boolean; willRemoveWorktree: boolean; worktreePath?: string
 }
-export type ArchiveResult = { ok: true } | { ok: false; needsConfirm: ArchiveCheck } | { ok: false; error: string }
+export type ArchiveResult =
+  | { ok: true }
+  | { ok: false; needsConfirm: ArchiveCheck }
+  | { ok: false; teardownFailed: { exitCode: number | null; timedOut: boolean; output: string } }
+  | { ok: false; error: string }

@@ -385,6 +385,62 @@ test.describe('dev build changes', () => {
     expect(branches.stdout).not.toContain('pitwall/fix-tax-rounding')
     expect(await tmux(e.socket, 'list-sessions', '-F', '#{session_name}').catch(() => '')).not.toContain(`pw-${sessionId}`)
   })
+
+  test('teardown: failure offers Cancel and Archive anyway, success archives', async () => {
+    const wtDirs = async (): Promise<string[]> => {
+      const { stdout } = await run('git', ['-C', e.repo.root, 'worktree', 'list', '--porcelain'], { env: e.repo.env })
+      return stdout.split('\n').filter((l) => l.startsWith('worktree ')).map((l) => l.slice(9)).filter((p) => p !== e.repo.root)
+    }
+    const setTeardown = async (cmd: string): Promise<void> => {
+      await page.getByTestId('subproject-row').hover()
+      await page.getByTestId('subproject-menu').click()
+      await page.getByTestId('subproject-setup').click()
+      await page.getByTestId('teardown-command').fill(cmd)
+      await page.getByTestId('setup-command-save').click()
+      await expect(page.getByTestId('subproject-settings-dialog')).toHaveCount(0)
+    }
+    const startSession = async (title: string): Promise<void> => {
+      await page.getByTestId('subproject-row').hover()
+      await page.getByTestId('new-session').click()
+      await page.getByTestId('session-title-input').fill(title)
+      await page.getByTestId('start-session').click()
+      await expect(page.getByTestId('new-session-dialog')).toHaveCount(0, { timeout: 30_000 })
+      await expect(page.getByTestId('session-row')).toHaveCount(1)
+    }
+    const openArchive = async (): Promise<void> => {
+      await page.getByTestId('session-row').hover()
+      await page.getByTestId('session-menu').click()
+      await page.getByTestId('session-archive').click()
+      await page.getByTestId('archive-confirm').click()
+    }
+    const ok = join(e.tmp, 'teardown-ok')
+
+    await startSession('Teardown fails')
+    expect(await wtDirs()).toHaveLength(1)
+    await setTeardown('echo teardown-said-no; exit 5')
+    await openArchive()
+    await expect(page.getByTestId('teardown-failed')).toContainText('exit code 5', { timeout: 30_000 })
+    await expect(page.getByTestId('teardown-output')).toContainText('teardown-said-no')
+    await shot(page, '15-teardown-failed')
+    await page.getByRole('button', { name: 'Cancel' }).click()
+    await expect(page.getByTestId('archive-dialog')).toHaveCount(0)
+    await expect(page.getByTestId('session-row')).toHaveCount(1)
+    expect(await wtDirs()).toHaveLength(1)
+
+    await openArchive()
+    await expect(page.getByTestId('archive-anyway')).toBeVisible({ timeout: 30_000 })
+    await page.getByTestId('archive-anyway').click()
+    await expect(page.getByTestId('archive-dialog')).toHaveCount(0, { timeout: 30_000 })
+    await expect(page.getByTestId('session-row')).toHaveCount(0)
+    expect(await wtDirs()).toHaveLength(0)
+
+    await startSession('Teardown works')
+    await setTeardown(`touch ${ok}`)
+    await openArchive()
+    await expect(page.getByTestId('archive-dialog')).toHaveCount(0, { timeout: 30_000 })
+    expect(existsSync(ok)).toBe(true)
+    expect(await wtDirs()).toHaveLength(0)
+  })
 })
 
 test.describe('packaged app', () => {

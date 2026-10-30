@@ -65,7 +65,7 @@ export function registerIpc(d: IpcDeps): () => void {
   handle(IPC.confirmAddFolder, (projectId: string, path: string, overwrite: boolean) =>
     projects.confirmAddFolder(projectId, path, overwrite))
   handle(IPC.removeSubProject, (id: string) => projects.removeSubProject(id))
-  handle(IPC.updateSubProject, (id: string, patch: { setupCommand?: string }) => projects.updateSubProject(id, patch))
+  handle(IPC.updateSubProject, (id: string, patch: { setupCommand?: string; teardownCommand?: string }) => projects.updateSubProject(id, patch))
   handle(IPC.prepareNewSession, (id: string) => manager.prepareNew(id))
   handle(IPC.startSession, (i: NewSessionInput) => manager.start(i, (p) => send(IPC.startProgress, p)))
   handle(IPC.renameSession, (id: string, title: string) => manager.rename(id, title))
@@ -96,8 +96,8 @@ export function registerIpc(d: IpcDeps): () => void {
     store, paths, git, tmux, exec, env, home: d.home, mutex: d.mutex, manager, ptyBridge: bridge
   })
   handle(IPC.checkArchive, (id: string) => checkArchive(id, archiveDeps()))
-  handle(IPC.archiveSession, (id: string, confirmed: boolean) =>
-    archiveSession(id, { confirmedDataLoss: confirmed }, archiveDeps()))
+  handle(IPC.archiveSession, (id: string, confirmed: boolean, skipTeardown?: boolean) =>
+    archiveSession(id, { confirmedDataLoss: confirmed, skipTeardown: !!skipTeardown }, archiveDeps()))
   handle(IPC.openExternal, async (url: string) => {
     // Only web links; never let the renderer open file: or custom-scheme URLs.
     if (/^https?:\/\//i.test(url)) await shell.openExternal(url)

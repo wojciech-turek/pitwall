@@ -356,3 +356,4 @@ input[type="checkbox"] { flex: none; width: 14px; height: 14px; margin: 0; paddi
 .titlebar { background: var(--bg-sidebar); }
 :focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 input:focus-visible, .terminal-host :focus-visible, .cm-editor :focus-visible { outline: none; }
+.teardown-output { max-height: 160px; overflow: auto; margin: 0 0 8px; padding: 8px; font-family: var(--mono, monospace); font-size: 11.5px; white-space: pre-wrap; background: var(--bg-sunken, rgba(0,0,0,.25)); border-radius: 6px; }

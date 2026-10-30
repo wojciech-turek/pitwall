@@ -1,9 +1,11 @@
 import { access, rm } from 'node:fs/promises'
 import type { ArchiveCheck, ArchiveResult, Session, SubProject } from '@shared/types'
-import { sessionDir } from '../paths'
+import { buildSessionEnv } from '../identity'
+import { eventsFile, sessionDir } from '../paths'
 import type { PtyBridge } from '../pty-bridge'
 import { claudeTmuxName, shellTmuxName } from '../tmux'
 import type { SessionManager } from './manager'
+import { runTeardown } from './teardown'
 import { launchTmuxFor, writeSessionFiles, type StarterDeps } from './starter'
 
 export type { ArchiveCheck, ArchiveResult }
@@ -11,6 +13,8 @@ export type { ArchiveCheck, ArchiveResult }
 export interface ArchiveDeps extends StarterDeps {
   manager: SessionManager
   ptyBridge: PtyBridge
+  /** Teardown time limit; default 2 minutes. */
+  teardownTimeoutMs?: number
 }
 
 const msg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
@@ -68,7 +72,7 @@ export async function checkArchive(sessionId: string, deps: ArchiveDeps): Promis
 
 export async function archiveSession(
   sessionId: string,
-  o: { confirmedDataLoss: boolean },
+  o: { confirmedDataLoss: boolean; skipTeardown?: boolean },
   deps: ArchiveDeps
 ): Promise<ArchiveResult> {
   try {
@@ -91,6 +95,27 @@ export async function archiveSession(
     await deps.tmux.killSession(shellTmuxName(s.id))
 
     const repoRoot = sp?.repoRoot
+    if (sp?.teardownCommand?.trim() && !o.skipTeardown && (await exists(s.cwd))) {
+      const project = deps.store.state.projects.find((p) => p.id === sp.projectId)
+      if (project) {
+        const r = await runTeardown(sp.teardownCommand, {
+          cwd: s.cwd,
+          env: {
+            ...deps.env,
+            ...buildSessionEnv({
+              project, session: s, rootPath: sp.repoRoot ?? sp.path, sessionDir: sessionDir(deps.paths, s.id),
+              eventsFile: eventsFile(deps.paths, s.id), claudeBin: deps.paths.claudeBin, ghBin: deps.paths.ghBin,
+              home: deps.home
+            }),
+            PITWALL_WORKTREE_PATH: s.worktreePath ?? s.cwd,
+            PITWALL_BRANCH: s.branch ?? '',
+            PITWALL_SESSION_TITLE: s.title
+          },
+          timeoutMs: deps.teardownTimeoutMs
+        })
+        if (r.timedOut || r.exitCode !== 0) return { ok: false, teardownFailed: r }
+      }
+    }
     if (check.willRemoveWorktree && repoRoot && s.worktreePath) {
       try {
         await deps.git.removeWorktree(repoRoot, s.worktreePath, true)

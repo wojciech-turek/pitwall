@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { access, mkdir, rm, writeFile } from 'node:fs/promises'
+import { access, appendFile, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
@@ -234,5 +234,97 @@ describe('archive', () => {
     const { deps } = await addRepo()
     expect(await archiveSession('nope', { confirmedDataLoss: true }, deps)).toEqual({ ok: false, error: 'Session not found.' })
     expect(await checkArchive('nope', deps)).toMatchObject({ willRemoveWorktree: false, willDeleteBranch: false })
+  })
+
+  describe('teardown', () => {
+    const setTeardown = (cmd: string) => store.update((d) => { d.subProjects[0].teardownCommand = cmd })
+
+    test('runs after tmux is killed, before the worktree is removed, in the folder, with the session env', async () => {
+      const { sp, deps } = await addRepo()
+      const s = await startOne(sp)
+      const out = join(t.tmp, 'td.txt')
+      const order = join(t.tmp, 'order.txt')
+      const real = deps.tmux.killSession.bind(deps.tmux)
+      deps.tmux = Object.assign(Object.create(deps.tmux), {
+        killSession: async (n: string) => { await appendFile(order, `kill\n`); return real(n) }
+      })
+      const wt = await realpath(s.worktreePath!)
+      await setTeardown(
+        `{ pwd -P; echo "$PITWALL_ROOT_PATH|$PITWALL_WORKTREE_PATH|$PITWALL_BRANCH|$PITWALL_SESSION_TITLE|$GIT_AUTHOR_NAME"; ` +
+        `[ -d "$PWD" ] && echo dir-exists; echo teardown >> ${order}; } > ${out}`
+      )
+      expect(await archiveSession(s.id, { confirmedDataLoss: false }, deps)).toEqual({ ok: true })
+      const lines = (await readFile(out, 'utf8')).trim().split('\n')
+      expect(lines[0]).toBe(wt)
+      expect(lines[1]).toBe(`${sp.repoRoot}|${s.worktreePath}|${s.branch}|Fix tax rounding|Jane`)
+      expect(lines[2]).toBe('dir-exists')
+      expect((await readFile(order, 'utf8')).trim().split('\n')).toEqual(['kill', 'kill', 'teardown'])
+      expect(await has(s.worktreePath!)).toBe(false)
+    })
+
+    test('non-zero exit reports the code and last 4 KB, leaves the worktree', async () => {
+      const { sp, deps } = await addRepo()
+      const s = await startOne(sp)
+      await setTeardown('head -c 10000 /dev/zero | tr "\\0" x; echo; echo boom >&2; exit 3')
+      const res = await archiveSession(s.id, { confirmedDataLoss: false }, deps)
+      expect(res).toMatchObject({ ok: false, teardownFailed: { exitCode: 3, timedOut: false } })
+      const out = (res as { teardownFailed: { output: string } }).teardownFailed.output
+      expect(out.length).toBeLessThanOrEqual(4096)
+      expect(out).toContain('boom')
+      expect(await has(s.worktreePath!)).toBe(true)
+      expect(store.state.sessions[0].archivedAt).toBeUndefined()
+    })
+
+    test('skipTeardown archives without running it', async () => {
+      const { sp, deps } = await addRepo()
+      const s = await startOne(sp)
+      const marker = join(t.tmp, 'ran')
+      await setTeardown(`touch ${marker}; exit 1`)
+      expect(await archiveSession(s.id, { confirmedDataLoss: false, skipTeardown: true }, deps)).toEqual({ ok: true })
+      expect(await has(marker)).toBe(false)
+      expect(await has(s.worktreePath!)).toBe(false)
+    })
+
+    test('a command past the limit is killed with its process group', async () => {
+      const { sp, deps } = await addRepo()
+      const s = await startOne(sp)
+      const marker = join(t.tmp, 'late')
+      await setTeardown(`(sleep 2; touch ${marker}) & sleep 30`)
+      deps.teardownTimeoutMs = 300
+      const t0 = Date.now()
+      const res = await archiveSession(s.id, { confirmedDataLoss: false }, deps)
+      expect(res).toMatchObject({ ok: false, teardownFailed: { exitCode: null, timedOut: true } })
+      expect(Date.now() - t0).toBeLessThan(5000)
+      await new Promise((r) => setTimeout(r, 2500))
+      expect(await has(marker)).toBe(false)
+      expect(await has(s.worktreePath!)).toBe(true)
+    })
+
+    test('a backgrounded child that outlives the command does not keep archive waiting', async () => {
+      const { sp, deps } = await addRepo()
+      const s = await startOne(sp)
+      await setTeardown('sleep 20 & echo started')
+      deps.teardownTimeoutMs = 10_000
+      const t0 = Date.now()
+      expect(await archiveSession(s.id, { confirmedDataLoss: false }, deps)).toEqual({ ok: true })
+      expect(Date.now() - t0).toBeLessThan(5000)
+    })
+
+    test('no teardown command: unchanged', async () => {
+      const { sp, deps } = await addRepo()
+      const s = await startOne(sp)
+      expect(await archiveSession(s.id, { confirmedDataLoss: false }, deps)).toEqual({ ok: true })
+    })
+
+    test('folder sessions run it in the folder', async () => {
+      const dir = join(t.tmp, 'plain')
+      await mkdir(dir)
+      const sp: SubProject = { id: 'sp_f', projectId: 'p_1', name: 'Plain', kind: 'folder', path: dir, createdAt: 0, teardownCommand: 'pwd -P > where.txt' }
+      await store.update((d) => { d.subProjects.push(sp) })
+      const deps = setup({})
+      const s = await startOne(sp)
+      expect(await archiveSession(s.id, { confirmedDataLoss: false }, deps)).toEqual({ ok: true })
+      expect((await readFile(join(dir, 'where.txt'), 'utf8')).trim()).toBe(await realpath(dir))
+    })
   })
 })

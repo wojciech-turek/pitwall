@@ -123,13 +123,17 @@ export class ProjectService {
     return { ok: true }
   }
 
-  async updateSubProject(id: string, patch: { setupCommand?: string }): Promise<void> {
+  async updateSubProject(id: string, patch: { setupCommand?: string; teardownCommand?: string }): Promise<void> {
     await this.deps.store.update((d) => {
       const sp = d.subProjects.find((s) => s.id === id)
       if (!sp) return
       if (patch.setupCommand !== undefined) {
         if (patch.setupCommand.trim()) sp.setupCommand = patch.setupCommand
         else delete sp.setupCommand
+      }
+      if (patch.teardownCommand !== undefined) {
+        if (patch.teardownCommand.trim()) sp.teardownCommand = patch.teardownCommand
+        else delete sp.teardownCommand
       }
     })
   }
