@@ -80,6 +80,8 @@ export interface PitwallApi {
   onMenuCommand(cb: (c: MenuCommand) => void): () => void
   /** Absolute path of a dropped file ('' if it has none). Synchronous, preload-only. */
   pathForFile(file: File): string
+  /** The OS (process.platform): shortcut labels, paths and the title bar differ on Windows. */
+  readonly platform: string
 }
 
 declare global {

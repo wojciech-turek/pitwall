@@ -1,12 +1,42 @@
-import { app, Notification } from 'electron'
+import { app, nativeImage, Notification, type BrowserWindow } from 'electron'
+import { badgeBitmap, badgeDescription } from './badge'
 
 export interface Notifier {
   notify(n: { sessionId: string; title: string; body: string }): void
   setBadge(count: number): void
+  /** A session started needing you (Windows flashes the taskbar button until the window is focused). */
+  attention?(): void
 }
 
-/** macOS notifications and the dock badge. `disabled` (PITWALL_DISABLE_NOTIFICATIONS) silences notifications only. */
-export function electronNotifier(onClick: (sessionId: string) => void, disabled: boolean): Notifier {
+/**
+ * Notifications and the waiting count: the Dock badge on macOS, an overlay badge on the taskbar button on Windows
+ * (which also flashes when a session needs you). `disabled` (PITWALL_DISABLE_NOTIFICATIONS) silences notifications
+ * only. `refresh()` puts the badge on a new window.
+ */
+export function electronNotifier(
+  onClick: (sessionId: string) => void,
+  disabled: boolean,
+  o: { platform?: NodeJS.Platform; window?: () => BrowserWindow | null } = {}
+): Notifier & { refresh(): void } {
+  const platform = o.platform ?? process.platform
+  const window = (): BrowserWindow | null => {
+    const w = o.window?.() ?? null
+    return w && !w.isDestroyed() ? w : null
+  }
+  let count = 0
+  const showBadge = (): void => {
+    if (platform !== 'win32') {
+      app.setBadgeCount(count)
+      return
+    }
+    const w = window()
+    if (!w) return // shown when the window comes (refresh)
+    const bitmap = badgeBitmap(count)
+    w.setOverlayIcon(
+      bitmap ? nativeImage.createFromBitmap(bitmap.data, { width: bitmap.width, height: bitmap.height, scaleFactor: 2 }) : null,
+      bitmap ? badgeDescription(count) : ''
+    )
+  }
   // Electron may garbage-collect a Notification before the user clicks it; hold it until it is done.
   const live = new Set<Notification>()
   return {
@@ -20,8 +50,15 @@ export function electronNotifier(onClick: (sessionId: string) => void, disabled:
       n.on('failed', release)
       n.show()
     },
-    setBadge(count) {
-      app.setBadgeCount(count)
-    }
+    setBadge(c) {
+      count = c
+      showBadge()
+    },
+    attention() {
+      if (platform !== 'win32') return
+      const w = window()
+      if (w && !w.isFocused()) w.flashFrame(true)
+    },
+    refresh: showBadge
   }
 }

@@ -63,3 +63,23 @@ export function buildMenuTemplate(send: (c: MenuCommand) => void, isDev: boolean
     { label: 'Window', submenu: [{ role: 'minimize' }, { role: 'zoom' }, { type: 'separator' }, { role: 'front' }] }
   ]
 }
+
+/** The menu's Ctrl shortcuts (accelerators `CmdOrCtrl+<key>` above); a test keeps the two in step. */
+const SHORTCUTS: Record<string, MenuCommand> = {
+  ',': { type: 'settings' }, n: { type: 'new-session' }, s: { type: 'save' }, w: { type: 'close-tab' },
+  k: { type: 'command-palette' }, p: { type: 'quick-open' }, j: { type: 'next-attention' }
+}
+
+export interface KeyInput { type: string; key: string; control: boolean; meta: boolean; alt: boolean; shift: boolean }
+
+/**
+ * Windows: the menu's shortcuts (Ctrl there), taken before the page sees them, so they work while a terminal has the
+ * keyboard (it would send Ctrl+K and the rest to the program as control characters) and with the menu bar hidden.
+ * macOS: null; the menu takes ⌘ shortcuts itself, and ⌘ never reaches a terminal as a control key.
+ */
+export function appShortcut(input: KeyInput, platform: NodeJS.Platform): MenuCommand | null {
+  if (platform === 'darwin' || input.type !== 'keyDown' || !input.control || input.meta || input.alt || input.shift) return null
+  const key = input.key.toLowerCase()
+  if (/^[1-9]$/.test(key)) return { type: 'select-index', index: Number(key) - 1 }
+  return SHORTCUTS[key] ?? null
+}

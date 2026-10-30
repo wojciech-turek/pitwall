@@ -2,8 +2,12 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
 import ErrorBoundary from './components/ErrorBoundary'
+import { platform } from './platform'
 import { isSessionDrag } from './state/dropZone'
 import './theme.css'
+
+// Styles that differ by OS (the title bar leaves room for Windows' window buttons) key off this.
+document.documentElement.dataset.platform = platform()
 
 // A file dropped anywhere but a terminal must not navigate the window to it.
 // A session dragged from the sidebar can only land on a drop layer; elsewhere it's refused (and slides back).

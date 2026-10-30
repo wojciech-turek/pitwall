@@ -103,6 +103,22 @@ describe('SessionManager', () => {
     expect(badges.at(-1)).toBe(1)
   })
 
+  test('needing you asks for attention (the Windows taskbar flash); finishing a reply does not', async () => {
+    await addSession('a')
+    let attention = 0
+    notifier = { ...notifier, attention: () => { attention++ } }
+    const m = await ready()
+    await ev('a', { e: 'UserPromptSubmit' })
+    await waitStatus(m, 'a', 'working')
+    await new Promise((r) => setTimeout(r, 5))
+    await ev('a', { e: 'Stop', msg: 'done' })
+    await waitFor(async () => notes.length === 1)
+    expect(attention).toBe(0)
+    await ev('a', { e: 'PermissionRequest', tool: 'Bash' })
+    await waitFor(async () => notes.length === 2)
+    expect(attention).toBe(1)
+  })
+
   test('question and other bodies', async () => {
     await addSession('a')
     await addSession('b')

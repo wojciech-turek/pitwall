@@ -63,7 +63,7 @@ export function getTerminal(sessionId: string, kind: TermKind): Entry {
   term.loadAddon(fit)
   term.loadAddon(new WebLinksAddon((_e, uri) => { void window.pitwall.openExternal(uri).catch(() => {}) }))
   term.loadAddon(new ClipboardAddon())
-  term.attachCustomKeyEventHandler((e) => !shouldPassToApp(e))
+  term.attachCustomKeyEventHandler((e) => !shouldPassToApp(e, { hasSelection: term.hasSelection() }))
   const entry: Entry = { term, fit, opened: false, rendered: false, reopenOnKey: false }
   term.onData((data) => {
     if (entry.reopenOnKey) {

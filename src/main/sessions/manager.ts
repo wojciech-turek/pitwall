@@ -422,6 +422,7 @@ export class SessionManager {
       title: `${s.title} · ${project?.name ?? ''}`,
       body: notificationBody(status, rt)
     })
+    if (status === 'needs_you') this.deps.notifier.attention?.()
   }
 
   private updateBadge(): void {

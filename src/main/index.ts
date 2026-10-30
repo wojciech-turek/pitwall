@@ -6,13 +6,14 @@ import { sessionBackendKind, type SessionBackend } from './backend'
 import { exec } from './exec'
 import { historySources, SessionHistory } from './history'
 import { HostBackend } from './host-backend'
-import { buildMenuTemplate } from './menu'
+import { appShortcut, buildMenuTemplate } from './menu'
 import { GitClient } from './git'
 import { ChangesService } from './changes'
 import { PrPoller } from './pr'
 import { registerIpc } from './ipc'
 import { electronNotifier } from './notifier'
 import { resolvePaths, sessionDir } from './paths'
+import { appUserModelId } from './platform'
 import { ProjectService } from './projects'
 import { PtyBridge } from './pty-bridge'
 import { installResources, resourcesDir } from './resources'
@@ -24,11 +25,15 @@ import { Tmux } from './tmux'
 import { TmuxBackend } from './tmux-backend'
 import { releasesUrl, UpdateChecker } from './updates'
 import { UsageTracker } from './usage'
+import { windowChrome } from './window-chrome'
 import { APP_VERSION } from '@shared/version'
 
 // A dev build is unmistakable: its own name, and below its own Dock icon.
 const DEV = !app.isPackaged
 app.setName(DEV ? 'Pitwall Dev' : 'Pitwall')
+const WINDOWS = process.platform === 'win32'
+// Windows ties notifications and the taskbar button to this id; it must be set before any notification.
+if (WINDOWS) app.setAppUserModelId(appUserModelId(DEV))
 // A dev build keeps its own data, tmux socket and worktrees (see resolvePaths).
 const paths = resolvePaths(process.env, homedir(), { dev: DEV })
 app.setPath('userData', paths.dataDir)
@@ -46,6 +51,7 @@ let disposeChanges: (() => void) | null = null
 let disposePr: (() => void) | null = null
 let disposeUsage: (() => void) | null = null
 let disposeUpdates: (() => void) | null = null
+let refreshBadge: (() => void) | null = null
 
 const send = (channel: string, ...args: unknown[]): void => {
   if (win && !win.isDestroyed()) win.webContents.send(channel, ...args)
@@ -57,8 +63,9 @@ function createWindow(): void {
     height: 900,
     minWidth: 900,
     minHeight: 600,
-    titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 14, y: 14 },
+    ...windowChrome(process.platform),
+    // macOS: the bundle's icon (a dev run sets the Dock's below). Windows: the installed .exe's, or the dev one.
+    ...(WINDOWS && DEV ? { icon: join(resourcesDir(), 'icon-dev.png') } : {}),
     title: DEV ? 'Pitwall Dev' : 'Pitwall',
     backgroundColor: '#171615',
     show: false,
@@ -73,8 +80,22 @@ function createWindow(): void {
   // The page's <title> must not override the window title.
   w.on('page-title-updated', (e) => e.preventDefault())
   // Tests open windows without taking the keyboard, so typing elsewhere during a run can't reach them.
-  w.once('ready-to-show', () => (process.env.PITWALL_SHOW_INACTIVE === '1' ? w.showInactive() : w.show()))
-  w.on('focus', () => manager?.setViewing(visibleIds, true))
+  w.once('ready-to-show', () => {
+    if (process.env.PITWALL_SHOW_INACTIVE === '1') w.showInactive()
+    else w.show()
+    refreshBadge?.() // Windows: the waiting count is an overlay on this window's taskbar button
+  })
+  w.on('focus', () => {
+    if (WINDOWS) w.flashFrame(false)
+    manager?.setViewing(visibleIds, true)
+  })
+  // Windows: the menu's Ctrl shortcuts go to the app even while a terminal has the keyboard (see appShortcut).
+  w.webContents.on('before-input-event', (e, input) => {
+    const command = appShortcut(input, process.platform)
+    if (!command) return
+    e.preventDefault()
+    w.webContents.send(IPC.menuCommand, command)
+  })
   w.on('blur', () => manager?.setViewing(visibleIds, false))
   // Nothing may replace the app's UI (a file dropped outside a terminal used to navigate to it). The one exception is
   // reloading the app's own page (the error screen's Reload button; location.reload() counts as a navigation).
@@ -153,7 +174,8 @@ async function bootstrap(): Promise<void> {
   const store = await Store.open(paths.stateFile)
   const git = new GitClient(exec, env)
   const backend = createBackend(env)
-  const notifier = electronNotifier(focusSession, paths.notificationsDisabled)
+  const notifier = electronNotifier(focusSession, paths.notificationsDisabled, { window: () => win })
+  refreshBadge = () => notifier.refresh()
   const mutex = new KeyedMutex()
   const mgr = new SessionManager({ store, paths, git, backend, exec, env, home, mutex, notifier })
   manager = mgr

@@ -124,6 +124,8 @@ Everything stays on your Mac. Pitwall has no telemetry and no account. Apart fro
 | `⌘W` | Close the file or diff tab. On a Claude or Shell tab with 2+ panes, close the pane (the session keeps running) |
 | `⌘,` | Settings (font, update checks, version) |
 
+On Windows the same shortcuts use Ctrl instead of ⌘ (`Ctrl+K`, `Ctrl+Enter`, …). In a terminal there, `Ctrl+V` pastes and `Ctrl+C` copies when text is selected (otherwise it interrupts, as usual).
+
 ## Where things live
 
 - **App data:** `~/Library/Application Support/pitwall`. This holds state, per-session event logs, the last known Claude usage, the last update check, helper scripts and `tmux.conf`.
