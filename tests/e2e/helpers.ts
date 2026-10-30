@@ -90,7 +90,8 @@ export async function shot(page: Page, name: string): Promise<void> {
 export async function paneText(socket: string, sessionId: string, window = 'claude'): Promise<string> {
   const names = await tmux(socket, 'list-windows', '-t', `=pw-${sessionId}`, '-F', '#{window_index}:#{window_name}').catch(() => '')
   const idx = names.split('\n').find((l) => l.endsWith(`:${window}`))?.split(':')[0] ?? '0'
-  return tmux(socket, 'capture-pane', '-p', '-t', `=pw-${sessionId}:${idx}`).catch(() => '')
+  // -J joins wrapped lines, so long paths match on narrow screens (e.g. CI runners)
+  return tmux(socket, 'capture-pane', '-p', '-J', '-t', `=pw-${sessionId}:${idx}`).catch(() => '')
 }
 
 export async function sessionIdOf(socket: string): Promise<string> {
