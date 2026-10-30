@@ -1,11 +1,11 @@
 import { execFile } from 'node:child_process'
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { promisify } from 'node:util'
 import { _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
 import { HostBackend } from '../../src/main/host-backend'
-import { commandLines, runsHost, WINDOWS } from '../helpers/processes'
+import { commandLines, killMentioning, runsHost, WINDOWS } from '../helpers/processes'
 import { tmuxSocketPath } from '../helpers/tmux-socket'
 import { makeRepo } from '../helpers/repo'
 import { waitFor } from '../helpers/wait'
@@ -80,13 +80,18 @@ export async function makeE2eEnv(): Promise<E2eEnv> {
   return {
     tmp, dataDir, socket, repo, env,
     cleanup: async () => {
-      if (!WINDOWS) { // (no tmux there)
-        await tmux(socket, 'kill-server').catch(() => undefined)
-        await rm(tmuxSocketPath(socket, env), { force: true })
+      try {
+        await stopHost(dataDir) // first, whatever fails below
+      } finally {
+        if (!WINDOWS) { // (no tmux there)
+          await tmux(socket, 'kill-server').catch(() => undefined)
+          await rm(tmuxSocketPath(socket, env), { force: true })
+        }
+        // Anything still running that names this test's folder: an agent or shell its host left, a second app.
+        await killMentioning(basename(tmp))
+        await repo.cleanup()
+        await rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
       }
-      await stopHost(dataDir)
-      await repo.cleanup()
-      await rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
     }
   }
 }

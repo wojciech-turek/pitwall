@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { delimiter, join, resolve } from 'node:path'
+import { basename, delimiter, join, resolve } from 'node:path'
 import type { SessionBackend } from '../../src/main/backend'
 import { exec } from '../../src/main/exec'
 import { HostBackend } from '../../src/main/host-backend'
@@ -9,7 +9,7 @@ import { installResources } from '../../src/main/resources'
 import { Tmux } from '../../src/main/tmux'
 import { TmuxBackend } from '../../src/main/tmux-backend'
 import { hostLaunch, stopHost } from './host'
-import { WINDOWS } from './processes'
+import { killMentioning, WINDOWS } from './processes'
 import { tmuxSocketPath } from './tmux-socket'
 
 export { tmuxSocketPath }
@@ -72,6 +72,7 @@ export async function makeTestEnv(): Promise<{
       if (WINDOWS) {
         ;(backend as HostBackend).disconnect()
         await stopHost(paths.dataDir) // the host and every session in it
+        await killMentioning(basename(tmp)) // anything else left that names this folder (an agent, a shell)
       } else {
         await tmux.killServer().catch(() => {})
         await rm(tmuxSocketPath(socket, env), { force: true })
