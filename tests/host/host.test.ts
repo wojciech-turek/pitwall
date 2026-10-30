@@ -283,6 +283,33 @@ describe('the handshake', () => {
   })
 })
 
+describe('reattaching', () => {
+  // Prints its size whenever it changes (Node programs, Claude Code among them, redraw on that, not on SIGWINCH alone).
+  const SIZES = `
+    console.log('SIZES READY')
+    process.stdout.on('resize', () => console.log('size ' + process.stdout.columns + 'x' + process.stdout.rows))
+    setInterval(() => {}, 1e5)
+  `
+  const count = (text: string, s: string): number => text.split(s).length - 1
+
+  test('an attach at the same size nudges the program to redraw; one that resizes it does not need to', async () => {
+    const b = app()
+    await b.newSession({ name: 'pw-s', cwd, argv: [process.execPath, '-e', SIZES] })
+    await waitFor(async () => (await b.capture('pw-s')).includes('SIZES READY'), 8000, 'ready')
+    const first = await attach(b, 'pw-s') // 200x50 → 100x30: a resize, so it redraws anyway
+    await waitFor(async () => first.out().includes('size 100x30'), 8000, 'first attach resizes')
+    await new Promise((r) => setTimeout(r, 300))
+    expect(first.out()).not.toContain('size 100x29')
+    first.a.close()
+
+    const again = await attach(b, 'pw-s') // same size: nothing would make it redraw
+    await waitFor(async () => count(again.out(), 'size 100x30') >= 2, 8000, 'redrawn at the same size') // replay + nudge
+    expect(again.out()).toContain('size 100x29')
+    await new Promise((r) => setTimeout(r, 300))
+    expect((await b.capture('pw-s')).trimEnd().endsWith('size 100x30')).toBe(true) // back at its real size
+  })
+})
+
 describe('versions and bad clients', () => {
   test("the host refuses an app that speaks another protocol, and keeps running", async () => {
     const b = app()

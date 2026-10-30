@@ -34,6 +34,8 @@ const DEFAULT_IDLE_MS = 10 * 60 * 1000
 const DEFAULT_RING_BYTES = 1024 * 1024
 const DEFAULT_HIGH_WATER = 4 * 1024 * 1024
 const HELLO_TIMEOUT_MS = 10_000
+/** How long a program sees the one-row-smaller size when nudged to redraw (see nudge). */
+const NUDGE_MS = 60
 const KILL_GRACE_MS = 3000
 const LOCK_STALE_MS = 5000
 const MAX_LOG_BYTES = 1024 * 1024
@@ -336,18 +338,58 @@ export class Host {
   }
 
   private request(conn: Conn, msg: Request): void {
+    if (msg.t === 'attach') return this.attach(conn, msg)
     let value: unknown
     try {
-      value = this.handle(conn, msg)
+      value = this.handle(msg)
     } catch (e) {
-      const code = e instanceof RequestError ? e.code : 'failed'
-      if (code === 'failed') this.log(`${msg.t} failed: ${(e as Error).stack ?? e}`)
-      this.send(conn, { t: 'res', id: msg.id, ok: false, code, error: (e as Error).message })
-      return
+      return this.fail(conn, msg.id, e)
     }
     this.send(conn, { t: 'res', id: msg.id, ok: true, value })
-    if (msg.t === 'attach') this.replay(conn.viewers.get(msg.ch)!)
     if (msg.t === 'shutdown') void this.stop('shutdown requested')
+  }
+
+  private fail(conn: Conn, id: number, e: unknown): void {
+    const code = e instanceof RequestError ? e.code : 'failed'
+    if (code === 'failed') this.log(`request failed: ${(e as Error).stack ?? e}`)
+    this.send(conn, { t: 'res', id, ok: false, code, error: (e as Error).message })
+  }
+
+  /**
+   * The newest attachment's size wins (as with tmux's window-size latest). It gets the replay, then the program is
+   * nudged to redraw if the size didn't change (a change makes it redraw anyway), so a full-screen program's screen
+   * is right even when the replay can't rebuild it.
+   */
+  private attach(conn: Conn, m: Extract<Request, { t: 'attach' }>): void {
+    const t = this.terms.get(m.name)
+    if (!t) return this.fail(conn, m.id, new RequestError('no-session', `no such session: ${m.name}`))
+    const old = conn.viewers.get(m.ch)
+    if (old) this.detach(old)
+    const v: Viewer = { conn, ch: m.ch, term: t, behind: false }
+    conn.viewers.set(m.ch, v)
+    t.viewers.add(v)
+    const resized = this.resize(t, m.cols, m.rows)
+    this.send(conn, { t: 'res', id: m.id, ok: true })
+    this.replay(v)
+    if (!resized) this.nudge(t)
+  }
+
+  /**
+   * Makes the program redraw at its current size: one row fewer for a moment, then back. (A SIGWINCH alone isn't
+   * enough: Node programs, Claude Code among them, only redraw when the size they read has changed. One row fewer,
+   * not more, so nothing is drawn below the terminal.)
+   */
+  private nudge(t: Term): void {
+    const rows = t.rows > 1 ? t.rows - 1 : t.rows + 1
+    try {
+      t.p.resize(t.cols, rows)
+    } catch {
+      return
+    }
+    setTimeout(() => {
+      if (this.terms.get(t.name) !== t) return
+      try { t.p.resize(t.cols, t.rows) } catch { /* exiting */ }
+    }, NUDGE_MS)
   }
 
   private term(name: string): Term {
@@ -356,7 +398,7 @@ export class Host {
     return t
   }
 
-  private handle(conn: Conn, m: Request): unknown {
+  private handle(m: Exclude<Request, { t: 'attach' }>): unknown {
     switch (m.t) {
       case 'list': return [...this.terms.keys()]
       case 'has': return this.terms.has(m.name)
@@ -378,16 +420,6 @@ export class Host {
         const t = this.terms.get(m.name)
         const roots: ProcessRoots = t ? { serverPid: process.pid, panePids: [t.pid] } : { serverPid: null, panePids: [] }
         return roots
-      }
-      case 'attach': {
-        const t = this.term(m.name)
-        const old = conn.viewers.get(m.ch)
-        if (old) this.detach(old)
-        const v: Viewer = { conn, ch: m.ch, term: t, behind: false }
-        conn.viewers.set(m.ch, v)
-        t.viewers.add(v)
-        this.resize(t, m.cols, m.rows) // the newest attachment's size wins, as with tmux's window-size latest
-        return undefined
       }
       case 'shutdown': return undefined
     }
@@ -449,13 +481,17 @@ export class Host {
     return undefined
   }
 
-  private resize(t: Term, cols: number, rows: number): void {
-    if (t.cols === cols && t.rows === rows) return
+  /** True if the size changed. */
+  private resize(t: Term, cols: number, rows: number): boolean {
+    if (t.cols === cols && t.rows === rows) return false
     try {
       t.p.resize(cols, rows)
       t.cols = cols
       t.rows = rows
-    } catch { /* exiting */ }
+      return true
+    } catch {
+      return false // exiting
+    }
   }
 
   private detach(v: Viewer): void {
