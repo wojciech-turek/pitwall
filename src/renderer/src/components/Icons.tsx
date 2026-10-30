@@ -12,3 +12,12 @@ export const FolderPlusIcon = (): React.JSX.Element => (
 export const MutedBellIcon = (): React.JSX.Element => (
   <svg {...base}><path d="M4 11.5h8l-1-1.5V7a3 3 0 0 0-6 0v3zM6.8 13.2a1.3 1.3 0 0 0 2.4 0M2.5 2.5l11 11" /></svg>
 )
+export const FileIcon = (): React.JSX.Element => (
+  <svg {...base}><path d="M4 2.5h4.8L12 5.7V13a.5.5 0 0 1-.5.5h-7A.5.5 0 0 1 4 13z" /><path d="M8.8 2.5v3.2H12" /></svg>
+)
+export const HistoryIcon = (): React.JSX.Element => (
+  <svg {...base}><path d="M3 8a5 5 0 1 0 1.5-3.6" /><path d="M2.8 2.6v2.3h2.3" /><path d="M8 5.3V8l1.8 1.2" /></svg>
+)
+export const ChevronIcon = (): React.JSX.Element => (
+  <svg {...base}><path d="M6.5 4.5 10 8l-3.5 3.5" /></svg>
+)

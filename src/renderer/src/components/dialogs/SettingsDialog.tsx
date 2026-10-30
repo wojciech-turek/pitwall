@@ -5,7 +5,7 @@ import { useUi } from '../../state/ui'
 import { useToast } from '../../state/toast'
 import { cleanIpcError } from '../../state/errors'
 import { useAppInfo } from '../../state/appInfo'
-import { setUpdateState } from '../../state/updates'
+import { checkForUpdatesNow } from '../../state/updates'
 
 export default function SettingsDialog(): React.JSX.Element | null {
   const snap = useSnapshot()
@@ -32,25 +32,10 @@ export default function SettingsDialog(): React.JSX.Element | null {
     }
   }
   const checkNow = async (): Promise<void> => {
-    if (info && !info.updateFeed) {
-      setCheckResult(info.dev ? 'Update checks are off in dev builds.' : 'Update checks are off.')
-      return
-    }
     setChecking(true)
     setCheckResult('')
-    try {
-      const before = await window.pitwall.getUpdateState()
-      const after = await window.pitwall.checkForUpdates()
-      setUpdateState(after)
-      // A failed check leaves checkedAt as it was.
-      if (after.checkedAt === null || after.checkedAt === before.checkedAt) setCheckResult("Couldn't reach GitHub.")
-      else if (after.newer.length > 0) setCheckResult(`Pitwall ${after.newer[0].version} is available.`)
-      else setCheckResult("You're up to date.")
-    } catch {
-      setCheckResult("Couldn't reach GitHub.")
-    } finally {
-      setChecking(false)
-    }
+    setCheckResult(await checkForUpdatesNow(info))
+    setChecking(false)
   }
   return (
     <Dialog title="Settings" testId="settings-dialog" onClose={closeDialog}>

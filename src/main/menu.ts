@@ -45,6 +45,9 @@ export function buildMenuTemplate(send: (c: MenuCommand) => void, isDev: boolean
     {
       label: 'Go',
       submenu: [
+        cmd('Command Palette…', 'CmdOrCtrl+K', { type: 'command-palette' }),
+        cmd('Go to File…', 'CmdOrCtrl+P', { type: 'quick-open' }),
+        { type: 'separator' },
         cmd('Next Session Needing You', 'CmdOrCtrl+J', { type: 'next-attention' }),
         { type: 'separator' },
         ...sessionItems

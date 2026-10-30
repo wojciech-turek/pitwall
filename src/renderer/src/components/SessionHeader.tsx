@@ -6,21 +6,23 @@ import { cleanIpcError } from '../state/errors'
 import PrBadge from './PrBadge'
 import StatusDot from './StatusDot'
 
+/** Opens the session's folder in Cursor; says why in a toast when it can't. */
+export async function openInCursor(sessionId: string): Promise<void> {
+  const toast = useToast.getState().show
+  try {
+    const r = await window.pitwall.openInCursor(sessionId)
+    if (!r.ok) toast(r.message ?? "Cursor isn't installed.")
+  } catch (e) {
+    toast(cleanIpcError(e))
+  }
+}
+
 export default function SessionHeader({ session, subProject, multi = false, onClose }: {
   session: SessionView; subProject?: SubProject; multi?: boolean; onClose?: () => void
 }): React.JSX.Element {
   const name = subProject?.name ?? ''
   const branch = session.liveBranch ?? session.branch
   const openDialog = useUi((u) => u.openDialog)
-  const toast = useToast((t) => t.show)
-  const openInCursor = async (): Promise<void> => {
-    try {
-      const r = await window.pitwall.openInCursor(session.id)
-      if (!r.ok) toast(r.message ?? "Cursor isn't installed.")
-    } catch (e) {
-      toast(cleanIpcError(e))
-    }
-  }
   return (
     <div className="session-header">
       <div className="session-header-row">
@@ -32,7 +34,7 @@ export default function SessionHeader({ session, subProject, multi = false, onCl
             : <span className="header-base">no git</span>}
         </span>
         {session.pr && <PrBadge pr={session.pr} />}
-        <button className="btn small header-open" data-testid="open-in-cursor" onClick={() => void openInCursor()}>Open in Cursor</button>
+        <button className="btn small header-open" data-testid="open-in-cursor" onClick={() => void openInCursor(session.id)}>Open in Cursor</button>
         <span className="header-status" data-testid="session-status">
           <span className="header-dot"><StatusDot status={session.status} /></span>
           <span className="header-status-label">{STATUS_LABEL[session.status]}</span>

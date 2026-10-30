@@ -23,8 +23,24 @@ export default function PaneLayout({ snap }: { snap: AppSnapshot }): React.JSX.E
 }
 
 /**
+ * Moves the keyboard into the active pane (its terminal or open file) unless it is already there.
+ * Never while a dialog or the palette is open.
+ */
+export function focusActivePane(): void {
+  const ui = useUi.getState()
+  const paneId = ui.layout.activePaneId
+  const sessionId = ui.selectedSessionId
+  if (!paneId || !sessionId || ui.dialog || ui.palette) return
+  const el = document.querySelector(`.pane[data-pane-id="${CSS.escape(paneId)}"]`)
+  if (!el || el.contains(document.activeElement)) return
+  const tab = ui.activeTab[sessionId] ?? 'claude'
+  if (tab === 'claude' || tab === 'shell') requestFocus(sessionId, tab)
+  else if (!focusActiveFile(sessionId) && document.activeElement instanceof HTMLElement) document.activeElement.blur()
+}
+
+/**
  * Keyboard focus follows the active pane when it changes without a click inside it (⌘1–9, ⌘J, a notification,
- * a drop, a dialog closing), so typing never goes to another pane. Never while a dialog is open.
+ * a drop, a dialog closing), so typing never goes to another pane. Never while a dialog or the palette is open.
  */
 function useFocusActivePane(): void {
   const paneId = useUi((s) => s.layout.activePaneId)
@@ -36,13 +52,7 @@ function useFocusActivePane(): void {
     if (!paneId || !sessionId || dialogOpen) return
     // after the browser's own mousedown focus, so a click inside the pane keeps its target
     const timer = setTimeout(() => {
-      const ui = useUi.getState()
-      if (ui.dialog || ui.layout.activePaneId !== paneId) return
-      const el = document.querySelector(`.pane[data-pane-id="${CSS.escape(paneId)}"]`)
-      if (!el || el.contains(document.activeElement)) return
-      const tab = ui.activeTab[sessionId] ?? 'claude'
-      if (tab === 'claude' || tab === 'shell') requestFocus(sessionId, tab)
-      else if (!focusActiveFile(sessionId) && document.activeElement instanceof HTMLElement) document.activeElement.blur()
+      if (useUi.getState().layout.activePaneId === paneId) focusActivePane()
     }, 0)
     return () => clearTimeout(timer)
   }, [paneId, sessionId, dialogOpen, paneIds])

@@ -14,6 +14,7 @@ export type AddFolderResult =
 export type MenuCommand =
   | { type: 'new-session' } | { type: 'next-attention' } | { type: 'select-index'; index: number }
   | { type: 'close-tab' } | { type: 'save' } | { type: 'settings' }
+  | { type: 'command-palette' } | { type: 'quick-open' }
 
 export interface PitwallApi {
   getSnapshot(): Promise<AppSnapshot>

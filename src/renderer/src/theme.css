@@ -363,3 +363,27 @@ input[type="checkbox"] { flex: none; width: 14px; height: 14px; margin: 0; paddi
 :focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 input:focus-visible, .terminal-host :focus-visible, .cm-editor :focus-visible { outline: none; }
 .teardown-output { max-height: 160px; overflow: auto; margin: 0 0 8px; padding: 8px; font-family: var(--mono, monospace); font-size: 11.5px; white-space: pre-wrap; background: var(--bg-sunken, rgba(0,0,0,.25)); border-radius: 6px; }
+
+/* ---------- command palette (⌘K, ⌘P) ---------- */
+.palette-backdrop { position: fixed; inset: 0; z-index: 120; background: rgba(0,0,0,.3); display: flex; justify-content: center; align-items: flex-start; padding-top: 11vh; -webkit-app-region: no-drag; }
+.palette { width: 580px; max-width: calc(100vw - 48px); max-height: 66vh; display: flex; flex-direction: column; background: var(--bg-panel); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 18px 50px rgba(0,0,0,.6); overflow: hidden; }
+.palette .palette-input { flex: none; height: 42px; margin: 0; padding: 0 14px; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; font-size: 14px; }
+.palette .palette-input:focus { border-color: var(--border); }
+.palette-input::placeholder { color: var(--text-faint); }
+.palette-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 2px 6px 6px; }
+.palette-group { padding: 9px 8px 3px; font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--text-faint); }
+.palette-item { display: flex; align-items: center; gap: 9px; min-height: 28px; padding: 3px 8px; border-radius: 6px; color: var(--text); cursor: default; }
+.palette-item.selected { background: var(--bg-selected); }
+.palette-icon { flex: none; width: 14px; display: inline-flex; align-items: center; justify-content: center; color: var(--text-faint); }
+.palette-item.selected .palette-icon { color: var(--text-muted); }
+.palette-label { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.palette-item mark { background: none; color: var(--accent); font-weight: 600; }
+.palette-detail { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; font-size: 11.5px; color: var(--text-faint); }
+.palette-detail.palette-path { text-align: left; }
+.palette-stack { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; padding: 1px 0; }
+.palette-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.palette-snippet { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; color: var(--text-muted); }
+.palette-empty { padding: 16px 10px; text-align: center; color: var(--text-faint); }
+.palette-foot { flex: none; display: flex; gap: 14px; padding: 6px 12px; border-top: 1px solid var(--border); background: var(--bg-sidebar); font-size: 11px; color: var(--text-faint); user-select: none; }
+.palette kbd { display: inline-block; min-width: 16px; margin-right: 3px; padding: 0 4px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-elevated); color: var(--text-muted); font: 10.5px/16px var(--font-ui); text-align: center; }
+.palette-item kbd.palette-kbd { flex: none; margin: 0 0 0 auto; }

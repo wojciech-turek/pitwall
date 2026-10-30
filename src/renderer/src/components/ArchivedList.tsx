@@ -5,7 +5,8 @@ import { useUi } from '../state/ui'
 const SEARCH_DELAY_MS = 150
 
 export default function ArchivedList({ snap }: { snap: AppSnapshot }): React.JSX.Element | null {
-  const [open, setOpen] = useState(false)
+  const open = useUi((s) => s.archivedOpen)
+  const setOpen = useUi((s) => s.setArchivedOpen)
   const [query, setQuery] = useState('')
   // The latest search results (titles and Claude conversations); null until the first answer.
   const [hits, setHits] = useState<HistoryHit[] | null>(null)
@@ -50,7 +51,7 @@ export default function ArchivedList({ snap }: { snap: AppSnapshot }): React.JSX
 
   return (
     <div className="archived" data-testid="archived-list">
-      <button className="archived-toggle" data-testid="archived-toggle" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+      <button className="archived-toggle" data-testid="archived-toggle" aria-expanded={open} onClick={() => setOpen(!open)}>
         {open ? '▾' : '▸'} Archived ({archivedCount})
       </button>
       {open && (

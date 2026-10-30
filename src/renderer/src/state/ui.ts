@@ -3,6 +3,7 @@ import type { AddFolderResult } from '@shared/api'
 import { clearDraft, clearSessionDrafts } from '../editor/drafts'
 import * as L from './layout'
 import type { Layout, Zone } from './layout'
+import type { PaletteMode } from './palette'
 
 export type MainTab = { id: 'claude' } | { id: 'shell' } | { id: string; kind: 'file' | 'diff'; path: string }
 
@@ -28,6 +29,10 @@ export interface UiState {
   activeTab: Record<string, string>
   rightTab: 'files' | 'changes'
   dialog: DialogState | null
+  /** The command palette (⌘K) or quick open (⌘P); never at the same time as a dialog. */
+  palette: PaletteMode | null
+  /** The sidebar's Archived list is expanded. */
+  archivedOpen: boolean
   dirty: Record<string, boolean>
   diffMode: 'split' | 'unified'
   setDiffMode(m: 'split' | 'unified'): void
@@ -46,8 +51,13 @@ export interface UiState {
   closeTab(sessionId: string, tabId: string): void
   setActiveTab(sessionId: string, tabId: string): void
   setRightTab(t: 'files' | 'changes'): void
+  /** Opening a dialog closes the palette. */
   openDialog(d: DialogState): void
   closeDialog(): void
+  /** No-op while a dialog is open. */
+  openPalette(mode: PaletteMode): void
+  closePalette(): void
+  setArchivedOpen(open: boolean): void
   setDirty(tabKey: string, dirty: boolean): void
   /** Forget tabs, drafts and dirty flags of a session that no longer exists (archived). */
   forgetSession(sessionId: string): void
@@ -108,6 +118,8 @@ export const useUi = create<UiState>()((set, get) => ({
   draggingSessionId: null,
   rightTab: 'files',
   dialog: null,
+  palette: null,
+  archivedOpen: false,
   dirty: {},
   diffMode: 'split',
   setDiffMode: (diffMode) => set({ diffMode }),
@@ -153,8 +165,11 @@ export const useUi = create<UiState>()((set, get) => ({
     }),
   setActiveTab: (sessionId, tabId) => set((s) => ({ activeTab: { ...s.activeTab, [sessionId]: tabId } })),
   setRightTab: (rightTab) => set({ rightTab }),
-  openDialog: (dialog) => set({ dialog }),
+  openDialog: (dialog) => set({ dialog, palette: null }),
   closeDialog: () => set({ dialog: null }),
+  openPalette: (palette) => set((s) => (s.dialog ? s : { palette })),
+  closePalette: () => set({ palette: null }),
+  setArchivedOpen: (archivedOpen) => set({ archivedOpen }),
   setDirty: (tabKey, dirty) => set((s) => ({ dirty: { ...s.dirty, [tabKey]: dirty } })),
   forgetSession: (sessionId) =>
     set((s) => {

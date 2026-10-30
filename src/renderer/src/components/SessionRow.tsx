@@ -39,7 +39,8 @@ export default function SessionRow({ session, onSelect, projectName, subProjectN
   const openDialog = useUi((s) => s.openDialog)
   const dragging = useUi((s) => s.draggingSessionId === session.id)
   const setDraggingSession = useUi((s) => s.setDraggingSession)
-  const hover = useHoverCard(editing || dragging)
+  const paletteOpen = useUi((s) => s.palette !== null)
+  const hover = useHoverCard(editing || dragging || paletteOpen)
 
   useEffect(() => {
     if (editing) { done.current = false; input.current?.select() }

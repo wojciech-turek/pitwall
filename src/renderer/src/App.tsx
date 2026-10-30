@@ -19,6 +19,7 @@ import { useMenuCommands } from './state/menuCommands'
 import { usePruneTerminals } from './components/MainArea'
 import PaneLayout from './components/PaneLayout'
 import DropLayer from './components/DropLayer'
+import CommandPalette from './components/CommandPalette'
 
 function DialogHost(): React.JSX.Element | null {
   const dialog = useUi((s) => s.dialog)
@@ -44,6 +45,7 @@ export default function App(): React.JSX.Element {
   const select = useUi((s) => s.select)
   const pruneSessions = useUi((s) => s.pruneSessions)
   const dragging = useUi((s) => s.draggingSessionId !== null)
+  const palette = useUi((s) => s.palette)
   const toast = useToast()
 
   usePruneTerminals(snap)
@@ -76,6 +78,7 @@ export default function App(): React.JSX.Element {
         {snap && <RightPanel snap={snap} sessionId={selected} />}
       </div>
       <DialogHost />
+      {snap && palette && <CommandPalette snap={snap} mode={palette} />}
       {toast.message && <div className="toast" role="status" onClick={toast.clear}>{toast.message}</div>}
     </div>
   )

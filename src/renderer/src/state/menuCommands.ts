@@ -6,10 +6,26 @@ import { saveActiveFile } from '../components/FileEditor'
 import { useToast } from './toast'
 import { useUi } from './ui'
 import { panes } from './layout'
+import type { PaletteMode } from './palette'
 
 const basename = (p: string): string => p.split('/').filter(Boolean).pop() ?? p
 
-/** Handles application-menu commands (⌘N, ⌘S, ⌘W, ⌘J, ⌘1…⌘9, ⌘,). They act on the active pane. */
+/** ⌘J: the next session that needs you, then the next unread one. */
+export function goToNextAttention(s: AppSnapshot | null): void {
+  if (!s) return
+  const id = nextAttention(sidebarOrder(s), useUi.getState().selectedSessionId)
+  if (id) useUi.getState().select(id)
+  else useToast.getState().show('Nothing needs you right now.')
+}
+
+/** ⌘K / ⌘P: opens the palette, switches its mode, or closes it when it's already in that mode. */
+function togglePalette(mode: PaletteMode): void {
+  const ui = useUi.getState()
+  if (ui.palette === mode) ui.closePalette()
+  else ui.openPalette(mode) // no-op while a dialog is open
+}
+
+/** Handles application-menu commands (⌘K, ⌘P, ⌘N, ⌘S, ⌘W, ⌘J, ⌘1…⌘9, ⌘,). They act on the active pane. */
 export function useMenuCommands(snap: AppSnapshot | null): void {
   const snapRef = useRef(snap)
   snapRef.current = snap
@@ -18,8 +34,10 @@ export function useMenuCommands(snap: AppSnapshot | null): void {
     const toast = useToast.getState().show
     const s = snapRef.current
     const sel = ui.selectedSessionId
-    // Dialogs own the keyboard.
-    if (ui.dialog) return
+    if (c.type === 'command-palette') { togglePalette('commands'); return }
+    if (c.type === 'quick-open') { togglePalette('files'); return }
+    // Dialogs and the palette own the keyboard.
+    if (ui.dialog || ui.palette) return
     switch (c.type) {
       case 'settings': ui.openDialog({ type: 'settings' }); return
       case 'new-session': {
@@ -28,13 +46,7 @@ export function useMenuCommands(snap: AppSnapshot | null): void {
         else toast('Select a session first, or use + next to a sub-project.')
         return
       }
-      case 'next-attention': {
-        if (!s) return
-        const id = nextAttention(sidebarOrder(s), sel)
-        if (id) ui.select(id)
-        else toast('Nothing needs you right now.')
-        return
-      }
+      case 'next-attention': goToNextAttention(s); return
       case 'select-index': {
         const target = s ? sidebarOrder(s)[c.index] : undefined
         if (target) ui.select(target.id)

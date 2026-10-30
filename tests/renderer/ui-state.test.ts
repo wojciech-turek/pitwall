@@ -13,7 +13,7 @@ beforeEach(() => {
   layoutStorage.save = (l) => { saved.push(l) }
   useUi.setState({
     layout: EMPTY_LAYOUT, visibleSessionIds: [], selectedSessionId: null, draggingSessionId: null,
-    tabs: {}, activeTab: {}, dialog: null, dirty: {}
+    tabs: {}, activeTab: {}, dialog: null, palette: null, dirty: {}
   })
 })
 
@@ -258,5 +258,23 @@ describe('layout persistence', () => {
     expect(bare.getState().layout.root).toBeNull()
     bare.getState().select('s1')
     expect(bare.getState().visibleSessionIds).toEqual(['s1'])
+  })
+})
+
+describe('palette', () => {
+  test('dialogs and the palette never stack', () => {
+    const ui = useUi.getState()
+    ui.openPalette('commands')
+    expect(useUi.getState().palette).toBe('commands')
+    ui.openDialog({ type: 'settings' }) // e.g. an action that opens a dialog
+    expect(useUi.getState().palette).toBeNull()
+    expect(useUi.getState().dialog).toEqual({ type: 'settings' })
+    ui.openPalette('files') // suppressed while a dialog is open
+    expect(useUi.getState().palette).toBeNull()
+    ui.closeDialog()
+    ui.openPalette('files')
+    expect(useUi.getState().palette).toBe('files')
+    ui.closePalette()
+    expect(useUi.getState().palette).toBeNull()
   })
 })

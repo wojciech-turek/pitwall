@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { DotsIcon } from './Icons'
+import { useUi } from '../state/ui'
 
 export interface MenuItem { label: string; onClick: () => void; danger?: boolean; testId?: string }
 
 export default function Menu({ items, testId, label = 'More actions' }: { items: MenuItem[]; testId?: string; label?: string }): React.JSX.Element {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLSpanElement>(null)
+  const paletteOpen = useUi((s) => s.palette !== null)
+  useEffect(() => { if (paletteOpen) setOpen(false) }, [paletteOpen])
   useEffect(() => {
     if (!open) return
     const down = (e: MouseEvent): void => {

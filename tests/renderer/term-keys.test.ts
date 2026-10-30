@@ -11,6 +11,11 @@ describe('shouldPassToApp', () => {
     expect(shouldPassToApp(key({ metaKey: true, key: 'a' }))).toBe(false)
     expect(shouldPassToApp(key({ metaKey: true, key: '3' }))).toBe(true)
   })
+  test('⌘K and ⌘P open the palette, never reach the terminal', () => {
+    for (const k of ['k', 'K', 'p', 'P']) expect(shouldPassToApp(key({ metaKey: true, key: k }))).toBe(true)
+    expect(shouldPassToApp(key({ ctrlKey: true, key: 'k' }))).toBe(false) // ^K is the shell's kill-line
+    expect(shouldPassToApp(key({ ctrlKey: true, key: 'p' }))).toBe(false) // ^P is history-up
+  })
   test('plain keys stay in the terminal', () => {
     expect(shouldPassToApp(key({ key: 'Escape' }))).toBe(false)
     expect(shouldPassToApp(key({ ctrlKey: true, key: 'c' }))).toBe(false)

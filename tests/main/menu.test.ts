@@ -24,6 +24,8 @@ describe('menu', () => {
     expect(press('CmdOrCtrl+N')).toEqual([{ type: 'new-session' }])
     expect(press('CmdOrCtrl+S')).toEqual([{ type: 'save' }])
     expect(press('CmdOrCtrl+,')).toEqual([{ type: 'settings' }])
+    expect(press('CmdOrCtrl+K')).toEqual([{ type: 'command-palette' }])
+    expect(press('CmdOrCtrl+P')).toEqual([{ type: 'quick-open' }])
   })
 
   test('⌘W is never the window-closing role', () => {
