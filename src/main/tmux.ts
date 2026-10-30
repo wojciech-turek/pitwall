@@ -40,6 +40,13 @@ export class Tmux {
     await this.mustRun(['new-session', '-d', '-s', o.name, '-c', o.cwd, '-x', '200', '-y', '50', '--', ...o.argv])
   }
 
+  /** Pids of every pane's first process; [] if the session doesn't exist. */
+  async listPanePids(name: string): Promise<number[]> {
+    const r = await this.run(['list-panes', '-s', '-t', `=${name}`, '-F', '#{pane_pid}'])
+    if (r.code !== 0) return []
+    return r.stdout.split('\n').map((l) => Number(l.trim())).filter((n) => Number.isInteger(n) && n > 1)
+  }
+
   async killSession(name: string): Promise<void> {
     await this.run(['kill-session', '-t', `=${name}`])
   }

@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { access, appendFile, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -326,5 +326,36 @@ describe('archive', () => {
       expect(await archiveSession(s.id, { confirmedDataLoss: false }, deps)).toEqual({ ok: true })
       expect((await readFile(join(dir, 'where.txt'), 'utf8')).trim()).toBe(await realpath(dir))
     })
+  })
+
+  test('archiving stops processes the session left running, and only those', async () => {
+    const { sp, deps } = await addRepo()
+    const s = await startOne(sp)
+    const f1 = join(t.tmp, 'pid1'), f2 = join(t.tmp, 'pid2')
+    await manager.ensureTerminalTarget(s.id, 'shell')
+    const shellName = shellTmuxName(s.id)
+    await t.tmux.sendKeys(shellName, [`nohup sleep 301 >/dev/null 2>&1 & echo $! > ${f1}; sh -c 'sleep 302 & echo $! > ${f2}; wait' &`], true)
+    await t.tmux.sendKeys(shellName, ['Enter'])
+    const outside = spawn('sleep', ['303'], { stdio: 'ignore' })
+    const alive = (pid: number) => { try { process.kill(pid, 0); return true } catch { return false } }
+    const pidOf = async (f: string) => {
+      for (let i = 0; i < 100; i++) {
+        const n = Number((await readFile(f, 'utf8').catch(() => '')).trim())
+        if (n) return n
+        await new Promise((r) => setTimeout(r, 100))
+      }
+      throw new Error('pid file never appeared')
+    }
+    try {
+      const p1 = await pidOf(f1), p2 = await pidOf(f2)
+      expect(alive(p1) && alive(p2)).toBe(true)
+      expect(await archiveSession(s.id, { confirmedDataLoss: false }, deps)).toEqual({ ok: true })
+      await new Promise((r) => setTimeout(r, 300))
+      expect(alive(p1)).toBe(false)
+      expect(alive(p2)).toBe(false)
+      expect(alive(outside.pid!)).toBe(true)
+    } finally {
+      outside.kill('SIGKILL')
+    }
   })
 })

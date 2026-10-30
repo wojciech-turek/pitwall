@@ -69,7 +69,7 @@ export default function ArchiveDialog({ sessionId }: { sessionId: string }): Rea
       {failure && (
         <div data-testid="teardown-failed">
           <p className="archive-error" role="alert">
-            Teardown {failure.timedOut ? 'timed out after 2 minutes' : `failed (exit code ${failure.exitCode ?? 'unknown'})`}. The agent is stopped; nothing was deleted.
+            Teardown {failure.timedOut ? 'timed out after 2 minutes' : `failed (exit code ${failure.exitCode ?? 'unknown'})`}. The agent and anything it started are stopped; nothing was deleted.
           </p>
           {failure.output && <pre className="teardown-output" data-testid="teardown-output">{failure.output}</pre>}
         </div>

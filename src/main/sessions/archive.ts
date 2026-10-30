@@ -5,6 +5,7 @@ import { eventsFile, sessionDir } from '../paths'
 import type { PtyBridge } from '../pty-bridge'
 import { claudeTmuxName, shellTmuxName } from '../tmux'
 import type { SessionManager } from './manager'
+import { snapshotLeftovers, stopLeftovers } from './leftovers'
 import { runTeardown } from './teardown'
 import { launchTmuxFor, writeSessionFiles, type StarterDeps } from './starter'
 
@@ -89,6 +90,11 @@ export async function archiveSession(
       return { ok: false, needsConfirm: check }
     }
 
+    const panePids = [
+      ...(await deps.tmux.listPanePids(claudeTmuxName(s.id))),
+      ...(await deps.tmux.listPanePids(shellTmuxName(s.id)))
+    ]
+    const leftovers = await snapshotLeftovers(panePids)
     deps.ptyBridge.close(s.id, 'claude')
     deps.ptyBridge.close(s.id, 'shell')
     await deps.tmux.killSession(claudeTmuxName(s.id))
@@ -113,9 +119,15 @@ export async function archiveSession(
           },
           timeoutMs: deps.teardownTimeoutMs
         })
-        if (r.timedOut || r.exitCode !== 0) return { ok: false, teardownFailed: r }
+        if (r.timedOut || r.exitCode !== 0) {
+          await stopLeftovers(leftovers)
+          return { ok: false, teardownFailed: r }
+        }
+      } else {
+        console.warn(`Teardown skipped for ${s.id}: project ${sp.projectId} not found.`)
       }
     }
+    await stopLeftovers(leftovers)
     if (check.willRemoveWorktree && repoRoot && s.worktreePath) {
       try {
         await deps.git.removeWorktree(repoRoot, s.worktreePath, true)

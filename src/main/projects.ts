@@ -132,6 +132,7 @@ export class ProjectService {
         else delete sp.setupCommand
       }
       if (patch.teardownCommand !== undefined) {
+        if (typeof patch.teardownCommand !== 'string') throw new Error('Teardown command must be text.')
         if (patch.teardownCommand.trim()) sp.teardownCommand = patch.teardownCommand
         else delete sp.teardownCommand
       }

@@ -135,6 +135,7 @@ Everything stays on your Mac. Pitwall has no telemetry and no account. Apart fro
 - **Identity changes apply when an agent restarts.** After editing a project, exit Claude in a session and press Enter.
 - **A pane that moves when you split or close another one is redrawn.** Open files keep their unsaved text, but lose undo history.
 - **With several Claude accounts** (a project's `CLAUDE_CONFIG_DIR`), the usage meter shows whichever session replied last.
+- **Archiving stops what the session started, unless it fully detached.** Processes that leave the session (e.g. Docker containers) aren't stopped automatically; that's what the teardown command is for.
 
 ## Development
 
