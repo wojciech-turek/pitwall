@@ -109,7 +109,13 @@ export function registerIpc(d: IpcDeps): () => void {
       return { ok: false, message: "Cursor isn't installed." }
     }
   })
-  handle(IPC.setSettings, (s: unknown) => store.update((d) => { d.settings = settingsFrom(s, d.settings) }))
+  handle(IPC.setSettings, async (s: unknown) => {
+    const wasOn = store.state.settings.checkForUpdates !== false
+    const r = await store.update((d) => { d.settings = settingsFrom(s, d.settings) })
+    // Turned back on: check now rather than up to a day later.
+    if (!wasOn && store.state.settings.checkForUpdates !== false) void d.updates.checkNow()
+    return r
+  })
 
   on(IPC.setViewing, (ids: unknown) =>
     d.onViewing(Array.isArray(ids) && ids.every((x) => typeof x === 'string') ? (ids as string[]) : [])

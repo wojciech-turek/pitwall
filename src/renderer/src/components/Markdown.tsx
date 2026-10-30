@@ -15,10 +15,19 @@ type Block =
   | { kind: 'code'; text: string }
   | { kind: 'para'; text: string }
 
-const HEADING = /^(#{1,6})\s+(.*?)\s*#*\s*$/
+const HEADING = /^(#{1,6})[ \t]+(.*)$/
 const BULLET = /^\s*[-*+]\s+(.*)$/
 const NUMBERED = /^\s*\d{1,9}[.)]\s+(.*)$/
 const FENCE = /^\s*(```|~~~)/
+
+/** Heading text without a closing run of #s. Done by hand so a long line can't stall rendering. */
+function headingText(s: string): string {
+  let t = s.trimEnd()
+  let j = t.length
+  while (j > 0 && t[j - 1] === '#') j--
+  if (j < t.length && (j === 0 || t[j - 1] === ' ' || t[j - 1] === '\t')) t = t.slice(0, j).trimEnd()
+  return t
+}
 
 function blocks(text: string): Block[] {
   const lines = text.replace(/\r\n?/g, '\n').split('\n')
@@ -38,7 +47,7 @@ function blocks(text: string): Block[] {
     }
     const h = HEADING.exec(line)
     if (h) {
-      out.push({ kind: 'heading', level: h[1].length, text: h[2] })
+      out.push({ kind: 'heading', level: h[1].length, text: headingText(h[2]) })
       i++
       continue
     }

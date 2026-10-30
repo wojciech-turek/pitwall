@@ -1,6 +1,6 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { app, BrowserWindow, dialog, Menu, shell } from 'electron'
+import { app, BrowserWindow, dialog, Menu, powerMonitor, shell } from 'electron'
 import { IPC } from '@shared/api'
 import { exec } from './exec'
 import { buildMenuTemplate } from './menu'
@@ -68,7 +68,8 @@ function createWindow(): void {
   winLoaded = false
   // The page's <title> must not override the window title.
   w.on('page-title-updated', (e) => e.preventDefault())
-  w.once('ready-to-show', () => w.show())
+  // Tests open windows without taking the keyboard, so typing elsewhere during a run can't reach them.
+  w.once('ready-to-show', () => (process.env.PITWALL_SHOW_INACTIVE === '1' ? w.showInactive() : w.show()))
   w.on('focus', () => manager?.setViewing(visibleIds, true))
   w.on('blur', () => manager?.setViewing(visibleIds, false))
   // Nothing may replace the app's UI (a file dropped outside a terminal used to navigate to it). The one exception is
@@ -177,7 +178,10 @@ async function bootstrap(): Promise<void> {
   })
   await updates.load() // the saved notice shows at once; the next check waits until the last one is a day old
   updates.start()
-  disposeUpdates = () => updates.stop()
+  // Timers stop while the Mac sleeps; reschedule on wake so "about once a day" stays true on laptops.
+  const onResume = (): void => updates.start()
+  powerMonitor.on('resume', onResume)
+  disposeUpdates = () => { powerMonitor.removeListener('resume', onResume); updates.stop() }
   disposeIpc = registerIpc({
     manager: mgr, changes, store, git, tmux, projects, bridge, paths, exec, env, home, mutex, usage, updates, send, dev: DEV,
     onViewing: (ids) => {

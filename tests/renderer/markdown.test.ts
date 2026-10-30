@@ -66,4 +66,12 @@ describe('Markdown', () => {
     }
     expect(md('javascript:alert(1)')).toBe('<p>javascript:alert(1)</p>')
   })
+
+  test('headings drop a closing run of #s, and a long heading line renders fast', () => {
+    expect(md('## Fixed ##')).toContain('Fixed</')
+    expect(md('## C# notes')).toContain('C# notes</')
+    const t0 = Date.now()
+    md('# a' + ' '.repeat(20000) + 'b')
+    expect(Date.now() - t0).toBeLessThan(200)
+  })
 })

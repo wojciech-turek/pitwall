@@ -80,7 +80,7 @@ cp -R release/mac-arm64/Pitwall.app /Applications/
 
 ## Updating
 
-When a new release is out, Pitwall shows **Update available** with the changelog. Download the new DMG, quit Pitwall, and replace the app in Applications. Your agents keep running in tmux and reattach when you reopen it.
+When a new release is out, Pitwall shows **Update available** with the changelog. Download the new DMG, quit Pitwall, and replace the app in Applications. Your agents keep running in tmux and reattach when you reopen it. macOS treats each new download as unverified, so the first launch of a new version needs **Open Anyway** again (see Install).
 
 ## Getting started
 
@@ -107,7 +107,7 @@ Pitwall:
 - never stores your GitHub token;
 - never deletes work without asking.
 
-Everything stays on your Mac. Pitwall has no telemetry and no account. The one network request it makes itself: about once a day it asks GitHub for the list of Pitwall releases, to tell you about updates. It sends nothing about you or your work. Turn it off in Settings (**Check for updates on GitHub**).
+Everything stays on your Mac. Pitwall has no telemetry and no account. Apart from the `gh` calls behind PR badges, the one network request it makes itself is this: about once a day it asks GitHub for the list of Pitwall releases, to tell you about updates. It sends nothing about you or your work. Turn it off in Settings (**Check for updates on GitHub**).
 
 ## Keyboard shortcuts
 
@@ -118,11 +118,11 @@ Everything stays on your Mac. Pitwall has no telemetry and no account. The one n
 | `⌘J` | Next session that needs you (then the next unread one) |
 | `⌘S` | Save the open file |
 | `⌘W` | Close the file or diff tab. On a Claude or Shell tab with 2+ panes, close the pane (the session keeps running) |
-| `⌘,` | Settings (terminal and editor font) |
+| `⌘,` | Settings (font, update checks, version) |
 
 ## Where things live
 
-- **App data:** `~/Library/Application Support/pitwall`. This holds state, per-session event logs, the last known Claude usage, helper scripts and `tmux.conf`.
+- **App data:** `~/Library/Application Support/pitwall`. This holds state, per-session event logs, the last known Claude usage, the last update check, helper scripts and `tmux.conf`.
 - **Worktrees:** `~/pitwall/worktrees/<folder>/<session>`
 - **tmux:** `tmux -L pitwall ls`
 - **Dev builds** (`pnpm dev`) use `pitwall-dev` for all three, so they never share agents with the installed app.
