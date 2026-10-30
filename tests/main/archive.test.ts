@@ -24,6 +24,7 @@ let store: Store
 let manager: SessionManager
 let git: GitClient
 let closed: string[]
+let detached: string[]
 
 const project: Project = {
   id: 'p_1', name: 'P', createdAt: 0, extraEnv: [],
@@ -34,6 +35,7 @@ beforeEach(async () => {
   t = await makeTestEnv()
   repos = []
   closed = []
+  detached = []
   await mkdir(t.paths.sshDir, { recursive: true })
   project.identity.sshKeyPath = join(t.paths.sshDir, 'id_test')
   await writeFile(project.identity.sshKeyPath, 'fake')
@@ -56,7 +58,10 @@ function setup(gitEnv: Record<string, string>, g?: GitClient): ArchiveDeps {
   })
   return {
     store, paths: t.paths, git, tmux: t.tmux, exec, env: t.env, home: t.tmp, mutex: new KeyedMutex(), manager,
-    ptyBridge: { close: (id: string, kind: string) => { closed.push(`${id}:${kind}`) } } as unknown as ArchiveDeps['ptyBridge']
+    ptyBridge: {
+      close: (id: string, kind: string) => { closed.push(`${id}:${kind}`) },
+      detach: (id: string, kind: string) => { detached.push(`${id}:${kind}`) }
+    } as unknown as ArchiveDeps['ptyBridge']
   }
 }
 
@@ -101,6 +106,7 @@ describe('archive', () => {
     expect(await t.tmux.hasSession(shellTmuxName(s.id))).toBe(false)
     expect(await has(sessionDir(t.paths, s.id))).toBe(false)
     expect(closed.sort()).toEqual([`${s.id}:claude`, `${s.id}:shell`])
+    expect(detached).toEqual([])
     const snap = manager.snapshot()
     expect(snap.sessions).toHaveLength(0)
     expect(snap.archived.map((x) => x.id)).toEqual([s.id])
@@ -228,6 +234,8 @@ describe('archive', () => {
     expect(await t.tmux.hasSession(claudeTmuxName(s.id))).toBe(true)
     expect(store.state.sessions[0].archivedAt).toBeUndefined()
     expect(manager.snapshot().sessions).toHaveLength(1)
+    // Its terminals were closed for the archive: they offer to reattach instead of staying frozen.
+    expect(detached.sort()).toEqual([`${s.id}:claude`, `${s.id}:shell`])
   })
 
   test('unknown session never throws', async () => {
@@ -273,6 +281,11 @@ describe('archive', () => {
       expect(out).toContain('boom')
       expect(await has(s.worktreePath!)).toBe(true)
       expect(store.state.sessions[0].archivedAt).toBeUndefined()
+      // The agent was stopped for the teardown: its terminals offer to reattach, which relaunches it (Cancel).
+      expect(detached.sort()).toEqual([`${s.id}:claude`, `${s.id}:shell`])
+      expect(await t.tmux.hasSession(claudeTmuxName(s.id))).toBe(false)
+      await manager.ensureTerminalTarget(s.id, 'claude')
+      expect(await t.tmux.hasSession(claudeTmuxName(s.id))).toBe(true)
     })
 
     test('skipTeardown archives without running it', async () => {
@@ -298,6 +311,7 @@ describe('archive', () => {
       await new Promise((r) => setTimeout(r, 2500))
       expect(await has(marker)).toBe(false)
       expect(await has(s.worktreePath!)).toBe(true)
+      expect(detached.sort()).toEqual([`${s.id}:claude`, `${s.id}:shell`])
     })
 
     test('a backgrounded child that outlives the command does not keep archive waiting', async () => {

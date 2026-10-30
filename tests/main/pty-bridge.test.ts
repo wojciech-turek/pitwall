@@ -65,6 +65,22 @@ describe('PtyBridge', () => {
     await waitFor(async () => exits.length > 0, 8000, 'exit')
     expect(exits[0][0]).toBe('s1')
   })
+
+  test('detach closes the pty and reports one exit, so the terminal offers to reattach; tmux keeps running', async () => {
+    await bridge.open('s1', 'claude', 100, 30)
+    bridge.detach('s1', 'claude')
+    expect(exits).toEqual([['s1', 'claude', 0]])
+    await new Promise((r) => setTimeout(r, 500))
+    expect(exits).toHaveLength(1) // the killed pty's own exit isn't reported again
+    expect(await t.tmux.hasSession(claudeTmuxName('s1'))).toBe(true)
+  })
+
+  test('detach of a terminal that was already closed still reports an exit', async () => {
+    await bridge.open('s1', 'claude', 100, 30)
+    bridge.close('s1', 'claude')
+    bridge.detach('s1', 'claude')
+    expect(exits).toEqual([['s1', 'claude', 0]])
+  })
 })
 
 describe('PtyBridge waiting on ensureTarget', () => {

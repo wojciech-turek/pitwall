@@ -416,6 +416,8 @@ test.describe('dev build changes', () => {
     const ok = join(e.tmp, 'teardown-ok')
 
     await startSession('Teardown fails')
+    const failingId = await waitFor(() => sessionIdOf(e.socket), 15_000, 'tmux session')
+    await waitFor(async () => (await paneText(e.socket, failingId)).includes('STUB CLAUDE READY'), 15_000, 'STUB CLAUDE READY')
     expect(await wtDirs()).toHaveLength(1)
     await setTeardown('echo teardown-said-no; exit 5')
     await openArchive()
@@ -426,6 +428,15 @@ test.describe('dev build changes', () => {
     await expect(page.getByTestId('archive-dialog')).toHaveCount(0)
     await expect(page.getByTestId('session-row')).toHaveCount(1)
     expect(await wtDirs()).toHaveLength(1)
+    // The agent was stopped for the teardown. Its terminal isn't frozen: a key (or focus, which tmux reports as
+    // one) brings the agent back, resuming its conversation.
+    await page.getByTestId('terminal-claude').click()
+    await waitFor(async () => {
+      await page.keyboard.press('x')
+      return (await paneText(e.socket, failingId)).includes('STUB CLAUDE READY')
+    }, 20_000, 'agent relaunched by a key')
+    const claudeId = (await readFile(join(e.dataDir, 'sessions', failingId, 'claude-id'), 'utf8')).trim()
+    await waitFor(async () => (await readFile(e.env.STUB_CLAUDE_LOG, 'utf8')).includes(`--resume ${claudeId}`), 10_000, 'claude --resume')
 
     await openArchive()
     await expect(page.getByTestId('archive-anyway')).toBeVisible({ timeout: 30_000 })

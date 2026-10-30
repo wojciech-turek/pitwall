@@ -60,7 +60,7 @@ function setup(gitEnv: Record<string, string>, over: Partial<ArchiveDeps> = {}):
   manager = new SessionManager({ ...base, ...over, firstEventTimeoutMs: 8000, notifier: { notify: () => {}, setBadge: () => {} } })
   deps = {
     ...base, manager, ...over,
-    ptyBridge: { close: () => {} } as unknown as ArchiveDeps['ptyBridge']
+    ptyBridge: { close: () => {}, detach: () => {} } as unknown as ArchiveDeps['ptyBridge']
   }
   return deps
 }

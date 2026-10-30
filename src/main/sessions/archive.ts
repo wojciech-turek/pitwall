@@ -76,6 +76,13 @@ export async function archiveSession(
   o: { confirmedDataLoss: boolean; skipTeardown?: boolean },
   deps: ArchiveDeps
 ): Promise<ArchiveResult> {
+  // Once its terminals are closed, a session that stays active must get them back: the renderer then offers
+  // "press any key to reattach", which relaunches the agent if it was stopped. Otherwise they stay frozen.
+  let terminalsClosed = false
+  const reattachable = (): void => {
+    deps.ptyBridge.detach(sessionId, 'claude')
+    deps.ptyBridge.detach(sessionId, 'shell')
+  }
   try {
     const f = find(sessionId, deps)
     if (!f) return { ok: false, error: 'Session not found.' }
@@ -98,6 +105,7 @@ export async function archiveSession(
     const leftovers = await snapshotLeftovers(panes.flatMap((p) => p.panePids), serverPid)
     deps.ptyBridge.close(s.id, 'claude')
     deps.ptyBridge.close(s.id, 'shell')
+    terminalsClosed = true
     await deps.tmux.killSession(claudeTmuxName(s.id))
     await deps.tmux.killSession(shellTmuxName(s.id))
 
@@ -122,6 +130,7 @@ export async function archiveSession(
         })
         if (r.timedOut || r.exitCode !== 0) {
           await stopLeftovers(leftovers)
+          reattachable()
           return { ok: false, teardownFailed: r }
         }
       } else {
@@ -137,8 +146,9 @@ export async function archiveSession(
           await writeSessionFiles(s, deps)
           await launchTmuxFor(s, deps)
         } catch {
-          // best effort; the session stays active and reconcile relaunches it
+          // best effort; the session stays active and reattaching relaunches it
         }
+        reattachable()
         return { ok: false, error: `Couldn't remove the worktree: ${msg(e)}` }
       }
     }
@@ -161,6 +171,7 @@ export async function archiveSession(
     })
     return { ok: true }
   } catch (e) {
+    if (terminalsClosed) reattachable()
     return { ok: false, error: msg(e) }
   }
 }

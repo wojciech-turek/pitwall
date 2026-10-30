@@ -62,6 +62,15 @@ export class PtyBridge {
     this.kill(key)
   }
 
+  /**
+   * Closes the terminal and tells the renderer it ended, so it offers "press any key to reattach" (which opens it
+   * again, relaunching the tmux session if it's gone). For when we closed it and the session carries on.
+   */
+  detach(id: string, kind: TermKind): void {
+    this.close(id, kind)
+    this.deps.onExit(id, kind, 0)
+  }
+
   closeAll(): void {
     for (const key of this.opening.keys()) this.opening.set(key, (this.opening.get(key) ?? 0) + 1)
     for (const key of [...this.ptys.keys()]) this.kill(key)
