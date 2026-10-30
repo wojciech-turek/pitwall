@@ -122,7 +122,8 @@ export async function paneText(e: E2eEnv, sessionId: string, window = 'claude'):
   if (SESSION_BACKEND === 'host') return host(e).capture(`pw-${sessionId}`).catch(() => '')
   const names = await tmux(e.socket, 'list-windows', '-t', `=pw-${sessionId}`, '-F', '#{window_index}:#{window_name}').catch(() => '')
   const idx = names.split('\n').find((l) => l.endsWith(`:${window}`))?.split(':')[0] ?? '0'
-  return tmux(e.socket, 'capture-pane', '-p', '-t', `=pw-${sessionId}:${idx}`).catch(() => '')
+  // -J joins wrapped lines, so long paths match on narrow screens (e.g. CI runners)
+  return tmux(e.socket, 'capture-pane', '-p', '-J', '-t', `=pw-${sessionId}:${idx}`).catch(() => '')
 }
 
 /** Running session names; none when the backend isn't running. */
