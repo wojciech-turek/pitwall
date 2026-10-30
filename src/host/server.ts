@@ -4,15 +4,17 @@ import * as net from 'node:net'
 import * as pty from 'node-pty'
 import { checkProof, newNonce, proofFor, writeHostKey } from './auth'
 import { pasteBytes, sendKeysBytes } from './keys'
+import { Launcher, type FetchToken, type PtyLike } from './launcher'
 import { ANSWERS, ModeTracker } from './modes'
 import { hostLogFile, hostPidFile, hostSocketPath } from './paths'
 import {
   encodeDataChunks, encodeJson, FrameDecoder, parseClientMessage, PROTOCOL,
-  type ClientMessage, type ErrorCode, type Frame, type HostMessage, type ProcessRoots, type Request
+  type ClientMessage, type ErrorCode, type Frame, type HostMessage, type LauncherSpec, type ProcessRoots, type Request
 } from './protocol'
 import { replayBytes } from './replay'
 import { RingBuffer } from './ring-buffer'
 import { screenText } from './screen'
+import { mergeEnv } from './win-command'
 
 export interface HostOptions {
   dataDir: string
@@ -29,6 +31,8 @@ export interface HostOptions {
   /** Sessions' environment, before each session's own variables. */
   env?: Record<string, string>
   platform?: NodeJS.Platform
+  /** The launcher's `gh auth token` (a test seam; default: gh, by execFile). */
+  fetchToken?: FetchToken
 }
 
 const DEFAULT_IDLE_MS = 10 * 60 * 1000
@@ -44,10 +48,22 @@ const MAX_LOG_BYTES = 1024 * 1024
 const COLS = 200
 const ROWS = 50
 
+/**
+ * What runs in a terminal: one program in a pty, or the launcher (launcher.ts), which runs Claude in a pty, again on
+ * Enter. Either way the terminal's output, input and size are the same stream.
+ */
+interface Program {
+  /** The process running now; null while the launcher waits for Enter. */
+  readonly pid: number | null
+  write(data: string | Buffer): void
+  resize(cols: number, rows: number): void
+  /** SIGHUP (or SIGKILL) to what runs; the program then exits and ends the terminal. */
+  signal(sig: 'SIGHUP' | 'SIGKILL'): void
+}
+
 interface Term {
   name: string
-  p: pty.IPty
-  pid: number
+  p: Program
   ring: RingBuffer
   modes: ModeTracker
   cols: number
@@ -88,7 +104,7 @@ export class Host {
   private resolveStopped!: (reason: string) => void
   private terms = new Map<string, Term>()
   private conns = new Set<Conn>()
-  private dying = new Set<pty.IPty>()
+  private dying = new Set<Program>()
   private server: net.Server | null = null
   private idleTimer: NodeJS.Timeout | null = null
   private exiting = false
@@ -412,7 +428,7 @@ export class Host {
     switch (m.t) {
       case 'list': return [...this.terms.keys()]
       case 'has': return this.terms.has(m.name)
-      case 'new': return this.spawn(m.name, m.cwd, m.argv, m.env)
+      case 'new': return this.spawn(m.name, m.cwd, m.argv, m.env, m.launcher)
       case 'kill': return this.kill(m.name)
       case 'capture': {
         const t = this.term(m.name)
@@ -428,7 +444,8 @@ export class Host {
       }
       case 'roots': {
         const t = this.terms.get(m.name)
-        const roots: ProcessRoots = t ? { serverPid: process.pid, panePids: [t.pid] } : { serverPid: null, panePids: [] }
+        const pid = t?.p.pid
+        const roots: ProcessRoots = t ? { serverPid: process.pid, panePids: pid ? [pid] : [] } : { serverPid: null, panePids: [] }
         return roots
       }
       case 'shutdown': return undefined
@@ -437,21 +454,40 @@ export class Host {
 
   // ---- terminals --------------------------------------------------------------
 
-  private spawn(name: string, cwd: string, argv: string[], env: Record<string, string>): undefined {
+  private spawn(name: string, cwd: string, argv: string[], env: Record<string, string>, launcher?: LauncherSpec): undefined {
     if (this.terms.has(name)) throw new RequestError('exists', `duplicate session: ${name}`)
-    const p = pty.spawn(argv[0], argv.slice(1), {
-      name: 'xterm-256color', cols: COLS, rows: ROWS, cwd, env: { ...this.env, ...env }
-    })
-    const t: Term = {
-      name, p, pid: p.pid, ring: new RingBuffer(this.ringBytes), modes: new ModeTracker(), cols: COLS, rows: ROWS,
-      viewers: new Set()
+    const sessionEnv = mergeEnv(this.env, env, this.platform)
+    const t = {
+      name, ring: new RingBuffer(this.ringBytes), modes: new ModeTracker(), cols: COLS, rows: ROWS, viewers: new Set()
+    } as Term
+    if (launcher) {
+      const l = new Launcher({
+        spec: launcher, cwd, argv, env: sessionEnv, cols: COLS, rows: ROWS, platform: this.platform,
+        spawn: (file, args, o) => pty.spawn(file, args, { name: 'xterm-256color', ...o }),
+        kill: (p, sig) => this.killPty(p as pty.IPty, sig),
+        fetchToken: this.o.fetchToken
+      })
+      t.p = l
+      l.onData((d) => this.output(t, Buffer.from(d, 'utf8')))
+      l.onExit((code) => this.exited(t, code))
+      this.terms.set(name, t)
+      l.start()
+      this.log(`started ${name} (${launcher.kind} launcher)`)
+    } else {
+      const p = pty.spawn(argv[0], argv.slice(1), { name: 'xterm-256color', cols: COLS, rows: ROWS, cwd, env: sessionEnv })
+      t.p = {
+        pid: p.pid,
+        write: (d) => p.write(d),
+        resize: (c, r) => p.resize(c, r),
+        signal: (sig) => this.killPty(p, sig)
+      }
+      p.onData((d) => this.output(t, Buffer.from(d, 'utf8')))
+      p.onExit(({ exitCode }) => this.exited(t, exitCode))
+      this.terms.set(name, t)
+      this.log(`started ${name} (pid ${p.pid})`)
     }
-    this.terms.set(name, t)
     if (this.idleTimer) clearTimeout(this.idleTimer)
     this.idleTimer = null
-    p.onData((d) => this.output(t, Buffer.from(d, 'utf8')))
-    p.onExit(({ exitCode }) => this.exited(t, exitCode))
-    this.log(`started ${name} (pid ${p.pid})`)
     return undefined
   }
 
@@ -538,20 +574,20 @@ export class Host {
     this.log(`killing ${name}`)
     this.endViewers(t, 0)
     this.dying.add(t.p)
-    this.signal(t, 'SIGHUP')
-    setTimeout(() => { if (this.dying.has(t.p)) this.signal(t, 'SIGKILL') }, KILL_GRACE_MS).unref()
+    t.p.signal('SIGHUP')
+    setTimeout(() => { if (this.dying.has(t.p)) t.p.signal('SIGKILL') }, KILL_GRACE_MS).unref()
     this.armIdle()
     return undefined
   }
 
-  private signal(t: Term, sig: NodeJS.Signals): void {
+  private killPty(p: PtyLike & { kill(signal?: string): void }, sig: 'SIGHUP' | 'SIGKILL'): void {
     if (this.platform === 'win32') {
-      try { t.p.kill() } catch { /* gone */ }
+      try { p.kill() } catch { /* gone */ }
       return
     }
     // The session leader's whole process group (the agent and whatever it runs in the foreground), then itself.
-    try { process.kill(-t.pid, sig) } catch { /* gone */ }
-    try { process.kill(t.pid, sig) } catch { /* gone */ }
+    try { process.kill(-p.pid, sig) } catch { /* gone */ }
+    try { process.kill(p.pid, sig) } catch { /* gone */ }
   }
 
   private armIdle(): void {

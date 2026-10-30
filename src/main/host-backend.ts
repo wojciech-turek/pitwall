@@ -8,7 +8,7 @@ import {
   encodeDataChunks, encodeJson, FrameDecoder, MAX_TERM_SIZE, parseHostMessage, PROTOCOL, type ErrorCode, type Frame,
   type HostMessage, type ProcessRoots, type Request
 } from '../host/protocol'
-import type { Attachment, AttachHandlers, SessionBackend } from './backend'
+import type { Attachment, AttachHandlers, NewSessionOptions, SessionBackend } from './backend'
 
 /** How to start a host: the app's own executable as Node, running out/host/index.js for this data dir. */
 export interface HostLaunch { file: string; args: string[]; env: Record<string, string> }
@@ -326,8 +326,9 @@ export class HostBackend implements SessionBackend {
     return this.call({ t: 'has', name }, false, () => false) as Promise<boolean>
   }
 
-  async newSession(o: { name: string; cwd: string; argv: string[]; env?: Record<string, string> }): Promise<void> {
-    await this.call({ t: 'new', name: o.name, cwd: o.cwd, argv: o.argv, env: o.env ?? {} }, true, () => undefined)
+  async newSession(o: NewSessionOptions): Promise<void> {
+    const req = { t: 'new' as const, name: o.name, cwd: o.cwd, argv: o.argv, env: o.env ?? {} }
+    await this.call(o.launcher ? { ...req, launcher: o.launcher } : req, true, () => undefined)
   }
 
   async killSession(name: string): Promise<void> {

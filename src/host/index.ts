@@ -20,10 +20,11 @@ if (idleMs !== undefined && !(Number.isFinite(idleMs) && idleMs > 0)) {
   process.exit(2)
 }
 
-// Set only to start this process as Node; agents and their tools must not inherit it.
-delete process.env.ELECTRON_RUN_AS_NODE
+// Set only to start this process as Node; agents and their tools must not inherit it. It stays in this process's own
+// environment: on Windows node-pty forks a helper (the console's process list, when a session is killed) with this
+// executable, which must start as Node too, not as a second Pitwall.
 const env: Record<string, string> = {}
-for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v
+for (const [k, v] of Object.entries(process.env)) if (v !== undefined && k.toUpperCase() !== 'ELECTRON_RUN_AS_NODE') env[k] = v
 
 const host = new Host({ dataDir: values.data, appVersion: APP_VERSION, idleMs, env })
 

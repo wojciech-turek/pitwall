@@ -6,6 +6,8 @@ import { resolvePaths } from '../../src/main/paths'
 import { appUserModelId, findGitBash, openInCursorCommand, shellTabArgv, windowsPowerShell } from '../../src/main/platform'
 import { killPaneTrees, taskkillArgs } from '../../src/main/sessions/leftovers'
 import { teardownSpawn } from '../../src/main/sessions/teardown'
+import type { Tmux } from '../../src/main/tmux'
+import { TmuxBackend } from '../../src/main/tmux-backend'
 import { resolveShellEnv } from '../../src/main/shell-env'
 import {
   deleteEnv, envValue, findWindowsExecutable, mergeEnv, quoteWindowsArg, windowsCommand, windowsShellCommand
@@ -80,6 +82,12 @@ describe('paths on Windows', () => {
 })
 
 describe('session backend', () => {
+  test("tmux can't run the host's launcher", async () => {
+    const tmux = { newSession: async () => {} } as unknown as Tmux
+    await expect(new TmuxBackend(tmux, {}).newSession({ name: 'pw-x', cwd: '/', argv: [], launcher: { kind: 'claude', sessionDir: '/s' } }))
+      .rejects.toThrow(/launcher/)
+  })
+
   test('Windows always uses the host (no tmux there); macOS keeps tmux unless asked', () => {
     expect(sessionBackendKind({}, 'win32')).toBe('host')
     expect(sessionBackendKind({ PITWALL_SESSION_BACKEND: 'tmux' }, 'win32')).toBe('host')

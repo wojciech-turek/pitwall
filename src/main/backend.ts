@@ -1,3 +1,7 @@
+import type { LauncherSpec } from '../host/protocol'
+
+export type { LauncherSpec }
+
 /** Callbacks for one attached terminal. Neither is called after the attachment is closed. */
 export interface AttachHandlers {
   onData(data: string): void
@@ -21,8 +25,11 @@ export interface SessionBackend {
   /** Names of the running sessions; [] when there are none (or no server yet). */
   listSessions(): Promise<string[]>
   hasSession(name: string): Promise<boolean>
-  /** Starts `argv` (no shell) in `cwd`, with `env` added to the backend's environment. */
-  newSession(o: { name: string; cwd: string; argv: string[]; env?: Record<string, string> }): Promise<void>
+  /**
+   * Starts `argv` (no shell) in `cwd`, with `env` added to the backend's environment. With `launcher` (the host only),
+   * the host's launcher runs the session instead (see src/host/launcher.ts).
+   */
+  newSession(o: NewSessionOptions): Promise<void>
   /** A missing session is ignored. */
   killSession(name: string): Promise<void>
   /** The session's current screen as text. */
@@ -37,6 +44,14 @@ export interface SessionBackend {
   attach(name: string, cols: number, rows: number, h: AttachHandlers): Promise<Attachment>
   /** Ends every session and the backend's server. Never called on quit: agents must outlive the app. */
   shutdown(): Promise<void>
+}
+
+export interface NewSessionOptions {
+  name: string
+  cwd: string
+  argv: string[]
+  env?: Record<string, string>
+  launcher?: LauncherSpec
 }
 
 export type BackendKind = 'tmux' | 'host'

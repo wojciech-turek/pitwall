@@ -1,5 +1,5 @@
 import * as pty from 'node-pty'
-import type { Attachment, AttachHandlers, SessionBackend } from './backend'
+import type { Attachment, AttachHandlers, NewSessionOptions, SessionBackend } from './backend'
 import type { Tmux } from './tmux'
 
 /** Sessions in tmux on Pitwall's private socket; an attached terminal is a node-pty running `tmux attach`. */
@@ -15,7 +15,8 @@ export class TmuxBackend implements SessionBackend {
     return this.tmux.hasSession(name)
   }
 
-  newSession(o: { name: string; cwd: string; argv: string[]; env?: Record<string, string> }): Promise<void> {
+  newSession(o: NewSessionOptions): Promise<void> {
+    if (o.launcher) return Promise.reject(new Error("tmux sessions run pitwall-launch; the host's launcher needs the host"))
     return this.tmux.newSession(o)
   }
 

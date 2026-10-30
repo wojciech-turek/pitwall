@@ -154,10 +154,17 @@ function parseFrame(body: Buffer): Frame {
 export interface Hello { t: 'hello'; protocol: number; appVersion: string; nonce?: string }
 export interface Auth { t: 'auth'; proof: string }
 
+/**
+ * Run the session through the host's launcher (Windows: no sh for pitwall-launch): Claude from its session folder,
+ * relaunched on Enter, or (`shell`) `argv` once, both with the session's identity. See launcher.ts.
+ */
+export interface LauncherSpec { kind: 'claude' | 'shell'; sessionDir: string }
+
 export type Request =
   | { t: 'list'; id: number }
   | { t: 'has'; id: number; name: string }
-  | { t: 'new'; id: number; name: string; cwd: string; argv: string[]; env: Record<string, string> }
+  /** `argv` may be empty only for a Claude launcher. */
+  | { t: 'new'; id: number; name: string; cwd: string; argv: string[]; env: Record<string, string>; launcher?: LauncherSpec }
   | { t: 'kill'; id: number; name: string }
   | { t: 'capture'; id: number; name: string }
   | { t: 'send'; id: number; name: string; keys: string[]; literal: boolean }
@@ -229,6 +236,11 @@ const quote = (v: unknown): string => JSON.stringify(String(v).slice(0, 40))
  * version, escape sequences included, becomes "unknown".
  */
 export const cleanVersion = (v: unknown): string => (typeof v === 'string' && /^[0-9A-Za-z.+-]{1,40}$/.test(v) ? v : 'unknown')
+const launcherSpec = (v: unknown): LauncherSpec => {
+  if (!isObject(v) || (v.kind !== 'claude' && v.kind !== 'shell')) bad('launcher must name a kind (claude or shell)')
+  const sessionDir = str(v.sessionDir, 'launcher.sessionDir')
+  return sessionDir ? { kind: v.kind, sessionDir } : bad('launcher.sessionDir must not be empty')
+}
 const id = (v: Record<string, unknown>): number => int(v.id, 0, Number.MAX_SAFE_INTEGER, 'id')
 const ch = (v: Record<string, unknown>): number => int(v.ch, 1, MAX_CHANNEL, 'ch')
 const size = (v: unknown, what: string): number => int(v, 1, MAX_TERM_SIZE, what)
@@ -248,8 +260,10 @@ export function parseClientMessage(v: unknown): ClientMessage {
     case 'has': return { t: 'has', id: id(v), name: name(v.name) }
     case 'new': {
       const argv = strings(v.argv, 'argv')
-      if (argv.length === 0) bad('argv must not be empty')
-      return { t: 'new', id: id(v), name: name(v.name), cwd: str(v.cwd, 'cwd'), argv, env: stringMap(v.env, 'env') }
+      const launcher = v.launcher === undefined ? undefined : launcherSpec(v.launcher)
+      if (argv.length === 0 && launcher?.kind !== 'claude') bad('argv must not be empty')
+      const m: Request = { t: 'new', id: id(v), name: name(v.name), cwd: str(v.cwd, 'cwd'), argv, env: stringMap(v.env, 'env') }
+      return launcher ? { ...m, launcher } : m
     }
     case 'kill': return { t: 'kill', id: id(v), name: name(v.name) }
     case 'capture': return { t: 'capture', id: id(v), name: name(v.name) }

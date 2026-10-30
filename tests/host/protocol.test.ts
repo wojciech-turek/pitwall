@@ -96,6 +96,11 @@ describe('messages', () => {
     expect(parseClientMessage({ t: 'auth', proof: 'b'.repeat(64) })).toEqual({ t: 'auth', proof: 'b'.repeat(64) })
     expect(parseClientMessage({ t: 'new', id: 1, name: 'pw-a', cwd: '/tmp/a b', argv: ['x', 'y'] }))
       .toEqual({ t: 'new', id: 1, name: 'pw-a', cwd: '/tmp/a b', argv: ['x', 'y'], env: {} })
+    // The host's launcher: Claude needs no argv; the Shell tab names its shell.
+    expect(parseClientMessage({ t: 'new', id: 1, name: 'pw-a', cwd: 'C:\\w', argv: [], launcher: { kind: 'claude', sessionDir: 'C:\\s' } }))
+      .toEqual({ t: 'new', id: 1, name: 'pw-a', cwd: 'C:\\w', argv: [], env: {}, launcher: { kind: 'claude', sessionDir: 'C:\\s' } })
+    expect(parseClientMessage({ t: 'new', id: 1, name: 'pw-a-sh', cwd: '/w', argv: ['pwsh.exe'], launcher: { kind: 'shell', sessionDir: '/s', x: 1 } }))
+      .toEqual({ t: 'new', id: 1, name: 'pw-a-sh', cwd: '/w', argv: ['pwsh.exe'], env: {}, launcher: { kind: 'shell', sessionDir: '/s' } })
     expect(parseClientMessage({ t: 'send', id: 2, name: 'pw-a', keys: ['C-u', 'Enter'] }))
       .toEqual({ t: 'send', id: 2, name: 'pw-a', keys: ['C-u', 'Enter'], literal: false })
     expect(parseClientMessage({ t: 'attach', id: 3, name: 'pw-a', ch: 1, cols: 80, rows: 24 }))
@@ -111,6 +116,10 @@ describe('messages', () => {
     [{ t: 'new', id: 1, name: 'a', cwd: '/', argv: [] }, /argv/],
     [{ t: 'new', id: 1, name: 'a', cwd: '/', argv: ['x', 1] }, /argv/],
     [{ t: 'new', id: 1, name: 'a', cwd: '/', argv: ['x'], env: { A: 1 } }, /env/],
+    [{ t: 'new', id: 1, name: 'a', cwd: '/', argv: [], launcher: { kind: 'shell', sessionDir: '/s' } }, /argv/],
+    [{ t: 'new', id: 1, name: 'a', cwd: '/', argv: [], launcher: { kind: 'sh', sessionDir: '/s' } }, /launcher/],
+    [{ t: 'new', id: 1, name: 'a', cwd: '/', argv: [], launcher: { kind: 'claude', sessionDir: '' } }, /sessionDir/],
+    [{ t: 'new', id: 1, name: 'a', cwd: '/', argv: [], launcher: 'claude' }, /launcher/],
     [{ t: 'attach', id: 1, name: 'a', ch: 0, cols: 80, rows: 24 }, /ch/],
     [{ t: 'attach', id: 1, name: 'a', ch: 1, cols: 0, rows: 24 }, /cols/],
     [{ t: 'resize', ch: 1, cols: 80, rows: 1e9 }, /rows/],
