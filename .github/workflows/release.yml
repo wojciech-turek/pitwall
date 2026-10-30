@@ -4,15 +4,16 @@ on:
   push:
     tags: ['v*']
 
+# The builds only read the repository; the last job alone publishes the release.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  release:
-    runs-on: macos-15
+  # Fails in seconds, before anything is built, if the tag and the changelog don't line up.
+  check:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # Fails in seconds, before installing anything, if the tag and the changelog don't line up.
       - name: Check tag matches package.json and CHANGELOG has notes
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
@@ -23,6 +24,12 @@ jobs:
           fi
           node scripts/release-notes.mjs "$VERSION" > notes.md
           test -s notes.md || { echo "CHANGELOG has no notes for $VERSION" >&2; exit 1; }
+
+  mac:
+    needs: check
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -36,12 +43,61 @@ jobs:
       - run: pnpm verify:sign
       - name: Check the app inside the DMG
         run: sh scripts/verify-dmg.sh "release/Pitwall-${GITHUB_REF_NAME#v}-arm64.dmg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac-arm64
+          path: release/Pitwall-*-arm64.dmg
+          if-no-files-found: error
+          retention-days: 7
+
+  # Both installers build on x64 Windows: node-pty's arm64 binaries come prebuilt, so nothing is compiled. CI also
+  # builds and runs the arm64 one on Windows on ARM. No secrets here.
+  windows:
+    needs: check
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm dist:win --${{ matrix.arch }}
+      - name: Check the installer and the app in it
+        run: node scripts/verify-windows.mjs ${{ matrix.arch }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-${{ matrix.arch }}
+          path: release/Pitwall-*-${{ matrix.arch }}-setup.exe
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    needs: [mac, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
+          node scripts/release-notes.mjs "$VERSION" > notes.md
+          FILES="dist/Pitwall-${VERSION}-arm64.dmg dist/Pitwall-${VERSION}-x64-setup.exe dist/Pitwall-${VERSION}-arm64-setup.exe"
+          for f in $FILES; do
+            test -s "$f" || { echo "Missing $f" >&2; exit 1; }
+          done
           PRERELEASE=""
           case "$VERSION" in *-*) PRERELEASE="--prerelease" ;; esac
-          gh release create "$GITHUB_REF_NAME" "release/Pitwall-${VERSION}-arm64.dmg" \
-            --title "Pitwall ${VERSION}" --notes-file notes.md $PRERELEASE
+          gh release create "$GITHUB_REF_NAME" $FILES --title "Pitwall ${VERSION}" --notes-file notes.md $PRERELEASE
