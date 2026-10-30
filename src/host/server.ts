@@ -470,7 +470,8 @@ export class Host {
         spec: launcher, cwd, argv, env: sessionEnv, cols: COLS, rows: ROWS, platform: this.platform,
         spawn: (file, args, o) => pty.spawn(file, args, { name: 'xterm-256color', ...o }),
         kill: (p, sig) => this.killPty(p as pty.IPty, sig),
-        fetchToken: this.o.fetchToken
+        fetchToken: this.o.fetchToken,
+        log: (msg) => this.log(`${name}: ${msg}`)
       })
       t.p = l
       l.onData((d) => this.output(t, Buffer.from(d, 'utf8')))

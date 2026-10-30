@@ -210,6 +210,9 @@ describe('finding and starting programs on Windows', () => {
       expect(/^[\x00-\x7f]*$/.test(text)).toBe(true)
       expect(text).toContain("$ProgressPreference = 'SilentlyContinue'")
       expect(text.trimEnd().endsWith('exit 0')).toBe(true)
+      // Windows PowerShell 5.1 parses JSON into a Dictionary[string,object], where .Contains(key) is an explicit
+      // interface member PowerShell can't call: it throws, and a hook would quietly write nothing. Use .ContainsKey.
+      expect(text.split('\n').filter((l) => !l.trim().startsWith('#') && /\.Contains\(/.test(l))).toEqual([])
     }
   })
 

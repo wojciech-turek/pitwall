@@ -61,6 +61,8 @@ export interface LauncherOptions {
   runProbe?: RunProbe
   isFile?: IsFile
   now?: () => number
+  /** The host's log (why the PowerShell scripts were found blocked). */
+  log?: (msg: string) => void
 }
 
 /** Token variables gh reads before its own store; inherited ones must never stand in for a project's account. */
@@ -337,6 +339,8 @@ export class Launcher {
     // A new folder each time: a leftover one (a scanner holding it) never needs removing first.
     const dir = this.file(`probe-${process.pid}-${++this.probes}`)
     mkdirSync(dir, { recursive: true })
+    const errors = join(dir, 'errors.txt') // where the scripts say what went wrong (only when asked, as here)
+    probeEnv.PITWALL_SCRIPT_ERRORS = errors
     try {
       const events = join(dir, 'events.jsonl')
       const hookRc = await run(hook.command, [...args.slice(0, at + 2), events, 'probe'],
@@ -347,6 +351,10 @@ export class Launcher {
         const script = join(dirname(args[at + 1]), 'pitwall-statusline.ps1')
         const rc = await run(hook.command, [...args.slice(0, at + 1), script, dir], JSON.stringify({ session_id: 'probe' }), probeEnv)
         statusLine = rc === 0 && existsSync(join(dir, 'statusline.json'))
+      }
+      if (!hooks || !statusLine) {
+        const why = readIfAny(errors).trim().slice(0, 2000)
+        this.o.log?.(`PowerShell scripts blocked (hook ${hooks ? 'ok' : `exit ${hookRc}`}, status line ${statusLine ? 'ok' : 'failed'})${why ? `: ${why}` : ''}`)
       }
       return { hooks, statusLine }
     } finally {

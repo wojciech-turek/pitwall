@@ -87,5 +87,7 @@ try {
   }
 } catch {
   # The usage meter and the user's line are best effort: whatever went wrong, exit 0.
+  # Pitwall's check of the scripts (before Claude starts) asks for the reason in a file of its own; never otherwise.
+  if ($env:PITWALL_SCRIPT_ERRORS) { try { [System.IO.File]::AppendAllText($env:PITWALL_SCRIPT_ERRORS, ($_ | Out-String)) } catch { } }
 }
 exit 0

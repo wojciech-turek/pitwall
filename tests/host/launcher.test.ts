@@ -503,6 +503,27 @@ describe('the PowerShell scripts are tried before each start of Claude (exec-for
     }
   })
 
+  test("why the scripts failed goes to the host's log (the scripts write it only when the check asks)", async () => {
+    writeHooks()
+    const logged: string[] = []
+    launcher({
+      log: (m) => { logged.push(m) },
+      runProbe: async (file, args, input, env) => {
+        probes.push({ file, args, input, env })
+        if (args[FLAGS.length].endsWith('pitwall-hook.ps1')) {
+          appendFileSync(env.PITWALL_SCRIPT_ERRORS, 'Cannot find an overload for "Contains"')
+          return 0 // as a hook that swallowed its error does
+        }
+        writeFileSync(join(args[FLAGS.length + 1], 'statusline.json'), input)
+        return 0
+      }
+    }).start()
+    await until(() => spawned.length === 1, 'claude')
+    expect(logged).toEqual(['PowerShell scripts blocked (hook exit 0, status line ok): Cannot find an overload for "Contains"'])
+    expect(probes.every((p) => dirname(p.env.PITWALL_SCRIPT_ERRORS) === dirname(probes[0].args[FLAGS.length + 1]))).toBe(true)
+    expect(lastPty().env.PITWALL_SCRIPT_ERRORS).toBeUndefined() // never in Claude's (or the real hooks') environment
+  })
+
   test('a hook that exits 0 but writes nothing counts as blocked', async () => {
     writeHooks({ statusLine: false })
     launcher({ runProbe: probe({ hook: 'silent' }) }).start()

@@ -67,7 +67,9 @@ function Get-Field($o, [string]$name) {
   if ($null -eq $o) { return $null }
   $value = $null
   if ($o -is [System.Collections.IDictionary]) {
-    if ($o.Contains($name)) { $value = $o[$name] }
+    # ContainsKey: Windows PowerShell 5.1 parses with JavaScriptSerializer into a Dictionary[string,object], whose
+    # Contains(key) is an explicit interface member PowerShell can't call (Hashtable has ContainsKey too).
+    if ($o.ContainsKey($name)) { $value = $o[$name] }
   } else {
     $prop = $o.PSObject.Properties[$name]
     if ($prop) { $value = $prop.Value }
@@ -157,5 +159,7 @@ try {
   }
 } catch {
   # Never a verdict on Claude's tool call: whatever went wrong, exit 0.
+  # Pitwall's check of the scripts (before Claude starts) asks for the reason in a file of its own; never otherwise.
+  if ($env:PITWALL_SCRIPT_ERRORS) { try { [System.IO.File]::AppendAllText($env:PITWALL_SCRIPT_ERRORS, ($_ | Out-String)) } catch { } }
 }
 exit 0
