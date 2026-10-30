@@ -53,8 +53,11 @@ export interface PitwallApi {
   onFocusSession(cb: (sessionId: string) => void): () => void
   /** Claude subscription usage, or null until Claude has reported any. */
   getUsage(): Promise<ClaudeUsage | null>
-  /** Build version, and whether this is a dev (unpackaged) run. */
-  appInfo(): Promise<{ version: string; dev: boolean }>
+  /**
+   * Build version, whether this is a dev (unpackaged) run, and whether it looks for updates at all (a dev build only
+   * when pointed at a feed with PITWALL_RELEASES_URL).
+   */
+  appInfo(): Promise<{ version: string; dev: boolean; updateFeed: boolean }>
   onUsage(cb: (u: ClaudeUsage | null) => void): () => void
   /** What the last update check found (nothing until one succeeds). */
   getUpdateState(): Promise<UpdateState>

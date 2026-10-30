@@ -6,6 +6,8 @@ export interface AppPaths {
   stateFile: string
   /** Last known Claude usage, shown again after a restart. */
   usageFile: string
+  /** The last update check, so a relaunch doesn't ask GitHub again within a day. */
+  updatesFile: string
   sessionsDir: string
   binDir: string
   tmuxConf: string
@@ -33,6 +35,7 @@ export function resolvePaths(
     dataDir,
     stateFile: join(dataDir, 'state.json'),
     usageFile: join(dataDir, 'usage.json'),
+    updatesFile: join(dataDir, 'updates.json'),
     sessionsDir: join(dataDir, 'sessions'),
     binDir: join(dataDir, 'bin'),
     tmuxConf: join(dataDir, 'tmux.conf'),

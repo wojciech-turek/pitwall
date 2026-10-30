@@ -16,7 +16,7 @@ export interface Session {
 }
 export interface AppSettings {
   monoFont: string; monoFontSize: number
-  /** Look for newer releases on GitHub (at launch, then once a day). */
+  /** Look for newer releases on GitHub, about once a day. */
   checkForUpdates: boolean
 }
 export const DEFAULT_SETTINGS: AppSettings = {

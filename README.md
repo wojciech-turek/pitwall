@@ -107,7 +107,7 @@ Pitwall:
 - never stores your GitHub token;
 - never deletes work without asking.
 
-Everything stays on your Mac. Pitwall has no telemetry and no account. The one network request it makes itself: once a day it asks GitHub for the list of Pitwall releases, to tell you about updates. It sends nothing about you or your work. Turn it off in Settings (**Check for updates on GitHub**).
+Everything stays on your Mac. Pitwall has no telemetry and no account. The one network request it makes itself: about once a day it asks GitHub for the list of Pitwall releases, to tell you about updates. It sends nothing about you or your work. Turn it off in Settings (**Check for updates on GitHub**).
 
 ## Keyboard shortcuts
 

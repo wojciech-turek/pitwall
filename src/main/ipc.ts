@@ -32,7 +32,7 @@ export interface IpcDeps {
   home: string
   mutex: KeyedMutex
   usage: Pick<UsageTracker, 'current' | 'onChange'>
-  updates: Pick<UpdateChecker, 'state' | 'checkNow' | 'onChange'>
+  updates: Pick<UpdateChecker, 'state' | 'checkNow' | 'onChange' | 'hasFeed'>
   /** True for an unpackaged (dev) run. */
   dev: boolean
   /** Sends to the renderer; a no-op when there is no window. */
@@ -53,7 +53,7 @@ export function registerIpc(d: IpcDeps): () => void {
 
   handle(IPC.getSnapshot, () => manager.snapshot())
   handle(IPC.getUsage, () => d.usage.current())
-  handle(IPC.appInfo, () => ({ version: APP_VERSION, dev: d.dev }))
+  handle(IPC.appInfo, () => ({ version: APP_VERSION, dev: d.dev, updateFeed: d.updates.hasFeed() }))
   handle(IPC.getUpdateState, () => d.updates.state())
   handle(IPC.checkForUpdates, () => d.updates.checkNow())
   handle(IPC.listSshKeys, () => listSshKeys(paths.sshDir))

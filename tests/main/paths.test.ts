@@ -6,6 +6,7 @@ test('defaults', () => {
   expect(p.dataDir).toBe('/Users/w/Library/Application Support/pitwall')
   expect(p.stateFile).toBe('/Users/w/Library/Application Support/pitwall/state.json')
   expect(p.usageFile).toBe('/Users/w/Library/Application Support/pitwall/usage.json')
+  expect(p.updatesFile).toBe('/Users/w/Library/Application Support/pitwall/updates.json')
   expect(p.sessionsDir).toBe('/Users/w/Library/Application Support/pitwall/sessions')
   expect(p.binDir).toBe('/Users/w/Library/Application Support/pitwall/bin')
   expect(p.tmuxConf).toBe('/Users/w/Library/Application Support/pitwall/tmux.conf')

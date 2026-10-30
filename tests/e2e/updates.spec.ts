@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs'
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { join } from 'node:path'
@@ -72,9 +72,17 @@ test.afterAll(async () => {
   await new Promise((r) => server?.close(r))
 })
 
-const launch = async (): Promise<void> => {
-  ;({ app, page } = await launchApp({ ...e.env, PITWALL_RELEASES_URL: feedUrl }, PACKAGED ? packagedExe : undefined))
+const launch = async (feed = feedUrl): Promise<void> => {
+  ;({ app, page } = await launchApp({ ...e.env, PITWALL_RELEASES_URL: feed }, PACKAGED ? packagedExe : undefined))
 }
+const relaunch = async (feed = feedUrl): Promise<void> => {
+  await app!.close()
+  app = undefined
+  requests.length = 0
+  await launch(feed)
+  await expect(page.getByTestId('create-first-project')).toBeVisible()
+}
+const updatesFile = (): string => join(e.dataDir, 'updates.json')
 
 /** Replaces shell.openExternal in main, so nothing opens a browser; returns what was opened. */
 async function stubOpenExternal(): Promise<() => Promise<string[]>> {
@@ -144,6 +152,16 @@ test('a newer release shows a pill; the dialog lists only it, with its notes as 
   await expect(dialog).toHaveCount(0)
 })
 
+test('a relaunch within a day shows the saved notice at once and asks GitHub nothing', async () => {
+  const saved = JSON.parse(await readFile(updatesFile(), 'utf8')) as { url: string; checkedAt: number; releases: { version: string }[] }
+  expect(saved.url).toBe(feedUrl)
+  expect(saved.releases.map((r) => r.version)).toEqual([NEWER])
+  await relaunch()
+  await expect(page.getByTestId('update-pill')).toHaveText(`Update available · ${NEWER}`, { timeout: 5_000 })
+  await page.waitForTimeout(13_000) // past the first check's delay
+  expect(requests).toEqual([])
+})
+
 test('Check now in Settings reports what it found; a failed check keeps the pill', async () => {
   await menu('CmdOrCtrl+,')
   const settings = page.getByTestId('settings-dialog')
@@ -179,15 +197,25 @@ test('Check now in Settings reports what it found; a failed check keeps the pill
 })
 
 test('with checks off, a relaunch makes no request and shows no pill', async () => {
-  await app!.close()
-  app = undefined
-  requests.length = 0
-  await launch()
-  await expect(page.getByTestId('create-first-project')).toBeVisible()
+  // The last check was two days ago and found the newer release: with checks on, this launch would show it and ask.
+  const twoDaysAgo = Date.now() - 2 * 24 * 60 * 60 * 1000
+  await writeFile(updatesFile(), JSON.stringify({ url: feedUrl, checkedAt: twoDaysAgo, releases: [{
+    version: NEWER, name: `Pitwall ${NEWER}`, notes: 'saved notes', url: NEWER_URL, publishedAt: twoDaysAgo
+  }] }))
+  await relaunch()
   await page.waitForTimeout(13_000) // past the first check's delay
   await expect(page.getByTestId('update-pill')).toHaveCount(0)
   expect(requests).toEqual([])
 
   await menu('CmdOrCtrl+,')
   await expect(page.getByTestId('setting-check-updates')).not.toBeChecked()
+})
+
+test('a build not pointed at a feed says checks are off, and asks nothing', async () => {
+  await relaunch('') // what a dev build without PITWALL_RELEASES_URL gets
+  await menu('CmdOrCtrl+,')
+  await page.getByTestId('check-updates-now').click()
+  await expect(page.getByTestId('check-updates-result'))
+    .toHaveText(PACKAGED ? 'Update checks are off.' : 'Update checks are off in dev builds.')
+  expect(requests).toEqual([])
 })

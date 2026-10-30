@@ -32,6 +32,10 @@ export default function SettingsDialog(): React.JSX.Element | null {
     }
   }
   const checkNow = async (): Promise<void> => {
+    if (info && !info.updateFeed) {
+      setCheckResult(info.dev ? 'Update checks are off in dev builds.' : 'Update checks are off.')
+      return
+    }
     setChecking(true)
     setCheckResult('')
     try {
@@ -68,7 +72,7 @@ export default function SettingsDialog(): React.JSX.Element | null {
               onChange={(e) => setCheckUpdates(e.target.checked)} />
             Check for updates on GitHub
           </label>
-          <p className="settings-note">Pitwall asks GitHub for its list of releases when it starts and once a day. Nothing about you is sent.</p>
+          <p className="settings-note">About once a day, Pitwall asks GitHub for the list of Pitwall releases. It sends nothing about you or your work.</p>
           <div className="check-now-row">
             <button type="button" className="btn small" data-testid="check-updates-now" disabled={checking}
               onClick={() => { void checkNow() }}>

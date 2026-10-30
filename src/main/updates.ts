@@ -1,4 +1,6 @@
+import { readFile } from 'node:fs/promises'
 import type { ReleaseInfo, UpdateState } from '../shared/types'
+import { writeFileAtomic } from './atomic'
 
 /** GitHub's list of the app's releases (unauthenticated; newest first). */
 export const RELEASES_URL = 'https://api.github.com/repos/wojciech-turek/pitwall/releases'
@@ -78,6 +80,8 @@ export interface UpdateCheckerDeps {
   current: string
   /** null: never fetch (see releasesUrl). */
   url: string | null
+  /** Where the last successful check is kept (updates.json), so a relaunch doesn't ask again within a day. */
+  file: string
   fetch: FetchFn
   now: () => number
   timers: Timers
@@ -85,9 +89,29 @@ export interface UpdateCheckerDeps {
   enabled: () => boolean
 }
 
+/** What updates.json holds: the last successful check of `url`, and the releases it found newer than the app then. */
+interface Saved { url: string; checkedAt: number; releases: ReleaseInfo[] }
+
+/** Releases saved by an earlier run, still newer than `current` (after an update, the installed one drops out). */
+function savedReleases(v: unknown, current: string): ReleaseInfo[] | null {
+  if (!Array.isArray(v)) return null
+  const out = new Map<string, ReleaseInfo>()
+  for (const item of v) {
+    if (!item || typeof item !== 'object') continue
+    const r = item as Record<string, unknown>
+    const version = str(r.version)
+    if (!(compareVersions(version, current) > 0) || out.has(version)) continue
+    const url = str(r.url)
+    const at = typeof r.publishedAt === 'number' && Number.isFinite(r.publishedAt) ? r.publishedAt : 0
+    out.set(version, { version, name: str(r.name) || `v${version}`, notes: str(r.notes), url: isWeb(url) ? url : RELEASES_PAGE, publishedAt: at })
+  }
+  return [...out.values()].sort((a, b) => compareVersions(b.version, a.version))
+}
+
 /**
- * Looks for newer releases: about 10 s after start, then every 24 h while the setting is on, and whenever the user
- * asks (checkNow). One unauthenticated GET; any failure is silent and keeps what was known.
+ * Looks for newer releases at most about once a day, across restarts: the first check runs 10 s after start, or when
+ * the saved last check turns a day old if that's later; then every 24 h while the setting is on. checkNow checks at
+ * once (the user asked). One unauthenticated GET; any failure is silent and keeps what was known.
  */
 export class UpdateChecker {
   private known: UpdateState
@@ -99,9 +123,34 @@ export class UpdateChecker {
     this.known = { current: deps.current, checkedAt: null, newer: [] }
   }
 
+  /** Whether this build looks for updates at all (a dev build only when pointed at a feed). */
+  hasFeed(): boolean {
+    return this.deps.url !== null
+  }
+
+  /**
+   * Takes the last check from the file. A missing or corrupt file, or one from another feed, means none. With checks
+   * off, its releases aren't shown at launch (its time still counts toward the once-a-day limit).
+   */
+  async load(): Promise<void> {
+    const { url, current, file } = this.deps
+    if (!url) return
+    let saved: Partial<Saved>
+    try {
+      saved = JSON.parse(await readFile(file, 'utf8')) as Partial<Saved>
+    } catch {
+      return
+    }
+    if (!saved || typeof saved !== 'object' || saved.url !== url) return
+    const checkedAt = saved.checkedAt
+    const newer = savedReleases(saved.releases, current)
+    if (typeof checkedAt !== 'number' || !Number.isFinite(checkedAt) || !newer) return
+    this.known = { current, checkedAt, newer: this.deps.enabled() ? newer : [] }
+  }
+
   start(): void {
     this.stop()
-    if (this.deps.url) this.schedule(FIRST_CHECK_DELAY_MS)
+    if (this.deps.url) this.schedule(Math.max(FIRST_CHECK_DELAY_MS, this.dueIn()))
   }
 
   stop(): void {
@@ -125,15 +174,24 @@ export class UpdateChecker {
     return this.checking
   }
 
+  /** ms until the last successful check is a day old (0 if never or already); never more than a day (clock changes). */
+  private dueIn(): number {
+    const at = this.known.checkedAt
+    if (at === null) return 0
+    return Math.min(CHECK_INTERVAL_MS, Math.max(0, at + CHECK_INTERVAL_MS - this.deps.now()))
+  }
+
   private schedule(ms: number): void {
     this.timer = this.deps.timers.setTimeout(() => {
+      const due = this.dueIn()
+      if (due > 0) { this.schedule(due); return } // checked meanwhile (Check now)
       this.schedule(CHECK_INTERVAL_MS)
       if (this.deps.enabled()) void this.checkNow()
     }, ms)
   }
 
   private async check(): Promise<void> {
-    const { url, current } = this.deps
+    const { url, current, file } = this.deps
     if (!url) return
     const res = await this.deps.fetch(url, {
       headers: { Accept: 'application/vnd.github+json', 'User-Agent': `Pitwall/${current}` },
@@ -145,6 +203,8 @@ export class UpdateChecker {
     const newer = parseReleases(json, current)
     const changed = JSON.stringify(newer) !== JSON.stringify(this.known.newer)
     this.known = { current, checkedAt: this.deps.now(), newer }
+    const saved: Saved = { url, checkedAt: this.known.checkedAt!, releases: newer }
+    await writeFileAtomic(file, JSON.stringify(saved)).catch(() => undefined) // best effort: a relaunch would ask again
     if (!changed) return
     for (const cb of [...this.listeners]) {
       try { cb(this.known) } catch { /* a listener must not break the checker */ }

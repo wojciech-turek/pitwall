@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 
-export interface AppInfo { version: string; dev: boolean }
+export interface AppInfo { version: string; dev: boolean; updateFeed: boolean }
 
 let cached: Promise<AppInfo> | null = null
 const load = (): Promise<AppInfo> => (cached ??= window.pitwall.appInfo())

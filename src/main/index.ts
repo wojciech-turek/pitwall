@@ -169,11 +169,13 @@ async function bootstrap(): Promise<void> {
   const updates = new UpdateChecker({
     current: APP_VERSION,
     url: releasesUrl(process.env, DEV),
+    file: paths.updatesFile,
     fetch: (url, init) => fetch(url, init),
     now: Date.now,
     timers: { setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (t) => clearTimeout(t as NodeJS.Timeout) },
     enabled: () => store.state.settings.checkForUpdates !== false
   })
+  await updates.load() // the saved notice shows at once; the next check waits until the last one is a day old
   updates.start()
   disposeUpdates = () => updates.stop()
   disposeIpc = registerIpc({

@@ -1,4 +1,7 @@
-import { describe, expect, test, vi } from 'vitest'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   CHECK_INTERVAL_MS, compareVersions, FIRST_CHECK_DELAY_MS, parseReleases, RELEASES_PAGE, RELEASES_URL, releasesUrl,
   UpdateChecker, type FetchFn
@@ -121,10 +124,21 @@ function manualTimers() {
 
 type Reply = { status: number; body: unknown } | { throws: Error } | { badJson: true }
 
-function setup(o: { url?: string | null; enabled?: boolean; current?: string } = {}) {
+let dir: string
+let file: string
+beforeEach(async () => {
+  dir = await mkdtemp(join(tmpdir(), 'pitwall-updates-'))
+  file = join(dir, 'updates.json')
+})
+afterEach(() => rm(dir, { recursive: true, force: true }))
+
+const FEED = 'https://releases.test/r'
+const HOUR = 60 * 60 * 1000
+
+function setup(o: { url?: string | null; enabled?: boolean; current?: string; clock?: number; file?: string } = {}) {
   const t = manualTimers()
   let reply: Reply = { status: 200, body: [rel('v0.2.0'), rel('v0.1.0')] }
-  let clock = 1_000
+  let clock = o.clock ?? 1_000
   let enabled = o.enabled ?? true
   const fetch = vi.fn<FetchFn>(async () => {
     const r = reply
@@ -134,7 +148,8 @@ function setup(o: { url?: string | null; enabled?: boolean; current?: string } =
   })
   const checker = new UpdateChecker({
     current: o.current ?? '0.1.0',
-    url: o.url === undefined ? 'https://releases.test/r' : o.url,
+    url: o.url === undefined ? FEED : o.url,
+    file: o.file ?? file,
     fetch,
     now: () => clock,
     timers: t.timers,
@@ -150,8 +165,10 @@ function setup(o: { url?: string | null; enabled?: boolean; current?: string } =
   }
 }
 
-/** Lets the fetch promise chain started by a timer settle. */
-const settle = () => new Promise((r) => setTimeout(r, 0))
+/** Waits until a check started by a timer has finished (fetched, saved, published). */
+const settle = (s: { checker: UpdateChecker }) => vi.waitFor(() => {
+  if ((s.checker as unknown as { checking: unknown }).checking) throw new Error('still checking')
+})
 
 describe('UpdateChecker', () => {
   test('starts with nothing known', () => {
@@ -168,9 +185,9 @@ describe('UpdateChecker', () => {
     expect(s.fetch).not.toHaveBeenCalled()
 
     expect(s.fire()).toBe(10_000)
-    await settle()
+    await settle(s)
     expect(s.fetch).toHaveBeenCalledTimes(1)
-    expect(s.fetch.mock.calls[0][0]).toBe('https://releases.test/r')
+    expect(s.fetch.mock.calls[0][0]).toBe(FEED)
     expect(s.fetch.mock.calls[0][1].headers['User-Agent']).toBe('Pitwall/0.1.0')
     expect(s.checker.state()).toMatchObject({ checkedAt: 1_000, newer: [{ version: '0.2.0' }] })
 
@@ -178,7 +195,7 @@ describe('UpdateChecker', () => {
     expect(CHECK_INTERVAL_MS).toBe(24 * 60 * 60 * 1000)
     s.tick(CHECK_INTERVAL_MS)
     expect(s.fire()).toBe(CHECK_INTERVAL_MS)
-    await settle()
+    await settle(s)
     expect(s.fetch).toHaveBeenCalledTimes(2)
     expect(s.checker.state().checkedAt).toBe(1_000 + CHECK_INTERVAL_MS)
     expect(s.pending).toHaveLength(1) // only ever one timer
@@ -188,21 +205,25 @@ describe('UpdateChecker', () => {
     const s = setup({ enabled: false })
     s.checker.start()
     s.fire()
-    await settle()
+    await settle(s)
     expect(s.fetch).not.toHaveBeenCalled()
     expect(s.pending.map((p) => p.ms)).toEqual([CHECK_INTERVAL_MS])
     s.setEnabled(true)
     s.fire()
-    await settle()
+    await settle(s)
     expect(s.fetch).toHaveBeenCalledTimes(1)
   })
 
-  test('without a URL (a dev build not pointed at a feed) nothing is ever fetched', async () => {
+  test('without a URL (a dev build not pointed at a feed) nothing is ever loaded or fetched', async () => {
+    await save({ url: FEED, checkedAt: 500, releases: [stored('0.2.0')] })
     const s = setup({ url: null })
+    expect(s.checker.hasFeed()).toBe(false)
+    await s.checker.load()
     s.checker.start()
     expect(s.pending).toHaveLength(0)
     expect(await s.checker.checkNow()).toEqual({ current: '0.1.0', checkedAt: null, newer: [] })
     expect(s.fetch).not.toHaveBeenCalled()
+    expect(setup().checker.hasFeed()).toBe(true)
   })
 
   test('checkNow works before the timer has fired', async () => {
@@ -255,7 +276,7 @@ describe('UpdateChecker', () => {
     s.reply({ throws: new Error('offline') })
     s.checker.start()
     s.fire()
-    await settle()
+    await settle(s)
     expect(s.checker.state().checkedAt).toBeNull()
     expect(s.pending.map((p) => p.ms)).toEqual([CHECK_INTERVAL_MS])
   })
@@ -294,5 +315,132 @@ describe('UpdateChecker', () => {
     s.checker.start()
     s.checker.stop()
     expect(s.pending).toHaveLength(0)
+  })
+})
+
+const stored = (version: string, o: Partial<Record<string, unknown>> = {}) => ({
+  version, name: `Pitwall v${version}`, notes: `Notes for ${version}`,
+  url: `https://github.com/wojciech-turek/pitwall/releases/tag/v${version}`, publishedAt: 1_700_000_000_000, ...o
+})
+async function save(v: unknown): Promise<void> {
+  await writeFile(file, typeof v === 'string' ? v : JSON.stringify(v))
+}
+
+describe('UpdateChecker across restarts (updates.json)', () => {
+  const T = 1_800_000_000_000
+
+  test('a successful check is saved; a failed one is not', async () => {
+    const s = setup({ clock: T })
+    await s.checker.checkNow()
+    const saved = JSON.parse(await readFile(file, 'utf8'))
+    expect(saved).toEqual({ url: FEED, checkedAt: T, releases: s.checker.state().newer })
+    expect(saved.releases.map((r: { version: string }) => r.version)).toEqual(['0.2.0'])
+    s.tick(HOUR)
+    s.reply({ status: 403, body: { message: 'API rate limit exceeded' } })
+    await s.checker.checkNow()
+    expect(JSON.parse(await readFile(file, 'utf8')).checkedAt).toBe(T)
+  })
+
+  test('a relaunch within 24 h shows the saved notice at once and asks nothing until the day is up', async () => {
+    await setup({ clock: T }).checker.checkNow()
+    const s = setup({ clock: T + 3 * HOUR })
+    await s.checker.load()
+    expect(s.checker.state()).toEqual({ current: '0.1.0', checkedAt: T, newer: [stored('0.2.0', {
+      name: 'Pitwall v0.2.0', notes: 'Notes for v0.2.0', publishedAt: Date.parse('2026-10-01T10:00:00Z')
+    })] })
+    s.checker.start()
+    expect(s.pending.map((p) => p.ms)).toEqual([CHECK_INTERVAL_MS - 3 * HOUR])
+    s.tick(CHECK_INTERVAL_MS - 3 * HOUR)
+    s.fire()
+    expect(s.fetch).toHaveBeenCalledTimes(1)
+    await settle(s)
+    expect(s.checker.state().checkedAt).toBe(T + CHECK_INTERVAL_MS)
+  })
+
+  test('with checks off, a relaunch shows no saved notice, but the saved time still counts', async () => {
+    await save({ url: FEED, checkedAt: T, releases: [stored('0.2.0')] })
+    const s = setup({ clock: T + HOUR, enabled: false })
+    await s.checker.load()
+    expect(s.checker.state()).toEqual({ current: '0.1.0', checkedAt: T, newer: [] })
+    s.checker.start()
+    expect(s.pending.map((p) => p.ms)).toEqual([CHECK_INTERVAL_MS - HOUR])
+  })
+
+  test('a relaunch after 24 h checks 10 s after start', async () => {
+    await save({ url: FEED, checkedAt: T, releases: [stored('0.2.0')] })
+    const s = setup({ clock: T + CHECK_INTERVAL_MS + HOUR })
+    await s.checker.load()
+    expect(s.checker.state().newer.map((r) => r.version)).toEqual(['0.2.0'])
+    s.checker.start()
+    expect(s.pending.map((p) => p.ms)).toEqual([FIRST_CHECK_DELAY_MS])
+    expect(s.fetch).not.toHaveBeenCalled()
+  })
+
+  test('after an update, saved releases up to the installed version are not shown, with no request', async () => {
+    await save({ url: FEED, checkedAt: T, releases: [stored('0.3.0'), stored('0.2.0')] })
+    const at = setup({ current: '0.2.0', clock: T + HOUR })
+    await at.checker.load()
+    expect(at.checker.state()).toMatchObject({ current: '0.2.0', checkedAt: T })
+    expect(at.checker.state().newer.map((r) => r.version)).toEqual(['0.3.0'])
+    const latest = setup({ current: '0.3.0', clock: T + HOUR })
+    await latest.checker.load()
+    expect(latest.checker.state()).toEqual({ current: '0.3.0', checkedAt: T, newer: [] })
+    latest.checker.start()
+    expect(latest.pending.map((p) => p.ms)).toEqual([CHECK_INTERVAL_MS - HOUR])
+    expect(at.fetch).not.toHaveBeenCalled()
+    expect(latest.fetch).not.toHaveBeenCalled()
+  })
+
+  test('a missing, corrupt or odd file, or one from another feed, means no previous check', async () => {
+    const fresh = { current: '0.1.0', checkedAt: null, newer: [] }
+    for (const content of [null, 'garbage{', 'null', '[]', '{}',
+      { url: 'https://other.test/r', checkedAt: T, releases: [stored('0.2.0')] },
+      { url: FEED, checkedAt: 'yesterday', releases: [stored('0.2.0')] },
+      { url: FEED, checkedAt: T, releases: 'none' }]) {
+      await rm(file, { force: true })
+      if (content !== null) await save(content)
+      const s = setup({ clock: T + HOUR })
+      await s.checker.load()
+      expect(s.checker.state(), JSON.stringify(content)).toEqual(fresh)
+      s.checker.start()
+      expect(s.pending.map((p) => p.ms)).toEqual([FIRST_CHECK_DELAY_MS])
+    }
+  })
+
+  test('saved entries are checked like fresh ones', async () => {
+    await save({ url: FEED, checkedAt: T, releases: [
+      stored('0.2.0', { url: 'javascript:alert(1)', publishedAt: 'soon', name: 7 }), stored('latest'), stored('0.4.0-beta.1'),
+      null, 'x', stored('0.3.0'), stored('0.3.0', { notes: 'duplicate' })
+    ] })
+    const s = setup({ clock: T + HOUR })
+    await s.checker.load()
+    expect(s.checker.state().newer).toEqual([
+      stored('0.3.0'),
+      { version: '0.2.0', name: 'v0.2.0', notes: 'Notes for 0.2.0', url: RELEASES_PAGE, publishedAt: 0 }
+    ])
+  })
+
+  test('a check in between (Check now) pushes the next automatic one back a day', async () => {
+    const s = setup({ clock: T })
+    s.checker.start()
+    s.tick(5_000)
+    await s.checker.checkNow()
+    s.tick(5_000)
+    s.fire() // the 10 s timer: checked 5 s ago, so wait
+    expect(s.fetch).toHaveBeenCalledTimes(1)
+    expect(s.pending.map((p) => p.ms)).toEqual([CHECK_INTERVAL_MS - 5_000])
+  })
+
+  test('a saved check from the future (the clock was changed) waits at most a day', async () => {
+    await save({ url: FEED, checkedAt: T + 30 * CHECK_INTERVAL_MS, releases: [] })
+    const s = setup({ clock: T })
+    await s.checker.load()
+    s.checker.start()
+    expect(s.pending.map((p) => p.ms)).toEqual([CHECK_INTERVAL_MS])
+  })
+
+  test('a file that cannot be written does not break the check', async () => {
+    const s = setup({ clock: T, file: join(dir, 'missing-dir', 'updates.json') })
+    await expect(s.checker.checkNow()).resolves.toMatchObject({ checkedAt: T, newer: [{ version: '0.2.0' }] })
   })
 })
