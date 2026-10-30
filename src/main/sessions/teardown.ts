@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { windowsShellCommand } from '../../host/win-command'
+import { comSpec } from '../../host/win-command'
 import { stopProcessTree } from './leftovers'
 
 export const TEARDOWN_LIMIT_MS = 120_000
@@ -12,9 +12,14 @@ export function teardownSpawn(
   command: string, env: Record<string, string>, platform: NodeJS.Platform
 ): { file: string; args: string[]; verbatim: boolean; detached: boolean } {
   if (platform === 'win32') {
-    // cmd.exe, as Node's `shell: true` runs a command. No process groups there: on timeout its tree is walked.
-    const c = windowsShellCommand(command, env)
-    return { file: c.file, args: c.args, verbatim: true, detached: false }
+    // cmd.exe, as Node's `shell: true` runs a command (`cmd /d /s /c "…"`), inside a cmd that first switches its
+    // console to UTF-8: cmd's built-ins (echo, cd, its own errors) write the console's OEM code page, and the output
+    // is read as UTF-8. (The console is the command's own, hidden: stdio isn't inherited.) The outer cmd passes the
+    // command on literally: every character it would act on is ^-escaped, so it never sees the command's quotes.
+    // No process groups on Windows: on timeout the command's tree is walked.
+    const cs = comSpec(env)
+    const literal = command.replace(/[\^&|<>()"]/g, '^$&')
+    return { file: cs, args: ['/d', '/s', '/c', `"chcp 65001>nul & "${cs}" /d /s /c ^"${literal}^""`], verbatim: true, detached: false }
   }
   return { file: '/bin/sh', args: ['-c', command], verbatim: false, detached: true }
 }

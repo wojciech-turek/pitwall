@@ -272,9 +272,15 @@ describe('finding and starting programs on Windows', () => {
 
 describe('teardown and leftovers on Windows', () => {
   test('teardown runs in cmd.exe with the session env, not in a new process group', () => {
+    // A cmd that switches its console to UTF-8, then the command in cmd as `shell: true` would run it, passed on
+    // literally (^-escaped for the outer cmd).
     expect(teardownSpawn('docker compose down', WIN_ENV, 'win32')).toEqual({
-      file: 'C:\\WINDOWS\\system32\\cmd.exe', args: ['/d', '/s', '/c', '"docker compose down"'], verbatim: true, detached: false
+      file: 'C:\\WINDOWS\\system32\\cmd.exe',
+      args: ['/d', '/s', '/c', '"chcp 65001>nul & "C:\\WINDOWS\\system32\\cmd.exe" /d /s /c ^"docker compose down^""'],
+      verbatim: true, detached: false
     })
+    expect(teardownSpawn('echo "a & b" | findstr a > out.txt (x)', WIN_ENV, 'win32').args[3])
+      .toBe('"chcp 65001>nul & "C:\\WINDOWS\\system32\\cmd.exe" /d /s /c ^"echo ^"a ^& b^" ^| findstr a ^> out.txt ^(x^)^""')
     expect(teardownSpawn('docker compose down', {}, 'darwin')).toEqual({
       file: '/bin/sh', args: ['-c', 'docker compose down'], verbatim: false, detached: true
     })
