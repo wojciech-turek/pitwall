@@ -1,7 +1,8 @@
 import { existsSync } from 'node:fs'
-import { chmod, mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { renameOver } from './atomic'
 import type { AppPaths } from './paths'
 
 function moduleDir(): string {
@@ -36,7 +37,7 @@ async function installFile(src: string, dest: string, mode?: number): Promise<vo
     const tmp = `${dest}.${process.pid}.tmp`
     await writeFile(tmp, content)
     if (mode !== undefined) await chmod(tmp, mode)
-    await rename(tmp, dest)
+    await renameOver(tmp, dest) // Windows: a hook may be reading the old script right now
   } else if (mode !== undefined) {
     await chmod(dest, mode)
   }

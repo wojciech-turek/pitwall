@@ -42,8 +42,9 @@ describe('the taskbar badge', () => {
     expect(badgeBitmap(0)).toBeNull()
     expect(badgeText(3)).toBe('3')
     expect(badgeText(12)).toBe('9+')
-    expect(badgeDescription(1)).toBe('1 session needs you')
-    expect(badgeDescription(4)).toBe('4 sessions need you')
+    // The count is sessions needing you plus those with unread replies, as the Dock badge's.
+    expect(badgeDescription(1)).toBe('1 session needs you or has an unread reply')
+    expect(badgeDescription(4)).toBe('4 sessions need you or have unread replies')
   })
 
   test('a red disc with the count in white, transparent outside, as premultiplied BGRA', () => {

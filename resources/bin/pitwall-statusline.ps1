@@ -6,6 +6,8 @@
 # Written for Windows PowerShell 5.1 (every Windows 10/11 has it); also runs in PowerShell 7.
 
 $ErrorActionPreference = 'Stop'
+# No progress bars (they would be drawn on the host's console and cost time).
+$ProgressPreference = 'SilentlyContinue'
 
 # One argument as the C runtime splits a command line (Git Bash reads its command line the same way).
 function ConvertTo-QuotedArg([string]$s) {

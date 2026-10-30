@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { describe, expect, test } from 'vitest'
 import { launcherChoice, sessionBackendKind } from '../../src/main/backend'
 import { usesHostLauncher } from '../../src/main/sessions/starter'
@@ -193,6 +195,22 @@ describe('finding and starting programs on Windows', () => {
     expect(findWindowsExecutable('D:/tools/x.exe', WIN_ENV, disk('D:/tools/x.exe'))).toBe('D:/tools/x.exe')
     // Not the current folder: only PATH.
     expect(findWindowsExecutable('claude', { Path: '' }, () => true)).toBeNull()
+  })
+
+  test('only programs and batch files, whatever else PATHEXT lists', () => {
+    const env = { ...WIN_ENV, PATHEXT: '.VBS;.JS;.PS1;.CMD;.EXE' }
+    expect(findWindowsExecutable('claude', env, disk('C:\\stub\\claude.js', 'C:\\stub\\claude.ps1', 'C:\\stub\\claude.exe'))).toBe('C:\\stub\\claude.exe')
+    expect(findWindowsExecutable('claude', env, disk('C:\\stub\\claude.cmd', 'C:\\stub\\claude.exe'))).toBe('C:\\stub\\claude.cmd') // PATHEXT order
+    expect(findWindowsExecutable('claude.js', env, disk('C:\\stub\\claude.js'))).toBeNull() // never a script run as itself
+  })
+
+  test('the PowerShell scripts: ASCII only (Windows PowerShell reads BOM-less files in the ANSI code page), no progress bars', () => {
+    for (const name of ['pitwall-hook.ps1', 'pitwall-statusline.ps1']) {
+      const text = readFileSync(resolve(__dirname, '../../resources/bin', name), 'utf8')
+      expect(/^[\x00-\x7f]*$/.test(text)).toBe(true)
+      expect(text).toContain("$ProgressPreference = 'SilentlyContinue'")
+      expect(text.trimEnd().endsWith('exit 0')).toBe(true)
+    }
   })
 
   test('argument quoting survives the C runtime\'s splitting (random strings)', () => {

@@ -27,9 +27,9 @@ export function badgeText(count: number): string | null {
   return count > 9 ? '9+' : String(Math.floor(count))
 }
 
-/** What a screen reader says about the badge. */
+/** What a screen reader says about the badge (the count is sessions that need you plus those with unread replies). */
 export function badgeDescription(count: number): string {
-  return count === 1 ? '1 session needs you' : `${count} sessions need you`
+  return count === 1 ? '1 session needs you or has an unread reply' : `${count} sessions need you or have unread replies`
 }
 
 /**

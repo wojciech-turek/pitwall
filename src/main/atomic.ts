@@ -4,7 +4,7 @@ import { rename, rm, writeFile } from 'node:fs/promises'
 const BUSY = new Set(['EPERM', 'EACCES', 'EBUSY'])
 
 /** Windows refuses to replace a file another process has open at that moment (a reader, a virus scan): retry briefly. */
-async function renameOver(from: string, to: string, platform: NodeJS.Platform): Promise<void> {
+export async function renameOver(from: string, to: string, platform: NodeJS.Platform = process.platform): Promise<void> {
   for (let attempt = 0; ; attempt++) {
     try {
       return await rename(from, to)

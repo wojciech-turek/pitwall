@@ -47,7 +47,7 @@ export default function TerminalView({ sessionId, kind, fontFamily, fontSize }: 
       filePaths: [...dt.files].map((f) => window.pitwall.pathForFile(f)),
       uriList: dt.getData('text/uri-list'),
       text: dt.getData('text/plain')
-    })
+    }, undefined, kind)
     if (!text) return
     const { term } = getTerminal(sessionId, kind)
     term.paste(text)

@@ -120,6 +120,17 @@ describe('paths crossing into a prompt on Windows', () => {
     expect(formatDroppedPaths(['/a/b.txt', '/c/d e.txt'], 'darwin')).toBe("/a/b.txt '/c/d e.txt' ")
   })
 
+  test('dropped on the Shell tab (PowerShell): single quotes, a quote inside doubled; bare only when nothing could split it', () => {
+    expect(shellEscapePath('C:\\Users\\me\\x.ts', 'win32', 'shell')).toBe('C:\\Users\\me\\x.ts')
+    expect(shellEscapePath('C:\\My Repo\\a,b@c.png', 'win32', 'shell')).toBe("'C:\\My Repo\\a,b@c.png'")
+    expect(shellEscapePath("C:\\Users\\O'Brien\\$x.txt", 'win32', 'shell')).toBe("'C:\\Users\\O''Brien\\$x.txt'")
+    expect(shellEscapePath('C:\\it’s.txt', 'win32', 'shell')).toBe("'C:\\it’’s.txt'")
+    expect(dropText({ filePaths: ['C:\\x y\\f.png'], uriList: '', text: '' }, 'win32', 'shell')).toBe("'C:\\x y\\f.png' ")
+    // Claude's prompt keeps double quotes; macOS is the same for both tabs.
+    expect(dropText({ filePaths: ['C:\\x y\\f.png'], uriList: '', text: '' }, 'win32', 'claude')).toBe('"C:\\x y\\f.png" ')
+    expect(dropText({ filePaths: ['/x y/f.png'], uriList: '', text: '' }, 'darwin', 'shell')).toBe("'/x y/f.png' ")
+  })
+
   test('file links (a drag from an editor) become Windows paths, drive letters and network shares included', () => {
     expect(dropText({ filePaths: [], uriList: 'file:///C:/Users/me/My%20Repo/a.ts\r\nfile://server/share/z%C4%99.png', text: '' }, 'win32'))
       .toBe('"C:\\Users\\me\\My Repo\\a.ts" "\\\\server\\share\\zę.png" ')

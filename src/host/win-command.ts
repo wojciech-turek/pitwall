@@ -41,15 +41,17 @@ export function deleteEnv(env: Record<string, string>, name: string, platform: N
 }
 
 const DEFAULT_PATHEXT = '.COM;.EXE;.BAT;.CMD'
+/** What Pitwall can start: programs, and batch files through cmd.exe (never .vbs, .js, .ps1… from PATHEXT). */
+const RUNNABLE = new Set(['.com', '.exe', '.bat', '.cmd'])
 
 /**
  * The file Windows would run for `name`: a path is tried as given (with each PATHEXT extension if it has none), a bare
- * name in each PATH folder. An extensionless file is never picked (npm puts a POSIX `claude` script beside
- * `claude.cmd`). Null if nothing matches.
+ * name in each PATH folder. Only .com, .exe, .bat and .cmd, in PATHEXT's order; an extensionless file is never
+ * picked (npm puts a POSIX `claude` script beside `claude.cmd`). Null if nothing matches.
  */
 export function findWindowsExecutable(name: string, env: Env, isFile: IsFile): string | null {
   const exts = (envValue(env, 'PATHEXT') || DEFAULT_PATHEXT).split(';')
-    .map((e) => e.trim().toLowerCase()).filter((e) => e.startsWith('.'))
+    .map((e) => e.trim().toLowerCase()).filter((e) => RUNNABLE.has(e))
   const hasExt = exts.includes(win32.extname(name).toLowerCase())
   const candidates = (base: string): string[] => (hasExt ? [base] : exts.map((e) => base + e))
   if (/[\\/]/.test(name) || win32.isAbsolute(name)) {

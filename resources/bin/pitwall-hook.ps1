@@ -6,6 +6,8 @@
 # Written for Windows PowerShell 5.1 (every Windows 10/11 has it); also runs in PowerShell 7.
 
 $ErrorActionPreference = 'Stop'
+# No progress bars (they would be drawn on the host's console and cost time).
+$ProgressPreference = 'SilentlyContinue'
 
 # A JSON string as jq writes it: quotes, backslashes and control characters escaped, everything else as is.
 function Format-JsonString([string]$s) {
