@@ -1,10 +1,12 @@
 import { rm } from 'node:fs/promises'
 import os from 'node:os'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
+import type { AttachHandlers, SessionBackend } from '../../src/main/backend'
 import { exec } from '../../src/main/exec'
 import { PtyBridge } from '../../src/main/pty-bridge'
 import { resolveShellEnv } from '../../src/main/shell-env'
 import { claudeTmuxName, Tmux } from '../../src/main/tmux'
+import { TmuxBackend } from '../../src/main/tmux-backend'
 import type { TermKind } from '../../src/shared/types'
 import { makeTestEnv, tmuxSocketPath } from '../helpers/env'
 import { waitFor } from '../helpers/wait'
@@ -20,7 +22,7 @@ beforeEach(async () => {
   data = ''; exits = []; inputs = []
   await t.tmux.newSession({ name: claudeTmuxName('s1'), cwd: t.tmp, argv: ['cat'] })
   bridge = new PtyBridge({
-    tmux: t.tmux, env: t.env, ensureTarget: async () => {},
+    backend: t.backend, ensureTarget: async () => {},
     onData: (_i, _k, d) => { data += d },
     onExit: (i, k, c) => { exits.push([i, k, c]) },
     onUserInput: (i, k, d) => { inputs.push([i, k, d]) }
@@ -84,7 +86,7 @@ describe('PtyBridge', () => {
 })
 
 describe('PtyBridge waiting on ensureTarget', () => {
-  // attachCommand runs right before pty.spawn, so recording it shows whether a pty was spawned.
+  // attachCommand runs right before pty.spawn (in TmuxBackend.attach), so recording it shows whether a pty was spawned.
   function spyBridge(ensureTarget: () => Promise<void>) {
     const attaches: string[] = []
     const targets: string[] = []
@@ -92,7 +94,7 @@ describe('PtyBridge waiting on ensureTarget', () => {
       attachCommand: (name: string) => { attaches.push(name); return t.tmux.attachCommand(name) }
     })
     const b = new PtyBridge({
-      tmux, env: t.env,
+      backend: new TmuxBackend(tmux, t.env),
       ensureTarget: async (id) => { targets.push(id); await ensureTarget() },
       onData: () => {}, onExit: () => {}, onUserInput: () => {}
     })
@@ -137,6 +139,50 @@ describe('PtyBridge waiting on ensureTarget', () => {
   })
 })
 
+describe('PtyBridge with a backend that attaches asynchronously', () => {
+  // TmuxBackend attaches at once; a backend that answers later must not leak a terminal or a late callback.
+  function slow(attach: Promise<void>) {
+    const closed: string[] = []
+    const got: string[] = []
+    let h: AttachHandlers | undefined
+    const backend = {
+      attach: async (name: string, _c: number, _r: number, handlers: AttachHandlers) => {
+        h = handlers
+        await attach
+        return { write: () => {}, resize: () => {}, close: () => { closed.push(name) } }
+      }
+    } as unknown as SessionBackend
+    const b = new PtyBridge({
+      backend, ensureTarget: async () => {},
+      onData: (_i, _k, d) => { got.push(d) }, onExit: (_i, _k, c) => { got.push(`exit ${c}`) }, onUserInput: () => {}
+    })
+    return { b, closed, got, handlers: () => waitFor(async () => h, 2000, 'attach called') }
+  }
+
+  test('output before attach() returns is forwarded; a dispose meanwhile closes the attachment once it arrives', async () => {
+    let arrive!: () => void
+    const { b, closed, got, handlers } = slow(new Promise((r) => { arrive = r }))
+    const opening = b.open('s1', 'claude', 100, 30)
+    const h = await handlers()
+    h.onData('replay')
+    b.dispose()
+    h.onData('late')
+    h.onExit(0)
+    arrive()
+    await opening
+    expect(got).toEqual(['replay'])
+    expect(closed).toEqual([claudeTmuxName('s1')])
+  })
+
+  test('a failed attach rejects open()', async () => {
+    const { b, closed } = slow(Promise.reject(new Error('no host')))
+    await expect(b.open('s1', 'claude', 100, 30)).rejects.toThrow('no host')
+    b.write('s1', 'claude', 'x') // nothing registered: a no-op
+    b.dispose()
+    expect(closed).toEqual([])
+  })
+})
+
 describe('UTF-8 in a Finder-launched app', () => {
   // Claude's TUI glyphs; a non-UTF-8 tmux client prints `A_ _ _ h_llo _` instead.
   const GLYPHS = 'A❯ ⏺ ⎿ héllo ❯'
@@ -146,7 +192,7 @@ describe('UTF-8 in a Finder-launched app', () => {
   async function render(tmux: Tmux, env: Record<string, string>): Promise<string> {
     let out = ''
     const b = new PtyBridge({
-      tmux, env, ensureTarget: async () => {}, onData: (_i, _k, d) => { out += d }, onExit: () => {}, onUserInput: () => {}
+      backend: new TmuxBackend(tmux, env), ensureTarget: async () => {}, onData: (_i, _k, d) => { out += d }, onExit: () => {}, onUserInput: () => {}
     })
     try {
       await tmux.newSession({ name: claudeTmuxName('u'), cwd: t.tmp, argv: ['sh', '-c', `printf '%s\\n' '${GLYPHS}'; sleep 60`] })

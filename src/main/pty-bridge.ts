@@ -1,21 +1,23 @@
-import * as pty from 'node-pty'
 import type { TermKind } from '@shared/types'
-import { claudeTmuxName, shellTmuxName, type Tmux } from './tmux'
+import type { Attachment, SessionBackend } from './backend'
+import { claudeTmuxName, shellTmuxName } from './tmux'
 
 interface Deps {
-  tmux: Tmux
-  env: Record<string, string>
+  backend: SessionBackend
   ensureTarget: (id: string, kind: TermKind) => Promise<void>
   onData: (id: string, kind: TermKind, data: string) => void
   onExit: (id: string, kind: TermKind, code: number) => void
   onUserInput: (id: string, kind: TermKind, data: string) => void
 }
 
+/** An open terminal; `a` is missing while the backend is still attaching. */
+interface Term { a?: Attachment }
+
 const keyOf = (id: string, kind: TermKind): string => `${id}:${kind}`
 
-/** Embedded terminals: each is a node-pty running `tmux attach` for the session's tmux target. */
+/** Embedded terminals: each is the backend's attachment to the session's target (with tmux, a node-pty running `tmux attach`). */
 export class PtyBridge {
-  private ptys = new Map<string, pty.IPty>()
+  private terms = new Map<string, Term>()
   private opening = new Map<string, number>()
   private disposed = false
 
@@ -30,30 +32,40 @@ export class PtyBridge {
     await this.deps.ensureTarget(id, kind)
     // The app may have started quitting while we waited. A pty spawned now can hang the quit for good: its
     // spawn-helper blocks on a terminal nobody will open, and node-pty's exit handler waits on it forever.
+    // (TmuxBackend spawns as soon as attach() is called, so this check still holds at the spawn.)
     if (this.disposed || this.opening.get(key) !== ticket) return
     this.kill(key)
     const name = kind === 'claude' ? claudeTmuxName(id) : shellTmuxName(id)
-    const attach = this.deps.tmux.attachCommand(name)
-    const p = pty.spawn(attach.file, attach.args, {
-      name: 'xterm-256color', cols, rows, cwd: this.deps.env.HOME, env: this.deps.env
-    })
-    this.ptys.set(key, p)
-    p.onData((d) => { if (this.ptys.get(key) === p) this.deps.onData(id, kind, d) })
-    p.onExit(({ exitCode }) => {
-      // A pty we replaced or closed ourselves is no longer registered: stay silent.
-      if (this.ptys.get(key) !== p) return
-      this.ptys.delete(key)
-      this.deps.onExit(id, kind, exitCode)
-    })
+    // Registered before attaching, so closing it meanwhile (or replacing it) is seen once attach() returns.
+    const term: Term = {}
+    this.terms.set(key, term)
+    const live = (): boolean => this.terms.get(key) === term
+    let a: Attachment
+    try {
+      a = await this.deps.backend.attach(name, cols, rows, {
+        onData: (d) => { if (live()) this.deps.onData(id, kind, d) },
+        onExit: (code) => {
+          // A terminal we replaced or closed ourselves is no longer registered: stay silent.
+          if (!live()) return
+          this.terms.delete(key)
+          this.deps.onExit(id, kind, code)
+        }
+      })
+    } catch (e) {
+      if (live()) this.terms.delete(key)
+      throw e
+    }
+    if (live()) term.a = a
+    else a.close() // closed, replaced or ended while attaching
   }
 
   write(id: string, kind: TermKind, data: string): void {
-    this.ptys.get(keyOf(id, kind))?.write(data)
+    this.terms.get(keyOf(id, kind))?.a?.write(data)
     this.deps.onUserInput(id, kind, data)
   }
 
   resize(id: string, kind: TermKind, cols: number, rows: number): void {
-    try { this.ptys.get(keyOf(id, kind))?.resize(Math.max(1, cols), Math.max(1, rows)) } catch { /* pty already gone */ }
+    try { this.terms.get(keyOf(id, kind))?.a?.resize(Math.max(1, cols), Math.max(1, rows)) } catch { /* pty already gone */ }
   }
 
   close(id: string, kind: TermKind): void {
@@ -73,7 +85,7 @@ export class PtyBridge {
 
   closeAll(): void {
     for (const key of this.opening.keys()) this.opening.set(key, (this.opening.get(key) ?? 0) + 1)
-    for (const key of [...this.ptys.keys()]) this.kill(key)
+    for (const key of [...this.terms.keys()]) this.kill(key)
   }
 
   /** On quit: close every terminal and never open another (see open). */
@@ -83,9 +95,9 @@ export class PtyBridge {
   }
 
   private kill(key: string): void {
-    const p = this.ptys.get(key)
-    if (!p) return
-    this.ptys.delete(key)
-    try { p.kill() } catch { /* already exited */ }
+    const t = this.terms.get(key)
+    if (!t) return
+    this.terms.delete(key)
+    t.a?.close()
   }
 }

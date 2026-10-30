@@ -9,7 +9,8 @@ import { sessionDir } from '../../src/main/paths'
 import { KeyedMutex } from '../../src/main/sessions/mutex'
 import { prepareNewSession, startSession, writeSessionFiles, type StarterDeps } from '../../src/main/sessions/starter'
 import { Store } from '../../src/main/store'
-import { claudeTmuxName, type Tmux } from '../../src/main/tmux'
+import type { SessionBackend } from '../../src/main/backend'
+import { claudeTmuxName } from '../../src/main/tmux'
 import type { NewSessionInput, Project, Session, StartProgress, SubProject } from '../../src/shared/types'
 import { makeTestEnv } from '../helpers/env'
 import { makeRepo } from '../helpers/repo'
@@ -48,7 +49,7 @@ afterEach(async () => {
 
 function mkDeps(over: Partial<StarterDeps> = {}, gitEnv: Record<string, string> = t.env): StarterDeps {
   return {
-    store, paths: t.paths, git: new GitClient(exec, gitEnv), tmux: t.tmux, exec, env: t.env, home: t.tmp,
+    store, paths: t.paths, git: new GitClient(exec, gitEnv), backend: t.backend, exec, env: t.env, home: t.tmp,
     mutex: new KeyedMutex(),
     ...over
   }
@@ -186,9 +187,9 @@ describe('startSession', () => {
       newSession: async () => {
         throw new Error('boom')
       },
-      killSession: t.tmux.killSession.bind(t.tmux)
-    } as unknown as Tmux
-    deps = { ...deps, tmux: broken }
+      killSession: t.backend.killSession.bind(t.backend)
+    } as unknown as SessionBackend
+    deps = { ...deps, backend: broken }
     const res = await start(input(sp))
     expect(res).toEqual({ ok: false, step: 'tmux', error: 'boom' })
     expect(store.state.sessions).toEqual([])

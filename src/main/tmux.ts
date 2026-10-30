@@ -36,8 +36,10 @@ export class Tmux {
     return (await this.run(['has-session', '-t', `=${name}`])).code === 0
   }
 
-  async newSession(o: { name: string; cwd: string; argv: string[] }): Promise<void> {
-    await this.mustRun(['new-session', '-d', '-s', o.name, '-c', o.cwd, '-x', '200', '-y', '50', '--', ...o.argv])
+  /** `env` is set for this session only (`-e`), on top of the server's environment. */
+  async newSession(o: { name: string; cwd: string; argv: string[]; env?: Record<string, string> }): Promise<void> {
+    const env = Object.entries(o.env ?? {}).flatMap(([k, v]) => ['-e', `${k}=${v}`])
+    await this.mustRun(['new-session', '-d', '-s', o.name, '-c', o.cwd, '-x', '200', '-y', '50', ...env, '--', ...o.argv])
   }
 
   /** Live panes' first processes and the tmux server's pid; empty if the session doesn't exist. */

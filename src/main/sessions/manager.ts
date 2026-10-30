@@ -232,12 +232,12 @@ export class SessionManager {
   async ensureTerminalTarget(sessionId: string, kind: TermKind): Promise<void> {
     const s = this.deps.store.state.sessions.find((x) => x.id === sessionId)
     if (!s) throw new Error('Session not found.')
-    const { tmux, paths } = this.deps
+    const { backend, paths } = this.deps
     if (kind === 'claude') return this.relaunchIfMissing(s)
     const name = shellTmuxName(sessionId)
-    if (await tmux.hasSession(name)) return
+    if (await backend.hasSession(name)) return
     await assertSessionFolder(s.cwd)
-    await tmux.newSession({ name, cwd: s.cwd, argv: [join(paths.binDir, 'pitwall-shell'), sessionDir(paths, sessionId)] })
+    await backend.newSession({ name, cwd: s.cwd, argv: [join(paths.binDir, 'pitwall-shell'), sessionDir(paths, sessionId)] })
   }
 
   /** After a project edit: its running sessions pick up the new identity and env on their next (re)launch. */
@@ -349,7 +349,7 @@ export class SessionManager {
   }
 
   private async relaunchIfMissing(s: Session): Promise<void> {
-    if (await this.deps.tmux.hasSession(claudeTmuxName(s.id))) return
+    if (await this.deps.backend.hasSession(claudeTmuxName(s.id))) return
     try {
       await writeSessionFiles(s, this.deps)
       await launchTmuxFor(s, this.deps)

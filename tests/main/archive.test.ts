@@ -53,11 +53,11 @@ afterEach(async () => {
 function setup(gitEnv: Record<string, string>, g?: GitClient): ArchiveDeps {
   git = g ?? new GitClient(exec, gitEnv)
   manager = new SessionManager({
-    store, paths: t.paths, git, tmux: t.tmux, exec, env: t.env, home: t.tmp, mutex: new KeyedMutex(),
+    store, paths: t.paths, git, backend: t.backend, exec, env: t.env, home: t.tmp, mutex: new KeyedMutex(),
     firstEventTimeoutMs: 8000, notifier: { notify: () => {}, setBadge: () => {} }
   })
   return {
-    store, paths: t.paths, git, tmux: t.tmux, exec, env: t.env, home: t.tmp, mutex: new KeyedMutex(), manager,
+    store, paths: t.paths, git, backend: t.backend, exec, env: t.env, home: t.tmp, mutex: new KeyedMutex(), manager,
     ptyBridge: {
       close: (id: string, kind: string) => { closed.push(`${id}:${kind}`) },
       detach: (id: string, kind: string) => { detached.push(`${id}:${kind}`) }
@@ -252,8 +252,8 @@ describe('archive', () => {
       const s = await startOne(sp)
       const out = join(t.tmp, 'td.txt')
       const order = join(t.tmp, 'order.txt')
-      const real = deps.tmux.killSession.bind(deps.tmux)
-      deps.tmux = Object.assign(Object.create(deps.tmux), {
+      const real = deps.backend.killSession.bind(deps.backend)
+      deps.backend = Object.assign(Object.create(deps.backend), {
         killSession: async (n: string) => { await appendFile(order, `kill\n`); return real(n) }
       })
       const wt = await realpath(s.worktreePath!)

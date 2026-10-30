@@ -5,6 +5,7 @@ import { exec } from '../../src/main/exec'
 import { resolvePaths, type AppPaths } from '../../src/main/paths'
 import { installResources } from '../../src/main/resources'
 import { Tmux } from '../../src/main/tmux'
+import { TmuxBackend } from '../../src/main/tmux-backend'
 import { tmuxSocketPath } from './tmux-socket'
 
 export { tmuxSocketPath }
@@ -18,6 +19,8 @@ export async function makeTestEnv(): Promise<{
   paths: AppPaths
   env: Record<string, string>
   tmux: Tmux
+  /** The same tmux server, as the app sees it. */
+  backend: TmuxBackend
   cleanup(): Promise<void>
 }> {
   const tmp = await realpath(await mkdtemp(join(tmpdir(), 'pitwall-env-')))
@@ -49,6 +52,7 @@ export async function makeTestEnv(): Promise<{
     paths,
     env,
     tmux,
+    backend: new TmuxBackend(tmux, env),
     async cleanup() {
       await tmux.killServer().catch(() => {})
       await rm(tmuxSocketPath(socket, env), { force: true })

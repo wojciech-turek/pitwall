@@ -115,16 +115,16 @@ export async function archiveSession(
     }
 
     const panes = [
-      await deps.tmux.listPanePids(claudeTmuxName(s.id)),
-      await deps.tmux.listPanePids(shellTmuxName(s.id))
+      await deps.backend.processRoots(claudeTmuxName(s.id)),
+      await deps.backend.processRoots(shellTmuxName(s.id))
     ]
     const serverPid = panes.find((p) => p.serverPid)?.serverPid ?? null
     const leftovers = await snapshotLeftovers(panes.flatMap((p) => p.panePids), serverPid)
     deps.ptyBridge.close(s.id, 'claude')
     deps.ptyBridge.close(s.id, 'shell')
     terminalsClosed = true
-    await deps.tmux.killSession(claudeTmuxName(s.id))
-    await deps.tmux.killSession(shellTmuxName(s.id))
+    await deps.backend.killSession(claudeTmuxName(s.id))
+    await deps.backend.killSession(shellTmuxName(s.id))
 
     const repoRoot = sp?.repoRoot
     if (sp?.teardownCommand?.trim() && !o.skipTeardown && (await exists(s.cwd))) {

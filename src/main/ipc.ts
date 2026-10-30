@@ -1,12 +1,13 @@
 import { ipcMain, shell } from 'electron'
 import { IPC } from '@shared/api'
 import type { NewSessionInput, StartResult, TermKind } from '@shared/types'
+import type { SessionBackend } from './backend'
 import type { ChangesService } from './changes'
 import type { Exec } from './exec'
 import { formatAgentReference, listSessionFiles, readForEditor, writeFromEditor } from './files'
 import type { GitClient } from './git'
 import { settingsFrom, type Store } from './store'
-import { claudeTmuxName, type Tmux } from './tmux'
+import { claudeTmuxName } from './tmux'
 import type { SessionHistory } from './history'
 import { listGhAccounts, listSshKeys } from './identity'
 import type { AppPaths } from './paths'
@@ -24,7 +25,7 @@ export interface IpcDeps {
   changes: ChangesService
   store: Store
   git: GitClient
-  tmux: Tmux
+  backend: SessionBackend
   projects: ProjectService
   bridge: PtyBridge
   paths: AppPaths
@@ -45,7 +46,7 @@ export interface IpcDeps {
 
 /** Registers every IPC handler and wires manager snapshots to the renderer. Returns a disposer. */
 export function registerIpc(d: IpcDeps): () => void {
-  const { manager, projects, bridge, paths, exec, env, send, store, git, tmux } = d
+  const { manager, projects, bridge, paths, exec, env, send, store, git, backend } = d
   const handle = <A extends unknown[]>(channel: string, fn: (...args: A) => unknown): void => {
     ipcMain.handle(channel, (_e, ...args) => fn(...(args as A)))
   }
@@ -90,12 +91,12 @@ export function registerIpc(d: IpcDeps): () => void {
     writeFromEditor(sessionFolder(id).cwd, rel, content, mtime))
   handle(IPC.sendToAgent, async (id: string, text: string) => {
     sessionFolder(id)
-    await tmux.pasteText(claudeTmuxName(id), text) // bracketed paste, never Enter
+    await backend.pasteText(claudeTmuxName(id), text) // bracketed paste, never Enter
   })
   handle(IPC.listChanges, (id: string) => d.changes.list(id))
   handle(IPC.readDiff, (id: string, rel: string) => d.changes.readDiff(id, rel))
   const archiveDeps = () => ({
-    store, paths, git, tmux, exec, env, home: d.home, mutex: d.mutex, manager, ptyBridge: bridge
+    store, paths, git, backend, exec, env, home: d.home, mutex: d.mutex, manager, ptyBridge: bridge
   })
   handle(IPC.checkArchive, (id: string) => checkArchive(id, archiveDeps()))
   handle(IPC.archiveSession, (id: string, confirmed: boolean, skipTeardown?: boolean) =>

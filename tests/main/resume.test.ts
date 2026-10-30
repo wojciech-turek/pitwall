@@ -11,7 +11,8 @@ import { SessionManager } from '../../src/main/sessions/manager'
 import { KeyedMutex } from '../../src/main/sessions/mutex'
 import { resumeSession } from '../../src/main/sessions/resume'
 import { Store } from '../../src/main/store'
-import { claudeTmuxName, type Tmux } from '../../src/main/tmux'
+import type { SessionBackend } from '../../src/main/backend'
+import { claudeTmuxName } from '../../src/main/tmux'
 import type { NewSessionInput, Project, Session, StartProgress, SubProject } from '../../src/shared/types'
 import { makeTestEnv } from '../helpers/env'
 import { makeRepo } from '../helpers/repo'
@@ -56,7 +57,7 @@ afterEach(async () => {
 function setup(gitEnv: Record<string, string>, over: Partial<ArchiveDeps> = {}): ArchiveDeps {
   const git = new GitClient(exec, gitEnv)
   manager?.dispose()
-  const base = { store, paths: t.paths, git, tmux: t.tmux, exec, env: t.env, home: t.tmp, mutex: new KeyedMutex() }
+  const base = { store, paths: t.paths, git, backend: t.backend, exec, env: t.env, home: t.tmp, mutex: new KeyedMutex() }
   manager = new SessionManager({ ...base, ...over, firstEventTimeoutMs: 8000, notifier: { notify: () => {}, setBadge: () => {} } })
   deps = {
     ...base, manager, ...over,
@@ -201,8 +202,8 @@ describe('resumeSession', () => {
     expect(get(s.id).branchDeleted).toBe(true)
 
     // A failed resume removes the branch it recreated (and never the pushed copy).
-    const broken = Object.assign(Object.create(t.tmux) as Tmux, { newSession: async () => { throw new Error('tmux broke') } })
-    expect(await resume(s.id, { ...deps, tmux: broken })).toMatchObject({ ok: false, step: 'tmux' })
+    const broken = Object.assign(Object.create(t.backend) as SessionBackend, { newSession: async () => { throw new Error('tmux broke') } })
+    expect(await resume(s.id, { ...deps, backend: broken })).toMatchObject({ ok: false, step: 'tmux' })
     expect(await branchesOf(r)).toEqual(['main'])
     expect((await git(r, r.root, 'rev-parse', `refs/remotes/origin/${s.branch}`)).stdout.trim()).toBe(head)
 
@@ -376,10 +377,10 @@ describe('resumeSession', () => {
     const { r, sp } = await addRepo()
     const s = await startOne(sp)
     await archive(s)
-    const broken = Object.assign(Object.create(t.tmux) as Tmux, {
+    const broken = Object.assign(Object.create(t.backend) as SessionBackend, {
       newSession: async () => { throw new Error('tmux broke') }
     })
-    const res = await resume(s.id, { ...deps, tmux: broken })
+    const res = await resume(s.id, { ...deps, backend: broken })
     expect(res).toEqual({ ok: false, step: 'tmux', error: 'tmux broke' })
     await expectNothingCreated(get(s.id), s.worktreePath)
     expect(await worktrees(r)).toEqual([r.root])

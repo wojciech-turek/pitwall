@@ -51,7 +51,7 @@ afterEach(async () => {
 
 function mkManager(firstEventTimeoutMs = 8000): SessionManager {
   const m = new SessionManager({
-    store, paths: t.paths, git: new GitClient(exec, t.env), tmux: t.tmux, exec, env: t.env, home: t.tmp,
+    store, paths: t.paths, git: new GitClient(exec, t.env), backend: t.backend, exec, env: t.env, home: t.tmp,
     mutex: new KeyedMutex(), firstEventTimeoutMs, notifier
   })
   managers.push(m)

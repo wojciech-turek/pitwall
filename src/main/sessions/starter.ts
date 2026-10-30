@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { access, mkdir, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { writeFileAtomic } from '../atomic'
+import type { SessionBackend } from '../backend'
 import type {
   NewSessionDefaults, NewSessionInput, Project, Session, StartProgress, StartResult, StartStep, SubProject
 } from '@shared/types'
@@ -12,7 +13,7 @@ import { buildHookSettings, findUserStatusLine, hookCommandFor, statusLineComman
 import { buildSessionEnv, claudeConfigDir, getGhToken, renderEnvFile } from '../identity'
 import { eventsFile, sessionDir, type AppPaths } from '../paths'
 import { newId, type Store } from '../store'
-import { claudeTmuxName, type Tmux } from '../tmux'
+import { claudeTmuxName } from '../tmux'
 import type { KeyedMutex } from './mutex'
 
 export type { NewSessionDefaults, NewSessionInput, StartProgress, StartResult, StartStep }
@@ -21,7 +22,7 @@ export interface StarterDeps {
   store: Store
   paths: AppPaths
   git: GitClient
-  tmux: Tmux
+  backend: SessionBackend
   exec: Exec
   env: Record<string, string>
   home: string
@@ -127,7 +128,7 @@ export async function assertSessionFolder(cwd: string): Promise<void> {
 
 export async function launchTmuxFor(session: Session, deps: StarterDeps): Promise<void> {
   await assertSessionFolder(session.cwd)
-  await deps.tmux.newSession({
+  await deps.backend.newSession({
     name: claudeTmuxName(session.id),
     cwd: session.cwd,
     argv: [join(deps.paths.binDir, 'pitwall-launch'), sessionDir(deps.paths, session.id)]
@@ -154,7 +155,7 @@ async function doStart(
 ): Promise<StartResult> {
   const steps = progressSteps(input.requestId, onProgress)
   const { emit, run } = steps
-  const { paths, git, tmux } = deps
+  const { paths, git, backend } = deps
   const id = newId('s')
   const dir = sessionDir(paths, id)
   const created = { worktree: undefined as string | undefined, branch: undefined as string | undefined, tmux: false }
@@ -168,7 +169,7 @@ async function doStart(
         // best effort; never mask the original error
       }
     }
-    if (created.tmux) await attempt(() => tmux.killSession(claudeTmuxName(id)))
+    if (created.tmux) await attempt(() => backend.killSession(claudeTmuxName(id)))
     if (created.worktree && repoRoot) await attempt(() => git.removeWorktree(repoRoot!, created.worktree!, true))
     if (created.worktree) await attempt(() => rm(created.worktree!, { recursive: true, force: true }))
     if (created.branch && repoRoot) await attempt(() => git.deleteBranch(repoRoot!, created.branch!))

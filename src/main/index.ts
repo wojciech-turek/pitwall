@@ -19,6 +19,7 @@ import { KeyedMutex } from './sessions/mutex'
 import { resolveShellEnv } from './shell-env'
 import { Store } from './store'
 import { Tmux } from './tmux'
+import { TmuxBackend } from './tmux-backend'
 import { releasesUrl, UpdateChecker } from './updates'
 import { UsageTracker } from './usage'
 import { APP_VERSION } from '@shared/version'
@@ -130,10 +131,10 @@ async function bootstrap(): Promise<void> {
   await installResources(paths)
   const store = await Store.open(paths.stateFile)
   const git = new GitClient(exec, env)
-  const tmux = new Tmux({ socket: paths.tmuxSocket, confPath: paths.tmuxConf, env, exec })
+  const backend = new TmuxBackend(new Tmux({ socket: paths.tmuxSocket, confPath: paths.tmuxConf, env, exec }), env)
   const notifier = electronNotifier(focusSession, paths.notificationsDisabled)
   const mutex = new KeyedMutex()
-  const mgr = new SessionManager({ store, paths, git, tmux, exec, env, home, mutex, notifier })
+  const mgr = new SessionManager({ store, paths, git, backend, exec, env, home, mutex, notifier })
   manager = mgr
   await mgr.init()
 
@@ -148,7 +149,7 @@ async function bootstrap(): Promise<void> {
     }
   })
   bridge = new PtyBridge({
-    tmux, env,
+    backend,
     ensureTarget: (id, kind) => mgr.ensureTerminalTarget(id, kind),
     onData: (id, kind, data) => send(IPC.termData, id, kind, data),
     onExit: (id, kind, code) => send(IPC.termExit, id, kind, code),
@@ -185,7 +186,7 @@ async function bootstrap(): Promise<void> {
   disposeUpdates = () => { powerMonitor.removeListener('resume', onResume); updates.stop() }
   const history = new SessionHistory(() => historySources(mgr.snapshot(), home, env))
   disposeIpc = registerIpc({
-    manager: mgr, changes, store, git, tmux, projects, bridge, paths, exec, env, home, mutex, history, usage, updates, send, dev: DEV,
+    manager: mgr, changes, store, git, backend, projects, bridge, paths, exec, env, home, mutex, history, usage, updates, send, dev: DEV,
     onViewing: (ids) => {
       visibleIds = ids
       mgr.setViewing(ids, win?.isFocused() ?? false)

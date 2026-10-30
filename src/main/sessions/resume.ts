@@ -60,7 +60,7 @@ async function doResume(
 ): Promise<StartResult> {
   const steps = progressSteps(requestId, onProgress)
   const { emit, run } = steps
-  const { git, paths, tmux } = deps
+  const { git, paths, backend } = deps
   const dir = sessionDir(paths, sessionId)
   const created = {
     repoRoot: undefined as string | undefined, worktree: undefined as string | undefined,
@@ -76,7 +76,7 @@ async function doResume(
       }
     }
     const { repoRoot, worktree, branch } = created
-    if (created.tmux) await attempt(() => tmux.killSession(claudeTmuxName(sessionId)))
+    if (created.tmux) await attempt(() => backend.killSession(claudeTmuxName(sessionId)))
     if (worktree && repoRoot) await attempt(() => git.removeWorktree(repoRoot, worktree, true))
     if (worktree) await attempt(() => rm(worktree, { recursive: true, force: true }))
     if (branch && repoRoot) await attempt(() => git.deleteBranch(repoRoot, branch))
