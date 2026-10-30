@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2c2926"/><stop offset="1" stop-color="#161310"/>
+    </linearGradient>
+    <linearGradient id="gloss" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff" stop-opacity=".09"/><stop offset=".45" stop-color="#fff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="pane" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#211f1d"/><stop offset="1" stop-color="#191817"/>
+    </linearGradient>
+    <filter id="grain" color-interpolation-filters="sRGB" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="fractalNoise" baseFrequency=".9" numOctaves="2" seed="7" result="n"/>
+      <feColorMatrix in="n" type="matrix" values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 .55 0"/>
+      <feComposite in2="SourceGraphic" operator="in"/>
+    </filter>
+    <filter id="blur" x="-10%" y="-10%" width="120%" height="125%"><feGaussianBlur stdDeviation="16"/></filter>
+    <filter id="shadow" color-interpolation-filters="sRGB" x="-10%" y="-10%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="14" stdDeviation="16" flood-color="#000" flood-opacity=".35"/>
+    </filter>
+    <clipPath id="tile"><rect x="100" y="100" width="824" height="824" rx="186"/></clipPath>
+  </defs>
+  <rect x="100" y="114" width="824" height="824" rx="186" fill="#000" opacity=".35" filter="url(#blur)"/>
+  <rect x="100" y="100" width="824" height="824" rx="186" fill="url(#bg)"/>
+  <rect x="100" y="100" width="824" height="824" rx="186" fill="#000" filter="url(#grain)" opacity=".07"/>
+  <rect x="100" y="100" width="824" height="824" rx="186" fill="url(#gloss)"/>
+  <rect x="101.5" y="101.5" width="821" height="821" rx="185" fill="none" stroke="#fff" stroke-opacity=".07" stroke-width="3"/>
+  <rect x="210" y="210" width="284" height="284" rx="46" fill="url(#pane)" stroke="#3a3733" stroke-width="6"/><circle cx="272" cy="276" r="22" fill="#5b9cf5"/><circle cx="272" cy="276" r="34" fill="none" stroke="#5b9cf5" stroke-opacity=".28" stroke-width="8"/><rect x="254" y="344" width="196" height="22" rx="11" fill="#55504a"/><rect x="254" y="392" width="150" height="22" rx="11" fill="#55504a"/><rect x="254" y="440" width="172" height="22" rx="11" fill="#55504a"/><rect x="530" y="210" width="284" height="284" rx="46" fill="url(#pane)" stroke="#d9a66b" stroke-width="12"/><circle cx="592" cy="276" r="22" fill="#f0a34b"/><circle cx="592" cy="276" r="34" fill="none" stroke="#f0a34b" stroke-opacity=".28" stroke-width="8"/><rect x="574" y="344" width="180" height="22" rx="11" fill="#55504a"/><rect x="574" y="392" width="200" height="22" rx="11" fill="#55504a"/><rect x="574" y="440" width="120" height="22" rx="11" fill="#d9a66b"/><rect x="210" y="530" width="284" height="284" rx="46" fill="url(#pane)" stroke="#3a3733" stroke-width="6"/><circle cx="272" cy="596" r="22" fill="#5cc28a"/><circle cx="272" cy="596" r="34" fill="none" stroke="#5cc28a" stroke-opacity=".28" stroke-width="8"/><rect x="254" y="664" width="160" height="22" rx="11" fill="#55504a"/><rect x="254" y="712" width="196" height="22" rx="11" fill="#55504a"/><rect x="254" y="760" width="140" height="22" rx="11" fill="#55504a"/><rect x="530" y="530" width="284" height="284" rx="46" fill="url(#pane)" stroke="#3a3733" stroke-width="6"/><circle cx="592" cy="596" r="22" fill="#6b6762"/><rect x="574" y="664" width="190" height="22" rx="11" fill="#55504a"/><rect x="574" y="712" width="130" height="22" rx="11" fill="#55504a"/><rect x="574" y="760" width="168" height="22" rx="11" fill="#55504a"/>
+  <g clip-path="url(#tile)">
+    <rect x="100" y="660" width="824" height="264" fill="#f0a34b"/>
+    <rect x="100" y="660" width="824" height="10" fill="#fff" fill-opacity=".35"/>
+    <text x="512" y="880" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-weight="900" font-size="230" letter-spacing="14" fill="#161310">DEV</text>
+  </g>
+</svg>

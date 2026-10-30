@@ -53,6 +53,8 @@ export interface PitwallApi {
   onFocusSession(cb: (sessionId: string) => void): () => void
   /** Claude subscription usage, or null until Claude has reported any. */
   getUsage(): Promise<ClaudeUsage | null>
+  /** Build version, and whether this is a dev (unpackaged) run. */
+  appInfo(): Promise<{ version: string; dev: boolean }>
   onUsage(cb: (u: ClaudeUsage | null) => void): () => void
   onMenuCommand(cb: (c: MenuCommand) => void): () => void
   /** Absolute path of a dropped file ('' if it has none). Synchronous, preload-only. */
@@ -95,6 +97,7 @@ export const IPC = {
   openInCursor: 'pitwall:openInCursor',
   setSettings: 'pitwall:setSettings',
   getUsage: 'pitwall:getUsage',
+  appInfo: 'pitwall:appInfo',
   // main -> renderer
   snapshot: 'pitwall:snapshot',
   startProgress: 'pitwall:startProgress',

@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "description": "A Mac app for running many Claude Code agents in parallel, each in its own worktree with the right git identity",
+  "packageManager": "pnpm@12.16.1",
   "license": "MIT",
   "author": "Wojciech Turek",
   "repository": {
@@ -19,6 +20,8 @@
     "test": "vitest run",
     "test:e2e": "playwright test",
     "package": "electron-vite build && electron-builder --mac dir --arm64",
+    "dist": "electron-vite build && electron-builder --mac dmg --arm64",
+    "verify:sign": "codesign --verify --deep --strict --verbose=2 release/mac-arm64/Pitwall.app",
     "postinstall": "chmod +x node_modules/node-pty/prebuilds/darwin-*/spawn-helper 2>/dev/null || true"
   },
   "dependencies": {

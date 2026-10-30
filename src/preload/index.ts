@@ -62,6 +62,7 @@ const api: PitwallApi = {
   setSettings: (s) => ipcRenderer.invoke(IPC.setSettings, s),
   onFocusSession,
   getUsage: () => ipcRenderer.invoke(IPC.getUsage),
+  appInfo: () => ipcRenderer.invoke(IPC.appInfo),
   onUsage: (cb) => subscribe(IPC.usage, cb),
   onMenuCommand: (cb) => subscribe(IPC.menuCommand, cb),
   pathForFile: (file) => {

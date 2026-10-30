@@ -20,9 +20,11 @@ import { Store } from './store'
 import { Tmux } from './tmux'
 import { UsageTracker } from './usage'
 
-app.setName('Pitwall')
+// A dev build is unmistakable: its own name, and below its own Dock icon.
+const DEV = !app.isPackaged
+app.setName(DEV ? 'Pitwall Dev' : 'Pitwall')
 // A dev build keeps its own data, tmux socket and worktrees (see resolvePaths).
-const paths = resolvePaths(process.env, homedir(), { dev: !app.isPackaged })
+const paths = resolvePaths(process.env, homedir(), { dev: DEV })
 app.setPath('userData', paths.dataDir)
 // One instance per data dir: a second launch only brings the first one forward.
 const isPrimaryInstance = app.requestSingleInstanceLock()
@@ -50,6 +52,7 @@ function createWindow(): void {
     minHeight: 600,
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 14, y: 14 },
+    title: DEV ? 'Pitwall Dev' : 'Pitwall',
     backgroundColor: '#171615',
     show: false,
     webPreferences: {
@@ -60,6 +63,8 @@ function createWindow(): void {
   })
   win = w
   winLoaded = false
+  // The page's <title> must not override the window title.
+  w.on('page-title-updated', (e) => e.preventDefault())
   w.once('ready-to-show', () => w.show())
   w.on('focus', () => manager?.setViewing(visibleIds, true))
   w.on('blur', () => manager?.setViewing(visibleIds, false))
@@ -158,7 +163,7 @@ async function bootstrap(): Promise<void> {
   usage.start()
   disposeUsage = () => usage.stop()
   disposeIpc = registerIpc({
-    manager: mgr, changes, store, git, tmux, projects, bridge, paths, exec, env, home, mutex, usage, send,
+    manager: mgr, changes, store, git, tmux, projects, bridge, paths, exec, env, home, mutex, usage, send, dev: DEV,
     onViewing: (ids) => {
       visibleIds = ids
       mgr.setViewing(ids, win?.isFocused() ?? false)
@@ -184,7 +189,7 @@ if (!isPrimaryInstance) {
   void app.whenReady().then(async () => {
     // The packaged app gets its icon from the bundle; a dev run would show Electron's.
     if (!app.isPackaged) {
-      try { app.dock?.setIcon(join(resourcesDir(), 'icon.png')) } catch { /* cosmetic */ }
+      try { app.dock?.setIcon(join(resourcesDir(), 'icon-dev.png')) } catch { /* cosmetic */ }
     }
     try {
       await bootstrap()

@@ -10,8 +10,13 @@ asarUnpack:
 extraResources:
   - from: resources
     to: resources
+artifactName: Pitwall-${version}-${arch}.${ext}
 mac:
   target:
     - target: dir
       arch: arm64
-  identity: null
+  # Ad-hoc signature: no Developer ID. It keeps the bundle internally consistent so a downloaded DMG is not "damaged".
+  identity: "-"
+  hardenedRuntime: false
+dmg:
+  title: "Pitwall ${version}"

@@ -14,6 +14,7 @@ import type { PtyBridge } from './pty-bridge'
 import { archiveSession, checkArchive } from './sessions/archive'
 import type { SessionManager } from './sessions/manager'
 import type { KeyedMutex } from './sessions/mutex'
+import { APP_VERSION } from '@shared/version'
 import type { UsageTracker } from './usage'
 
 export interface IpcDeps {
@@ -30,6 +31,8 @@ export interface IpcDeps {
   home: string
   mutex: KeyedMutex
   usage: Pick<UsageTracker, 'current' | 'onChange'>
+  /** True for an unpackaged (dev) run. */
+  dev: boolean
   /** Sends to the renderer; a no-op when there is no window. */
   send: (channel: string, ...args: unknown[]) => void
   /** The sessions visible in the renderer's panes; main combines them with window focus. */
@@ -48,6 +51,7 @@ export function registerIpc(d: IpcDeps): () => void {
 
   handle(IPC.getSnapshot, () => manager.snapshot())
   handle(IPC.getUsage, () => d.usage.current())
+  handle(IPC.appInfo, () => ({ version: APP_VERSION, dev: d.dev }))
   handle(IPC.listSshKeys, () => listSshKeys(paths.sshDir))
   handle(IPC.listGhAccounts, () => listGhAccounts(paths.ghBin, exec, env))
   handle(IPC.createProject, (i: Parameters<ProjectService['createProject']>[0]) => projects.createProject(i))
