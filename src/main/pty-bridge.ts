@@ -10,8 +10,11 @@ interface Deps {
   onUserInput: (id: string, kind: TermKind, data: string) => void
 }
 
-/** An open terminal; `a` is missing while the backend is still attaching. */
-interface Term { a?: Attachment }
+/**
+ * An open terminal; `a` is missing while the backend is still attaching. Meanwhile `typed` and `size` keep what the
+ * renderer sent (as a `tmux attach` pty would), for when it arrives.
+ */
+interface Term { a?: Attachment; typed?: string; size?: { cols: number; rows: number } }
 
 const keyOf = (id: string, kind: TermKind): string => `${id}:${kind}`
 
@@ -55,17 +58,28 @@ export class PtyBridge {
       if (live()) this.terms.delete(key)
       throw e
     }
-    if (live()) term.a = a
-    else a.close() // closed, replaced or ended while attaching
+    if (!live()) {
+      a.close() // closed, replaced or ended while attaching
+      return
+    }
+    term.a = a
+    if (term.size) this.applySize(a, term.size.cols, term.size.rows)
+    if (term.typed) a.write(term.typed)
+    delete term.size
+    delete term.typed
   }
 
   write(id: string, kind: TermKind, data: string): void {
-    this.terms.get(keyOf(id, kind))?.a?.write(data)
+    const t = this.terms.get(keyOf(id, kind))
+    if (t?.a) t.a.write(data)
+    else if (t) t.typed = (t.typed ?? '') + data
     this.deps.onUserInput(id, kind, data)
   }
 
   resize(id: string, kind: TermKind, cols: number, rows: number): void {
-    try { this.terms.get(keyOf(id, kind))?.a?.resize(Math.max(1, cols), Math.max(1, rows)) } catch { /* pty already gone */ }
+    const t = this.terms.get(keyOf(id, kind))
+    if (t?.a) this.applySize(t.a, cols, rows)
+    else if (t) t.size = { cols, rows }
   }
 
   close(id: string, kind: TermKind): void {
@@ -92,6 +106,10 @@ export class PtyBridge {
   dispose(): void {
     this.disposed = true
     this.closeAll()
+  }
+
+  private applySize(a: Attachment, cols: number, rows: number): void {
+    try { a.resize(Math.max(1, cols), Math.max(1, rows)) } catch { /* pty already gone */ }
   }
 
   private kill(key: string): void {

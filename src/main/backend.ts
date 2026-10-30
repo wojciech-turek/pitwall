@@ -13,7 +13,8 @@ export interface Attachment {
 }
 
 /**
- * Where agents' terminals live, so they outlive the app: tmux on a private socket today (TmuxBackend).
+ * Where agents' terminals live, so they outlive the app: tmux on a private socket (TmuxBackend), or the Pitwall host,
+ * a background process that owns them (HostBackend).
  * Names are exact: `pw-a` never matches `pw-a-sh`.
  */
 export interface SessionBackend {
@@ -36,4 +37,11 @@ export interface SessionBackend {
   attach(name: string, cols: number, rows: number, h: AttachHandlers): Promise<Attachment>
   /** Ends every session and the backend's server. Never called on quit: agents must outlive the app. */
   shutdown(): Promise<void>
+}
+
+export type BackendKind = 'tmux' | 'host'
+
+/** tmux unless PITWALL_SESSION_BACKEND=host picks the Pitwall host (src/host). */
+export function sessionBackendKind(env: Record<string, string | undefined>): BackendKind {
+  return env.PITWALL_SESSION_BACKEND === 'host' ? 'host' : 'tmux'
 }

@@ -144,20 +144,44 @@ describe('PtyBridge with a backend that attaches asynchronously', () => {
   function slow(attach: Promise<void>) {
     const closed: string[] = []
     const got: string[] = []
+    const calls: string[] = []
     let h: AttachHandlers | undefined
     const backend = {
       attach: async (name: string, _c: number, _r: number, handlers: AttachHandlers) => {
         h = handlers
         await attach
-        return { write: () => {}, resize: () => {}, close: () => { closed.push(name) } }
+        return {
+          write: (d: string) => { calls.push(`write ${d}`) },
+          resize: (c: number, r: number) => { calls.push(`resize ${c}x${r}`) },
+          close: () => { closed.push(name) }
+        }
       }
     } as unknown as SessionBackend
     const b = new PtyBridge({
       backend, ensureTarget: async () => {},
       onData: (_i, _k, d) => { got.push(d) }, onExit: (_i, _k, c) => { got.push(`exit ${c}`) }, onUserInput: () => {}
     })
-    return { b, closed, got, handlers: () => waitFor(async () => h, 2000, 'attach called') }
+    return { b, closed, got, calls, handlers: () => waitFor(async () => h, 2000, 'attach called') }
   }
+
+  test('a resize and keys sent while attaching reach the attachment once it arrives (the last size only)', async () => {
+    let arrive!: () => void
+    const { b, calls, handlers } = slow(new Promise((r) => { arrive = r }))
+    const opening = b.open('s1', 'claude', 100, 30)
+    await handlers()
+    b.resize('s1', 'claude', 120, 40)
+    b.resize('s1', 'claude', 0, 41)
+    b.write('s1', 'claude', 'a')
+    b.write('s1', 'claude', 'b')
+    expect(calls).toEqual([])
+    arrive()
+    await opening
+    expect(calls).toEqual(['resize 1x41', 'write ab'])
+    b.resize('s1', 'claude', 130, 50)
+    b.write('s1', 'claude', 'c')
+    expect(calls).toEqual(['resize 1x41', 'write ab', 'resize 130x50', 'write c'])
+    b.dispose()
+  })
 
   test('output before attach() returns is forwarded; a dispose meanwhile closes the attachment once it arrives', async () => {
     let arrive!: () => void

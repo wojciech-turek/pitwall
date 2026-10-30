@@ -2,8 +2,10 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { app, BrowserWindow, dialog, Menu, powerMonitor, shell } from 'electron'
 import { IPC } from '@shared/api'
+import { sessionBackendKind, type SessionBackend } from './backend'
 import { exec } from './exec'
 import { historySources, SessionHistory } from './history'
+import { HostBackend } from './host-backend'
 import { buildMenuTemplate } from './menu'
 import { GitClient } from './git'
 import { ChangesService } from './changes'
@@ -125,13 +127,32 @@ function focusSession(sessionId: string): void {
   else pendingFocusId = sessionId
 }
 
+/**
+ * tmux on Pitwall's private socket, or (PITWALL_SESSION_BACKEND=host) the Pitwall host: this executable run as Node
+ * on out/host/index.js, one per data dir, so a dev build and the installed app never share agents.
+ */
+function createBackend(env: Record<string, string>): SessionBackend {
+  if (sessionBackendKind(process.env) === 'tmux') {
+    return new TmuxBackend(new Tmux({ socket: paths.tmuxSocket, confPath: paths.tmuxConf, env, exec }), env)
+  }
+  return new HostBackend({
+    dataDir: paths.dataDir,
+    appVersion: APP_VERSION,
+    launch: {
+      file: process.execPath,
+      args: [join(import.meta.dirname, '../host/index.js'), '--data', paths.dataDir],
+      env: { ...env, ELECTRON_RUN_AS_NODE: '1' }
+    }
+  })
+}
+
 async function bootstrap(): Promise<void> {
   const home = homedir()
   const env = await resolveShellEnv()
   await installResources(paths)
   const store = await Store.open(paths.stateFile)
   const git = new GitClient(exec, env)
-  const backend = new TmuxBackend(new Tmux({ socket: paths.tmuxSocket, confPath: paths.tmuxConf, env, exec }), env)
+  const backend = createBackend(env)
   const notifier = electronNotifier(focusSession, paths.notificationsDisabled)
   const mutex = new KeyedMutex()
   const mgr = new SessionManager({ store, paths, git, backend, exec, env, home, mutex, notifier })
