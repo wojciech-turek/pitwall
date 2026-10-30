@@ -332,6 +332,37 @@ describe('writeSessionFiles', () => {
     expect(await envSh(s)).not.toContain('PITWALL_USER_STATUSLINE')
   })
 
+  test('Windows: hooks in exec form (PowerShell by its full path, forward slashes), the status line for Git Bash and PowerShell', async () => {
+    const s = await folderSession()
+    deps = mkDeps({ platform: 'win32', env: { ...t.env, SystemRoot: 'C:\\WINDOWS' } })
+    await writeSessionFiles(s, deps)
+    const dir = sessionDir(t.paths, s.id)
+    const settings = JSON.parse(await readFile(join(dir, 'hooks.json'), 'utf8'))
+    for (const e of Object.keys(settings.hooks)) {
+      expect(settings.hooks[e]).toEqual([{ hooks: [{
+        type: 'command',
+        command: 'C:/WINDOWS/System32/WindowsPowerShell/v1.0/powershell.exe',
+        args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', join(t.paths.binDir, 'pitwall-hook.ps1'),
+          join(dir, 'events.jsonl'), s.id],
+        timeout: 10
+      }] }])
+    }
+    expect(settings.statusLine).toEqual({
+      type: 'command',
+      command: `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '${join(t.paths.binDir, 'pitwall-statusline.ps1')}' '${dir}'`,
+      padding: 0
+    })
+    const vars = JSON.parse(await readFile(join(dir, 'env.json'), 'utf8'))
+    expect(vars.PITWALL_GIT_BASH).toBeUndefined() // no user status line to chain
+    // A user status line is chained in Git Bash when Claude Code would find one.
+    await writeFile(join(s.cwd, '.claude', 'settings.json'), JSON.stringify({ statusLine: { type: 'command', command: '~/sl.sh' } }))
+    deps = mkDeps({ platform: 'win32', env: { ...t.env, CLAUDE_CODE_GIT_BASH_PATH: '/bin/sh' } })
+    await writeSessionFiles(s, deps)
+    expect(JSON.parse(await readFile(join(dir, 'env.json'), 'utf8'))).toMatchObject({
+      PITWALL_USER_STATUSLINE: '~/sl.sh', PITWALL_GIT_BASH: '/bin/sh'
+    })
+  })
+
   test("the user's own status line (project settings, else the project's CLAUDE_CONFIG_DIR) is chained via env.sh", async () => {
     const s = await folderSession()
     const userConfig = join(t.tmp, '.claude-work')

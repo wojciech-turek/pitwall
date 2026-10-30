@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, test } from 'vitest'
 import {
-  buildHookSettings, findUserStatusLine, hookCommandFor, HOOK_EVENTS, statusLineCommandFor
+  buildHookSettings, findUserStatusLine, forwardSlashes, hookCommandFor, HOOK_EVENTS, quoteForBashAndPowerShell,
+  statusLineCommandFor, windowsHookCommand, windowsStatusLineCommand
 } from '../../src/main/hooks/settings'
 
 test('hookCommandFor quotes paths with spaces', () =>
@@ -67,5 +68,47 @@ describe('findUserStatusLine', () => {
     await mkdir(join(cwd, '.claude', 'settings.local.json'))
     await put(join(configDir, 'settings.json'), sl('user-line'))
     expect(await findUserStatusLine(cwd, configDir)).toBe('user-line')
+  })
+})
+
+describe('Windows hooks and status line', () => {
+  const ps = 'C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
+  const bin = 'C:\\Users\\Zoë Łukasz\\AppData\\Roaming\\pitwall\\bin'
+  const sd = 'C:\\Users\\Zoë Łukasz\\AppData\\Roaming\\pitwall\\sessions/s_1'
+
+  test('hooks: exec form, every path with forward slashes, spaces and non-ASCII names as they are', () => {
+    const h = windowsHookCommand(ps, `${bin}\\pitwall-hook.ps1`, `${sd}/events.jsonl`, 's_1')
+    expect(h).toEqual({
+      command: 'C:/WINDOWS/System32/WindowsPowerShell/v1.0/powershell.exe',
+      args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File',
+        'C:/Users/Zoë Łukasz/AppData/Roaming/pitwall/bin/pitwall-hook.ps1',
+        'C:/Users/Zoë Łukasz/AppData/Roaming/pitwall/sessions/s_1/events.jsonl', 's_1']
+    })
+    const s = buildHookSettings(h, 'sl')
+    expect(Object.keys(s.hooks)).toEqual([...HOOK_EVENTS])
+    for (const e of HOOK_EVENTS) expect(s.hooks[e]).toEqual([{ hooks: [{ type: 'command', ...h, timeout: 10 }] }])
+    expect(s.statusLine).toEqual({ type: 'command', command: 'sl', padding: 0 })
+    // The macOS form is unchanged: a shell command, no args.
+    expect(buildHookSettings('cmd').hooks.Stop[0].hooks[0]).toEqual({ type: 'command', command: 'cmd', timeout: 10 })
+  })
+
+  test('the status line: a command Git Bash and PowerShell both read the same way', () => {
+    expect(windowsStatusLineCommand(`${bin}\\pitwall-statusline.ps1`, sd)).toBe(
+      "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File " +
+      "'C:/Users/Zoë Łukasz/AppData/Roaming/pitwall/bin/pitwall-statusline.ps1' 'C:/Users/Zoë Łukasz/AppData/Roaming/pitwall/sessions/s_1'")
+    // A user called O'Brien: double quotes, which neither shell expands here.
+    expect(windowsStatusLineCommand("C:\\Users\\O'Brien\\sl.ps1", "C:\\Users\\O'Brien\\s"))
+      .toBe('powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "C:/Users/O\'Brien/sl.ps1" "C:/Users/O\'Brien/s"')
+    // Nothing reads the same in both: no status line rather than a wrong one.
+    expect(windowsStatusLineCommand("C:\\Users\\O'B$x\\sl.ps1", 'C:\\s')).toBeUndefined()
+  })
+
+  test('quoting for both shells', () => {
+    expect(quoteForBashAndPowerShell('C:/a b/c')).toBe("'C:/a b/c'")
+    expect(quoteForBashAndPowerShell('C:/$x`y')).toBe("'C:/$x`y'")
+    expect(quoteForBashAndPowerShell("it's")).toBe('"it\'s"')
+    expect(quoteForBashAndPowerShell('it’s')).toBe('"it’s"') // PowerShell ends single quotes at ’ too
+    for (const bad of ["it's $x", "it's `x", 'it’s "x"', "it's \\x", 'it’s “x”']) expect(quoteForBashAndPowerShell(bad)).toBeNull()
+    expect(forwardSlashes('C:\\a\\b/c')).toBe('C:/a/b/c')
   })
 })

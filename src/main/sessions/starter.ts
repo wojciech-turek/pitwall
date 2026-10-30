@@ -9,9 +9,13 @@ import type {
 import { defaultBranchName, slugify } from '@shared/slug'
 import type { Exec } from '../exec'
 import { GitClient, uniquePath } from '../git'
-import { buildHookSettings, findUserStatusLine, hookCommandFor, statusLineCommandFor } from '../hooks/settings'
+import { isFile } from '../exec'
+import {
+  buildHookSettings, findUserStatusLine, hookCommandFor, statusLineCommandFor, windowsHookCommand, windowsStatusLineCommand
+} from '../hooks/settings'
 import { buildSessionEnv, claudeConfigDir, getGhToken, renderEnvFile } from '../identity'
 import { eventsFile, sessionDir, type AppPaths } from '../paths'
+import { findGitBash, windowsPowerShell } from '../platform'
 import { newId, type Store } from '../store'
 import { claudeTmuxName } from '../tmux'
 import type { KeyedMutex } from './mutex'
@@ -98,6 +102,8 @@ export async function writeSessionFiles(session: Session, deps: StarterDeps): Pr
   if (!project) throw new Error('Project not found.')
   const dir = sessionDir(deps.paths, session.id)
   const events = eventsFile(deps.paths, session.id)
+  const windows = (deps.platform ?? process.platform) === 'win32'
+  const userStatusLine = await findUserStatusLine(session.cwd, claudeConfigDir(project, deps.home, deps.env))
   const env = buildSessionEnv({
     project,
     session,
@@ -107,7 +113,8 @@ export async function writeSessionFiles(session: Session, deps: StarterDeps): Pr
     claudeBin: deps.paths.claudeBin,
     ghBin: deps.paths.ghBin,
     setupCommand: sp.setupCommand,
-    userStatusLine: await findUserStatusLine(session.cwd, claudeConfigDir(project, deps.home, deps.env)),
+    userStatusLine,
+    gitBash: windows && userStatusLine ? findGitBash(deps.env, isFile) ?? undefined : undefined,
     home: deps.home,
     platform: deps.platform
   })
@@ -116,8 +123,13 @@ export async function writeSessionFiles(session: Session, deps: StarterDeps): Pr
   await writeFileAtomic(join(dir, 'env.sh'), renderEnvFile(env), 0o600)
   // The same for the host's launcher (Windows), which reads JSON, not sh.
   await writeFileAtomic(join(dir, 'env.json'), JSON.stringify(env, null, 2) + '\n', 0o600)
-  const hook = hookCommandFor(join(deps.paths.binDir, 'pitwall-hook'), events, session.id)
-  const statusLine = statusLineCommandFor(join(deps.paths.binDir, 'pitwall-statusline'), dir)
+  // Windows: PowerShell scripts, the hook in exec form (no shell between Claude and the paths).
+  const hook = windows
+    ? windowsHookCommand(windowsPowerShell(deps.env), join(deps.paths.binDir, 'pitwall-hook.ps1'), events, session.id)
+    : hookCommandFor(join(deps.paths.binDir, 'pitwall-hook'), events, session.id)
+  const statusLine = windows
+    ? windowsStatusLineCommand(join(deps.paths.binDir, 'pitwall-statusline.ps1'), dir)
+    : statusLineCommandFor(join(deps.paths.binDir, 'pitwall-statusline'), dir)
   // Atomic: a running Claude or the launcher may read these at any moment.
   await writeFileAtomic(join(dir, 'hooks.json'), JSON.stringify(buildHookSettings(hook, statusLine), null, 2))
   // Re-read: a /clear may have recorded a new conversation id while the files above were written.

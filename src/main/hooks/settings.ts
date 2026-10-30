@@ -15,14 +15,56 @@ export function statusLineCommandFor(statusLineBin: string, sessionDir: string):
   return [statusLineBin, sessionDir].map(shellQuote).join(' ')
 }
 
-type HookList = { hooks: { type: 'command'; command: string; timeout: number }[] }[]
+/** Paths for Claude Code on Windows: forward slashes, which Git Bash, PowerShell and Windows itself all read alike. */
+export const forwardSlashes = (p: string): string => p.replace(/\\/g, '/')
 
-export function buildHookSettings(command: string, statusLineCommand?: string): {
+const POWERSHELL_FILE = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File']
+
+/**
+ * Windows: the hook in exec form (`args`), which Claude Code starts with no shell, so paths with spaces or any
+ * characters pass as they are. `powershell` is Windows PowerShell by its full path (a real .exe, as exec form needs).
+ */
+export function windowsHookCommand(powershell: string, script: string, eventsFile: string, sessionId: string): ExecCommand {
+  return { command: forwardSlashes(powershell), args: [...POWERSHELL_FILE, forwardSlashes(script), forwardSlashes(eventsFile), sessionId] }
+}
+
+/**
+ * A word that Git Bash and PowerShell both read as exactly `s` (Claude Code runs the status line in whichever it
+ * has): single quotes, or double quotes when `s` has a single quote but nothing either shell expands inside double
+ * quotes. Null when neither works.
+ */
+export function quoteForBashAndPowerShell(s: string): string | null {
+  if (!/['\u2018\u2019\u201a\u201b]/.test(s)) return `'${s}'`
+  if (!/["\u201c\u201d\u201e$`\\]/.test(s)) return `"${s}"`
+  return null
+}
+
+/**
+ * Windows: the status line has no exec form, so this is a command line meaning the same in Git Bash and PowerShell
+ * (forward slashes, quoted for both). Undefined if a path can't be written that way: then there's no usage meter.
+ */
+export function windowsStatusLineCommand(script: string, sessionDir: string): string | undefined {
+  const words = [forwardSlashes(script), forwardSlashes(sessionDir)].map(quoteForBashAndPowerShell)
+  if (words.some((w) => w === null)) return undefined
+  return ['powershell', ...POWERSHELL_FILE, ...words].join(' ')
+}
+
+/** Exec form: `command` is started with `args`, no shell. */
+export interface ExecCommand { command: string; args: string[] }
+
+type HookHandler = { type: 'command'; command: string; args?: string[]; timeout: number }
+type HookList = { hooks: HookHandler[] }[]
+
+/** `command`: a shell command line (macOS), or exec form (Windows). */
+export function buildHookSettings(command: string | ExecCommand, statusLineCommand?: string): {
   hooks: Record<string, HookList>
   statusLine?: { type: 'command'; command: string; padding: number }
 } {
+  const handler = (): HookHandler => typeof command === 'string'
+    ? { type: 'command', command, timeout: 10 }
+    : { type: 'command', command: command.command, args: [...command.args], timeout: 10 }
   const hooks: Record<string, HookList> = {}
-  for (const e of HOOK_EVENTS) hooks[e] = [{ hooks: [{ type: 'command', command, timeout: 10 }] }]
+  for (const e of HOOK_EVENTS) hooks[e] = [{ hooks: [handler()] }]
   if (!statusLineCommand) return { hooks }
   return { hooks, statusLine: { type: 'command', command: statusLineCommand, padding: 0 } }
 }
