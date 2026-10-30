@@ -90,11 +90,12 @@ export async function archiveSession(
       return { ok: false, needsConfirm: check }
     }
 
-    const panePids = [
-      ...(await deps.tmux.listPanePids(claudeTmuxName(s.id))),
-      ...(await deps.tmux.listPanePids(shellTmuxName(s.id)))
+    const panes = [
+      await deps.tmux.listPanePids(claudeTmuxName(s.id)),
+      await deps.tmux.listPanePids(shellTmuxName(s.id))
     ]
-    const leftovers = await snapshotLeftovers(panePids)
+    const serverPid = panes.find((p) => p.serverPid)?.serverPid ?? null
+    const leftovers = await snapshotLeftovers(panes.flatMap((p) => p.panePids), serverPid)
     deps.ptyBridge.close(s.id, 'claude')
     deps.ptyBridge.close(s.id, 'shell')
     await deps.tmux.killSession(claudeTmuxName(s.id))

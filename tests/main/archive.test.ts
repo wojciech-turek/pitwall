@@ -334,9 +334,15 @@ describe('archive', () => {
     const f1 = join(t.tmp, 'pid1'), f2 = join(t.tmp, 'pid2')
     await manager.ensureTerminalTarget(s.id, 'shell')
     const shellName = shellTmuxName(s.id)
-    await t.tmux.sendKeys(shellName, [`nohup sleep 301 >/dev/null 2>&1 & echo $! > ${f1}; sh -c 'sleep 302 & echo $! > ${f2}; wait' &`], true)
+    await t.tmux.sendKeys(shellName, [`nohup sleep 301 >/dev/null 2>&1 & echo $! > ${f1}; nohup sh -c 'sleep 302 & echo $! > ${f2}; wait' >/dev/null 2>&1 &`], true)
     await t.tmux.sendKeys(shellName, ['Enter'])
     const outside = spawn('sleep', ['303'], { stdio: 'ignore' })
+    // A sibling Pitwall session with its own background process.
+    const sib = await startOne(sp, { requestId: 'r2', title: 'Other work' })
+    await manager.ensureTerminalTarget(sib.id, 'shell')
+    const f3 = join(t.tmp, 'pid3')
+    await t.tmux.sendKeys(shellTmuxName(sib.id), [`nohup sleep 304 >/dev/null 2>&1 & echo $! > ${f3}`], true)
+    await t.tmux.sendKeys(shellTmuxName(sib.id), ['Enter'])
     const alive = (pid: number) => { try { process.kill(pid, 0); return true } catch { return false } }
     const pidOf = async (f: string) => {
       for (let i = 0; i < 100; i++) {
@@ -347,15 +353,18 @@ describe('archive', () => {
       throw new Error('pid file never appeared')
     }
     try {
-      const p1 = await pidOf(f1), p2 = await pidOf(f2)
+      const p1 = await pidOf(f1), p2 = await pidOf(f2), p3 = await pidOf(f3)
       expect(alive(p1) && alive(p2)).toBe(true)
       expect(await archiveSession(s.id, { confirmedDataLoss: false }, deps)).toEqual({ ok: true })
       await new Promise((r) => setTimeout(r, 300))
       expect(alive(p1)).toBe(false)
       expect(alive(p2)).toBe(false)
       expect(alive(outside.pid!)).toBe(true)
+      expect(alive(p3)).toBe(true)
+      expect(await t.tmux.hasSession(claudeTmuxName(sib.id))).toBe(true)
     } finally {
       outside.kill('SIGKILL')
+      await pidOf(f3).then((p) => process.kill(p, 'SIGKILL')).catch(() => undefined)
     }
   })
 })

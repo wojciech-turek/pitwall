@@ -40,11 +40,18 @@ export class Tmux {
     await this.mustRun(['new-session', '-d', '-s', o.name, '-c', o.cwd, '-x', '200', '-y', '50', '--', ...o.argv])
   }
 
-  /** Pids of every pane's first process; [] if the session doesn't exist. */
-  async listPanePids(name: string): Promise<number[]> {
-    const r = await this.run(['list-panes', '-s', '-t', `=${name}`, '-F', '#{pane_pid}'])
-    if (r.code !== 0) return []
-    return r.stdout.split('\n').map((l) => Number(l.trim())).filter((n) => Number.isInteger(n) && n > 1)
+  /** Live panes' first processes and the tmux server's pid; empty if the session doesn't exist. */
+  async listPanePids(name: string): Promise<{ serverPid: number | null; panePids: number[] }> {
+    const r = await this.run(['list-panes', '-s', '-t', `=${name}`, '-F', '#{pane_dead} #{pid} #{pane_pid}'])
+    const out = { serverPid: null as number | null, panePids: [] as number[] }
+    if (r.code !== 0) return out
+    for (const line of r.stdout.split('\n')) {
+      const [dead, server, pane] = line.trim().split(/\s+/)
+      if (dead !== '0' || !Number.isInteger(Number(server)) || !Number.isInteger(Number(pane))) continue
+      out.serverPid = Number(server)
+      if (Number(pane) > 1) out.panePids.push(Number(pane))
+    }
+    return out
   }
 
   async killSession(name: string): Promise<void> {
