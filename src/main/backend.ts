@@ -63,3 +63,15 @@ export function sessionBackendKind(
   if (platform === 'win32') return 'host'
   return env.PITWALL_SESSION_BACKEND === 'host' ? 'host' : 'tmux'
 }
+
+/**
+ * What starts a session's Claude: resources/bin/pitwall-launch (`script`), or the host's own launcher (`host`,
+ * src/host/launcher.ts). Windows has no sh: always the host's. Elsewhere PITWALL_LAUNCHER=host picks it too, with
+ * the host backend (to run on macOS what Windows runs).
+ */
+export type LauncherChoice = 'script' | 'host'
+
+export function launcherChoice(env: Record<string, string | undefined>, platform: NodeJS.Platform = process.platform): LauncherChoice {
+  if (platform === 'win32') return 'host'
+  return env.PITWALL_LAUNCHER === 'host' && sessionBackendKind(env, platform) === 'host' ? 'host' : 'script'
+}

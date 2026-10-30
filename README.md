@@ -152,6 +152,7 @@ pnpm typecheck
 pnpm test                         # unit tests (vitest)
 pnpm build && pnpm test:e2e       # end-to-end tests against the built app, with stub claude and gh
 pnpm test:e2e:host                # the same, with sessions in the Pitwall host instead of tmux (PITWALL_SESSION_BACKEND=host)
+pnpm test:e2e:host-launcher       # as Windows runs them: in the host, started by its launcher, with the Node stubs
 ```
 
 Pitwall is built with Electron, React, TypeScript, zustand, node-pty, xterm.js and CodeMirror.

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { access, mkdir, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { writeFileAtomic } from '../atomic'
-import type { SessionBackend } from '../backend'
+import type { LauncherChoice, SessionBackend } from '../backend'
 import type {
   NewSessionDefaults, NewSessionInput, Project, Session, StartProgress, StartResult, StartStep, SubProject
 } from '@shared/types'
@@ -33,6 +33,13 @@ export interface StarterDeps {
   mutex: KeyedMutex
   /** Default: this machine's. Tests pass 'win32' to check what Windows gets. */
   platform?: NodeJS.Platform
+  /** What starts Claude (see launcherChoice). Default: the host's launcher on Windows, pitwall-launch elsewhere. */
+  launcher?: LauncherChoice
+}
+
+/** True when the host's launcher runs this app's sessions (Windows; PITWALL_LAUNCHER=host elsewhere). */
+export function usesHostLauncher(deps: Pick<StarterDeps, 'launcher' | 'platform'>): boolean {
+  return (deps.launcher ?? ((deps.platform ?? process.platform) === 'win32' ? 'host' : 'script')) === 'host'
 }
 
 export class StepError extends Error {
@@ -72,7 +79,8 @@ export function progressSteps(requestId: string, onProgress: (p: StartProgress) 
 /** The project's SSH key exists and its GitHub account can give a token. */
 export async function checkIdentity(project: Project, deps: StarterDeps): Promise<void> {
   const key = project.identity.sshKeyPath
-  const keyPath = key === '~' || key.startsWith('~/') ? join(deps.home, key.slice(2)) : key
+  const home = key === '~' || key.startsWith('~/') || ((deps.platform ?? process.platform) === 'win32' && key.startsWith('~\\'))
+  const keyPath = home ? join(deps.home, key.slice(2)) : key
   if (key && !(await exists(keyPath))) throw new Error(`SSH key not found: ${key}`)
   if (!project.identity.ghAccount) return
   const token = await getGhToken(deps.paths.ghBin, project.identity.ghAccount, deps.exec, deps.env)
@@ -145,10 +153,16 @@ export async function assertSessionFolder(cwd: string): Promise<void> {
 
 export async function launchTmuxFor(session: Session, deps: StarterDeps): Promise<void> {
   await assertSessionFolder(session.cwd)
+  const dir = sessionDir(deps.paths, session.id)
+  if (usesHostLauncher(deps)) {
+    // The host runs Claude itself, as pitwall-launch would (Windows has no sh).
+    await deps.backend.newSession({ name: claudeTmuxName(session.id), cwd: session.cwd, argv: [], launcher: { kind: 'claude', sessionDir: dir } })
+    return
+  }
   await deps.backend.newSession({
     name: claudeTmuxName(session.id),
     cwd: session.cwd,
-    argv: [join(deps.paths.binDir, 'pitwall-launch'), sessionDir(deps.paths, session.id)]
+    argv: [join(deps.paths.binDir, 'pitwall-launch'), dir]
   })
 }
 

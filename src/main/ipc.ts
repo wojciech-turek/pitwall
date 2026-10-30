@@ -1,7 +1,7 @@
 import { ipcMain, shell } from 'electron'
 import { IPC } from '@shared/api'
 import type { NewSessionInput, StartResult, TermKind } from '@shared/types'
-import type { SessionBackend } from './backend'
+import type { LauncherChoice, SessionBackend } from './backend'
 import type { ChangesService } from './changes'
 import type { Exec } from './exec'
 import { formatAgentReference, listSessionFiles, readForEditor, writeFromEditor } from './files'
@@ -39,6 +39,8 @@ export interface IpcDeps {
   updates: Pick<UpdateChecker, 'state' | 'checkNow' | 'onChange' | 'hasFeed'>
   /** True for an unpackaged (dev) run. */
   dev: boolean
+  /** What starts Claude (archiving relaunches it when the worktree can't be removed). */
+  launcher?: LauncherChoice
   /** Sends to the renderer; a no-op when there is no window. */
   send: (channel: string, ...args: unknown[]) => void
   /** The sessions visible in the renderer's panes; main combines them with window focus. */
@@ -97,7 +99,7 @@ export function registerIpc(d: IpcDeps): () => void {
   handle(IPC.listChanges, (id: string) => d.changes.list(id))
   handle(IPC.readDiff, (id: string, rel: string) => d.changes.readDiff(id, rel))
   const archiveDeps = () => ({
-    store, paths, git, backend, exec, env, home: d.home, mutex: d.mutex, manager, ptyBridge: bridge
+    store, paths, git, backend, exec, env, home: d.home, mutex: d.mutex, manager, ptyBridge: bridge, launcher: d.launcher
   })
   handle(IPC.checkArchive, (id: string) => checkArchive(id, archiveDeps()))
   handle(IPC.archiveSession, (id: string, confirmed: boolean, skipTeardown?: boolean) =>

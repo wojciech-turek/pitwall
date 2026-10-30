@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest'
-import { sessionBackendKind } from '../../src/main/backend'
+import { launcherChoice, sessionBackendKind } from '../../src/main/backend'
+import { usesHostLauncher } from '../../src/main/sessions/starter'
 import { execPlan } from '../../src/main/exec'
 import { buildSessionEnv, buildSshCommand, withoutGhTokens } from '../../src/main/identity'
 import { resolvePaths } from '../../src/main/paths'
@@ -86,6 +87,16 @@ describe('session backend', () => {
     const tmux = { newSession: async () => {} } as unknown as Tmux
     await expect(new TmuxBackend(tmux, {}).newSession({ name: 'pw-x', cwd: '/', argv: [], launcher: { kind: 'claude', sessionDir: '/s' } }))
       .rejects.toThrow(/launcher/)
+  })
+
+  test("Claude starts through the host's launcher on Windows; pitwall-launch elsewhere unless asked (with the host)", () => {
+    expect(launcherChoice({}, 'win32')).toBe('host')
+    expect(launcherChoice({}, 'darwin')).toBe('script')
+    expect(launcherChoice({ PITWALL_LAUNCHER: 'host' }, 'darwin')).toBe('script') // tmux can't
+    expect(launcherChoice({ PITWALL_LAUNCHER: 'host', PITWALL_SESSION_BACKEND: 'host' }, 'darwin')).toBe('host')
+    expect(usesHostLauncher({ platform: 'win32' })).toBe(true)
+    expect(usesHostLauncher({ platform: 'darwin' })).toBe(false)
+    expect(usesHostLauncher({ platform: 'darwin', launcher: 'host' })).toBe(true)
   })
 
   test('Windows always uses the host (no tmux there); macOS keeps tmux unless asked', () => {

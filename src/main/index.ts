@@ -2,7 +2,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { app, BrowserWindow, dialog, Menu, powerMonitor, shell } from 'electron'
 import { IPC } from '@shared/api'
-import { sessionBackendKind, type SessionBackend } from './backend'
+import { launcherChoice, sessionBackendKind, type SessionBackend } from './backend'
 import { exec } from './exec'
 import { historySources, SessionHistory } from './history'
 import { HostBackend } from './host-backend'
@@ -194,7 +194,8 @@ async function bootstrap(): Promise<void> {
   const notifier = electronNotifier(focusSession, paths.notificationsDisabled, { window: () => win, quiet: QUIET })
   refreshBadge = () => notifier.refresh()
   const mutex = new KeyedMutex()
-  const mgr = new SessionManager({ store, paths, git, backend, exec, env, home, mutex, notifier })
+  const launcher = launcherChoice(process.env)
+  const mgr = new SessionManager({ store, paths, git, backend, exec, env, home, mutex, notifier, launcher })
   manager = mgr
   await mgr.init()
 
@@ -247,6 +248,7 @@ async function bootstrap(): Promise<void> {
   const history = new SessionHistory(() => historySources(mgr.snapshot(), home, env))
   disposeIpc = registerIpc({
     manager: mgr, changes, store, git, backend, projects, bridge, paths, exec, env, home, mutex, history, usage, updates, send, dev: DEV,
+    launcher,
     onViewing: (ids) => {
       visibleIds = ids
       mgr.setViewing(ids, win?.isFocused() ?? false)

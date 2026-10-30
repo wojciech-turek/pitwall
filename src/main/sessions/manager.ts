@@ -5,15 +5,17 @@ import type {
   AppSnapshot, DisplayStatus, HookEvent, NewSessionDefaults, NewSessionInput, Session, SessionRuntime, SessionView,
   StartProgress, StartResult, TermKind
 } from '@shared/types'
+import { isFile } from '../exec'
 import { appendEvent, EventTailer } from '../hooks/events'
 import type { Notifier } from '../notifier'
 import { eventsFile, sessionDir } from '../paths'
+import { shellTabArgv } from '../platform'
 import { claudeTmuxName, shellTmuxName } from '../tmux'
 import { isAnswerInput } from './input'
 import { notificationBody } from './notify-text'
 import { resumeSession } from './resume'
 import {
-  assertSessionFolder, launchTmuxFor, prepareNewSession, startSession, writeSessionFiles, type StarterDeps
+  assertSessionFolder, launchTmuxFor, prepareNewSession, startSession, usesHostLauncher, writeSessionFiles, type StarterDeps
 } from './starter'
 
 type Deps = StarterDeps & { notifier: Notifier; now?: () => number; firstEventTimeoutMs?: number }
@@ -237,6 +239,12 @@ export class SessionManager {
     const name = shellTmuxName(sessionId)
     if (await backend.hasSession(name)) return
     await assertSessionFolder(s.cwd)
+    if (usesHostLauncher(this.deps)) {
+      // The session's identity, then PowerShell (pwsh if installed) on Windows, as pitwall-shell does elsewhere.
+      const argv = shellTabArgv(this.deps.platform ?? process.platform, this.deps.env, isFile)
+      await backend.newSession({ name, cwd: s.cwd, argv, launcher: { kind: 'shell', sessionDir: sessionDir(paths, sessionId) } })
+      return
+    }
     await backend.newSession({ name, cwd: s.cwd, argv: [join(paths.binDir, 'pitwall-shell'), sessionDir(paths, sessionId)] })
   }
 

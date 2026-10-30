@@ -20,6 +20,7 @@
     "test": "vitest run",
     "test:e2e": "playwright test",
     "test:e2e:host": "PITWALL_SESSION_BACKEND=host playwright test",
+    "test:e2e:host-launcher": "PITWALL_SESSION_BACKEND=host PITWALL_LAUNCHER=host PITWALL_E2E_NODE_STUBS=1 playwright test",
     "package": "electron-vite build && electron-builder --mac dir --arm64",
     "dist": "electron-vite build && electron-builder --mac dmg --arm64 --publish never",
     "verify:sign": "codesign --verify --deep --strict --verbose=2 release/mac-arm64/Pitwall.app",
