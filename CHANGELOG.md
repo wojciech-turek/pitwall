@@ -19,4 +19,4 @@ First public release.
 - **PR badges** with checks status, and an offer to archive a session when its PR is merged.
 - **Claude usage meter** for your 5-hour and weekly limits.
 - **Setup command per folder**, and **Open in Cursor**.
-- **Update notifications.** Once a day Pitwall checks GitHub Releases and shows an "Update available" pill with these notes. Turn it off in Settings.
+- **Update notifications.** About once a day Pitwall checks GitHub Releases and shows an "Update available" pill with these notes. Turn it off in Settings.
