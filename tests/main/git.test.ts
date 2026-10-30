@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, test } from 'vitest'
 import { exec } from '../../src/main/exec'
-import { GitClient, GitError, uniquePath } from '../../src/main/git'
+import { fromGit, GitClient, GitError, samePath, uniquePath } from '../../src/main/git'
 import { makeRepo } from '../helpers/repo'
 
 const run = promisify(execFile)
@@ -286,6 +286,41 @@ describe('uniquePath', () => {
     const taken = new Set(['/a/x', '/a/x-2'])
     expect(await uniquePath('/a/x', async (p) => taken.has(p))).toBe('/a/x-3')
     expect(await uniquePath('/a/y', async (p) => taken.has(p))).toBe('/a/y')
+  })
+})
+
+describe('paths git prints, on Windows', () => {
+  test('fromGit: C:/… becomes C:\\…; elsewhere unchanged', () => {
+    expect(fromGit('C:/Users/Zoë Ł/repo', 'win32')).toBe('C:\\Users\\Zoë Ł\\repo')
+    expect(fromGit('//server/share/repo', 'win32')).toBe('\\\\server\\share\\repo')
+    expect(fromGit('', 'win32')).toBe('')
+    expect(fromGit('/Users/w/repo', 'darwin')).toBe('/Users/w/repo')
+  })
+
+  test('samePath: separators, letter case and a trailing separator on Windows; exact elsewhere', () => {
+    expect(samePath('C:/Users/Me/repo', 'c:\\users\\me\\repo\\', 'win32')).toBe(true)
+    expect(samePath('C:\\a\\b', 'C:\\a\\bb', 'win32')).toBe(false)
+    expect(samePath('/Users/w/Repo', '/Users/w/repo', 'darwin')).toBe(false)
+    expect(samePath('/Users/w/repo', '/Users/w/repo', 'darwin')).toBe(true)
+  })
+
+  test('GitClient gives the paths git prints in Windows form there (repo root, worktrees, checked-out branches)', async () => {
+    const out: Record<string, string> = {
+      'rev-parse': 'C:/Users/me/repo\nsub/dir/\n',
+      'worktree': 'worktree C:/Users/me/repo\nHEAD 1\nbranch refs/heads/main\n\nworktree C:/Users/me/pitwall/worktrees/r/x\nHEAD 2\nbranch refs/heads/pitwall/x\nprunable gitdir file points to non-existent location\n',
+      'for-each-ref': 'main\npitwall/x\n'
+    }
+    const exec = async (_f: string, args: string[]) => ({ code: 0, stdout: out[args[2]] ?? '', stderr: '' })
+    const git = new GitClient(exec, {}, 'win32')
+    expect(await git.detectFolder('C:\\Users\\me\\repo\\sub\\dir')).toEqual({ kind: 'repo', repoRoot: 'C:\\Users\\me\\repo', relPath: 'sub/dir' })
+    expect(await git.listWorktrees('C:\\Users\\me\\repo')).toEqual([
+      { path: 'C:\\Users\\me\\repo', prunable: false }, { path: 'C:\\Users\\me\\pitwall\\worktrees\\r\\x', prunable: true }
+    ])
+    expect(await git.listBranches('C:\\Users\\me\\repo')).toEqual([
+      { name: 'main', checkedOutAt: 'C:\\Users\\me\\repo' }, { name: 'pitwall/x', checkedOutAt: 'C:\\Users\\me\\pitwall\\worktrees\\r\\x' }
+    ])
+    // macOS: as printed.
+    expect(await new GitClient(exec, {}, 'darwin').listWorktrees('/r')).toMatchObject([{ path: 'C:/Users/me/repo' }, {}])
   })
 })
 
