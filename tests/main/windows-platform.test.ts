@@ -5,7 +5,9 @@ import { execPlan } from '../../src/main/exec'
 import { buildSessionEnv, buildSshCommand, withoutGhTokens } from '../../src/main/identity'
 import { resolvePaths } from '../../src/main/paths'
 import { appUserModelId, findGitBash, openInCursorCommand, shellTabArgv, windowsPowerShell } from '../../src/main/platform'
-import { killPaneTrees, taskkillArgs } from '../../src/main/sessions/leftovers'
+import {
+  parseWindowsPs, snapshotLeftovers, stopLeftovers, stopProcessTree, windowsEndScript, WINDOWS_PS_SCRIPT
+} from '../../src/main/sessions/leftovers'
 import { teardownSpawn } from '../../src/main/sessions/teardown'
 import type { Tmux } from '../../src/main/tmux'
 import { TmuxBackend } from '../../src/main/tmux-backend'
@@ -257,16 +259,58 @@ describe('teardown and leftovers on Windows', () => {
     })
   })
 
-  test('each pane\'s process tree is ended with taskkill; never the host, Pitwall or a system process', async () => {
-    expect(taskkillArgs(4242)).toEqual(['/T', '/F', '/PID', '4242'])
-    const calls: string[][] = []
-    const run = async (file: string, args: string[]) => { calls.push([file, ...args]) }
-    await killPaneTrees([4242, 4242, 5151, 900, process.pid, 4, 0, -1], 900, { run })
-    expect(calls).toEqual([['taskkill', '/T', '/F', '/PID', '4242'], ['taskkill', '/T', '/F', '/PID', '5151']])
-    calls.length = 0
-    await killPaneTrees([4242], null, { run })
-    expect(calls).toEqual([]) // no host, no panes of its own
-    await expect(killPaneTrees([4242], 900, { run: async () => { throw new Error('not found') } })).resolves.toBeUndefined()
+  // pid ppid created (FILETIME), as WINDOWS_PS_SCRIPT prints them.
+  const LIST = [
+    '4 0 100',
+    '900 4 1000', // the host
+    '4242 900 2000', // a pane
+    '5000 4242 3000', // what it started
+    '5001 5000 3500', // and below that
+    '5100 4242 1500', // older than the pane: its real parent died long ago and 4242 was reused since
+    '5200 5100 3600', // below the stale one: not reached
+    '6000 900 500', // older than the host: the pid 900 had before the host took it
+    `${process.pid} 5000 500`, // Pitwall, older than 5000: its parent died and 5000 is someone else now
+    '7000 1 3000' // unrelated
+  ].join('\r\n')
+
+  test('the process list: pid, parent and creation time per line', () => {
+    expect(parseWindowsPs('  12 4 133\r\n\r\nnot a row\r\n7 0 99')).toEqual([
+      { pid: 12, ppid: 4, start: '133' }, { pid: 7, ppid: 0, start: '99' }
+    ])
+    expect(WINDOWS_PS_SCRIPT).toContain('Get-CimInstance Win32_Process')
+    expect(WINDOWS_PS_SCRIPT).toContain('ToFileTimeUtc()')
+  })
+
+  test('leftovers: the host\'s panes and what they started, each newer than its parent; never the host or Pitwall', async () => {
+    const snap = await snapshotLeftovers([4242, 6000, 7000], 900, { platform: 'win32', ps: async () => LIST })
+    expect([...snap].sort()).toEqual([[4242, '2000'], [5000, '3000'], [5001, '3500']])
+    expect(await snapshotLeftovers([4242], null, { platform: 'win32', ps: async () => LIST })).toEqual(new Map())
+    // A pane pid that isn't the host's child (or a host the list doesn't show): nothing.
+    expect(await snapshotLeftovers([4242], 901, { platform: 'win32', ps: async () => LIST })).toEqual(new Map())
+    expect(await snapshotLeftovers([4242], 900, { platform: 'win32', ps: async () => { throw new Error('no powershell') } })).toEqual(new Map())
+  })
+
+  test('ending: only what still runs with the same creation time, by taskkill /F /PID (never /T), each checked again', async () => {
+    const snap = new Map([[4242, '2000'], [5000, '3000'], [5001, '3500']])
+    const ended: Array<[number, string]>[] = []
+    // 5000 is gone and its pid taken by a newer process; 5001 is gone.
+    await stopLeftovers(snap, { platform: 'win32', ps: async () => '4242 900 2000\r\n5000 1 9000', end: async (t) => { ended.push(t) } })
+    expect(ended).toEqual([[[4242, '2000']]])
+    const script = windowsEndScript([[4242, '2000'], [5001, '3500']])
+    expect(script).toContain("Join-Path $env:SystemRoot 'System32\\taskkill.exe'")
+    expect(script).toContain('$pids = @(4242,5001)')
+    expect(script).toContain("$starts = @('2000','3500')")
+    expect(script).toContain('& $taskkill /F /PID ([int]$pids[$i])')
+    expect(script).toContain('$null = $p.Handle') // opened first: the pid can't be reused while it is checked
+    expect(script).toContain('CreationDate.ToFileTimeUtc().ToString() -eq $starts[$i]')
+    expect(script).not.toMatch(/\/T\b/)
+  })
+
+  test('a teardown that ran too long: its own tree, walked by creation time', async () => {
+    const ended: Array<[number, string]>[] = []
+    await stopProcessTree(4242, { ps: async () => LIST, end: async (t) => { ended.push(t) } })
+    expect(ended.map((t) => t.map(([p]) => p).sort())).toEqual([[4242, 5000, 5001]])
+    await expect(stopProcessTree(1, { ps: async () => { throw new Error('x') } })).resolves.toBeUndefined()
   })
 })
 

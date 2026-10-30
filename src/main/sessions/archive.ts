@@ -7,7 +7,7 @@ import { eventsFile, sessionDir } from '../paths'
 import type { PtyBridge } from '../pty-bridge'
 import { claudeTmuxName, shellTmuxName } from '../tmux'
 import type { SessionManager } from './manager'
-import { killPaneTrees, snapshotLeftovers, stopLeftovers, type Leftovers, type RunFn } from './leftovers'
+import { snapshotLeftovers, stopLeftovers, type LeftoverOptions } from './leftovers'
 import { runTeardown } from './teardown'
 import { launchTmuxFor, writeSessionFiles, type StarterDeps } from './starter'
 
@@ -18,8 +18,8 @@ export interface ArchiveDeps extends StarterDeps {
   ptyBridge: PtyBridge
   /** Teardown time limit; default 2 minutes. */
   teardownTimeoutMs?: number
-  /** Windows: runs `taskkill` (a test seam). */
-  taskkill?: RunFn
+  /** How leftover processes are listed and ended (a test seam). */
+  leftovers?: Pick<LeftoverOptions, 'ps' | 'end' | 'kill'>
 }
 
 const msg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
@@ -123,10 +123,8 @@ export async function archiveSession(
     ]
     const serverPid = panes.find((p) => p.serverPid)?.serverPid ?? null
     const platform = deps.platform ?? process.platform
-    let leftovers: Leftovers = new Map()
-    // Windows has no ps to snapshot with: what the panes started is ended now, while the panes still exist.
-    if (platform === 'win32') await killPaneTrees(panes.flatMap((p) => p.panePids), serverPid, { run: deps.taskkill })
-    else leftovers = await snapshotLeftovers(panes.flatMap((p) => p.panePids), serverPid)
+    const leftoverOptions: LeftoverOptions = { platform, ...deps.leftovers }
+    const leftovers = await snapshotLeftovers(panes.flatMap((p) => p.panePids), serverPid, leftoverOptions)
     deps.ptyBridge.close(s.id, 'claude')
     deps.ptyBridge.close(s.id, 'shell')
     terminalsClosed = true
@@ -157,7 +155,7 @@ export async function archiveSession(
         await applyGhAccount(env, project.identity.ghAccount, dir, deps)
         const r = await runTeardown(sp.teardownCommand, { cwd: s.cwd, env, timeoutMs: deps.teardownTimeoutMs, platform })
         if (r.timedOut || r.exitCode !== 0) {
-          await stopLeftovers(leftovers)
+          await stopLeftovers(leftovers, leftoverOptions)
           reattachable()
           return { ok: false, teardownFailed: r }
         }
@@ -165,7 +163,7 @@ export async function archiveSession(
         console.warn(`Teardown skipped for ${s.id}: project ${sp.projectId} not found.`)
       }
     }
-    await stopLeftovers(leftovers)
+    await stopLeftovers(leftovers, leftoverOptions)
     if (check.willRemoveWorktree && repoRoot && s.worktreePath) {
       try {
         await deps.git.removeWorktree(repoRoot, s.worktreePath, true)

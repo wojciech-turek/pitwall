@@ -393,27 +393,35 @@ describe('archive', () => {
     })
   })
 
-  test('Windows: each pane\'s process tree is ended (taskkill) while the panes still exist, before the kill; no ps', async () => {
+  test('Windows: leftovers are snapshotted before the kill and ended after it, each checked by creation time', async () => {
     const { sp, deps } = await addRepo()
     const s = await startOne(sp)
     await manager.ensureTerminalTarget(s.id, 'shell')
     const roots = [await t.backend.processRoots(claudeTmuxName(s.id)), await t.backend.processRoots(shellTmuxName(s.id))]
+    const server = roots[0].serverPid!
+    const [claudePane, shellPane] = roots.flatMap((r) => r.panePids)
+    // A Windows process list (pid ppid created): the panes under the server, a child of the Claude pane, a stale
+    // "child" older than its pane (its real parent died long ago and the pid was reused), a newer pid reused by
+    // the time the leftovers are ended, and Pitwall itself under the shell pane by a stale link.
+    const list = (reused: boolean) => [
+      `${server} 1 1000`, `${claudePane} ${server} 2000`, `${shellPane} ${server} 2100`, `7001 ${claudePane} 3000`,
+      `7002 ${claudePane} 1500`, `7003 ${shellPane} ${reused ? 9999 : 3100}`, `${process.pid} ${shellPane} 500`
+    ].join('\r\n')
     const order: string[] = []
+    let listed = 0
     const real = deps.backend.killSession.bind(deps.backend)
     deps.backend = Object.assign(Object.create(deps.backend), {
       killSession: async (n: string) => { order.push(`kill ${n}`); return real(n) }
     })
     deps.platform = 'win32'
-    deps.taskkill = async (file, args) => {
-      const pid = Number(args.at(-1))
-      // The session is still there: its pane's children still name it as their parent.
-      order.push(`${file} ${args.slice(0, 3).join(' ')} ${pid} ${await t.backend.hasSession(claudeTmuxName(s.id))}`)
+    deps.leftovers = {
+      ps: async () => { order.push('list'); return list(listed++ > 0) },
+      end: async (targets) => { order.push(`end ${targets.map(([p, c]) => `${p}@${c}`).sort().join(' ')}`) }
     }
     expect(await archiveSession(s.id, { confirmedDataLoss: false }, deps)).toEqual({ ok: true })
-    const panes = roots.flatMap((r) => r.panePids)
-    expect(panes).toHaveLength(2)
     expect(order).toEqual([
-      ...panes.map((p) => `taskkill /T /F /PID ${p} true`), `kill ${claudeTmuxName(s.id)}`, `kill ${shellTmuxName(s.id)}`
+      'list', `kill ${claudeTmuxName(s.id)}`, `kill ${shellTmuxName(s.id)}`, 'list',
+      `end ${[`${claudePane}@2000`, `${shellPane}@2100`, '7001@3000'].sort().join(' ')}`
     ])
   })
 

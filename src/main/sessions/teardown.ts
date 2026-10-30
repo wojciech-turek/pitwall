@@ -1,6 +1,6 @@
-import { execFile, spawn } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { windowsShellCommand } from '../../host/win-command'
-import { taskkillArgs } from './leftovers'
+import { stopProcessTree } from './leftovers'
 
 export const TEARDOWN_LIMIT_MS = 120_000
 const KEEP_BYTES = 4096
@@ -12,25 +12,26 @@ export function teardownSpawn(
   command: string, env: Record<string, string>, platform: NodeJS.Platform
 ): { file: string; args: string[]; verbatim: boolean; detached: boolean } {
   if (platform === 'win32') {
-    // cmd.exe, as Node's `shell: true` runs a command. No process groups there: on timeout the tree is killed by pid.
+    // cmd.exe, as Node's `shell: true` runs a command. No process groups there: on timeout its tree is walked.
     const c = windowsShellCommand(command, env)
     return { file: c.file, args: c.args, verbatim: true, detached: false }
   }
   return { file: '/bin/sh', args: ['-c', command], verbatim: false, detached: true }
 }
 
-const killTree = (pid: number): void => {
-  execFile('taskkill', taskkillArgs(pid), { windowsHide: true, timeout: 10_000 }, () => { /* already gone */ })
-}
-
 /**
  * Runs a shell command (sh; cmd.exe on Windows) in its own process group. Keeps only the last 4 KB of combined
- * output. On timeout the whole group (Windows: the process tree) is killed. Resolves as soon as the shell exits or the
- * limit hits, even if a background child still holds the output pipes.
+ * output. On timeout the whole group is killed (Windows: the command and what it started, each checked by creation
+ * time). Resolves as soon as the shell exits or the limit hits, even if a background child still holds the output
+ * pipes.
  */
 export function runTeardown(
   command: string,
-  o: { cwd: string; env: Record<string, string>; timeoutMs?: number; platform?: NodeJS.Platform }
+  o: {
+    cwd: string; env: Record<string, string>; timeoutMs?: number; platform?: NodeJS.Platform
+    /** Windows: ends the command's process tree (a test seam; default stopProcessTree). */
+    stopTree?: (pid: number) => Promise<void>
+  }
 ): Promise<TeardownResult> {
   return new Promise((resolve) => {
     let tail = Buffer.alloc(0)
@@ -58,7 +59,7 @@ export function runTeardown(
     }
     const killGroup = (): void => {
       if (!child.pid) return
-      if (platform === 'win32') return killTree(child.pid)
+      if (platform === 'win32') return void (o.stopTree ?? stopProcessTree)(child.pid)
       try { process.kill(-child.pid, 'SIGKILL') } catch { /* already gone */ }
     }
     const timer = setTimeout(() => {

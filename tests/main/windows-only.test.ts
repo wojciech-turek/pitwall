@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { exec } from '../../src/main/exec'
-import { killPaneTrees } from '../../src/main/sessions/leftovers'
+import { snapshotLeftovers, stopLeftovers } from '../../src/main/sessions/leftovers'
 import { runTeardown } from '../../src/main/sessions/teardown'
 import { waitFor } from '../helpers/wait'
 
@@ -63,7 +63,7 @@ describe.skipIf(process.platform !== 'win32')('on Windows', () => {
     await waitFor(async () => !alive(child), 10_000, 'the teardown\'s child ended')
   })
 
-  test('killPaneTrees ends a pane and everything below it, and nothing else', async () => {
+  test('leftovers: a pane of this "host" and everything below it are found by creation time and ended; nothing else', async () => {
     const pidFile = join(dir, 'grandchild.pid')
     const pane = spawn(process.execPath, ['-e',
       `const c = require('child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });` +
@@ -73,7 +73,12 @@ describe.skipIf(process.platform !== 'win32')('on Windows', () => {
     try {
       await waitFor(async () => !!(await readFile(pidFile, 'utf8').catch(() => '')), 10_000, 'grandchild started')
       const grandchild = Number(await readFile(pidFile, 'utf8'))
-      await killPaneTrees([pane.pid!], process.pid)
+      // This test process stands in for the host: the pane is its child. (Pitwall itself is never included, so the
+      // "host" here can't be this process; its pid is the pane's parent all the same.)
+      const snap = await snapshotLeftovers([pane.pid!, bystander.pid!], process.pid, { platform: 'win32' })
+      expect([...snap.keys()].sort()).toEqual([pane.pid!, bystander.pid!, grandchild].sort())
+      snap.delete(bystander.pid!)
+      await stopLeftovers(snap, { platform: 'win32' })
       await waitFor(async () => !alive(pane.pid!) && !alive(grandchild), 10_000, 'the pane tree ended')
       expect(alive(bystander.pid!)).toBe(true)
     } finally {
