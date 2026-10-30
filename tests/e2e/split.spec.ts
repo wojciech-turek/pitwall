@@ -57,8 +57,11 @@ async function dragOver(title: string, target: Locator, spot: Spot): Promise<voi
   await page.mouse.move(to.x, to.y, { steps: 8 })
 }
 
-/** Types a line wherever the keyboard focus is, and checks it reached the session's Claude. */
+/** Waits for the keyboard to be in the session's pane (it moves there a moment after the pane becomes active), types a
+ * line, and checks it reached the session's Claude. */
 async function typeTo(sessionId: string, text: string): Promise<void> {
+  await expect.poll(() => page.evaluate('document.activeElement?.closest("[data-testid=pane]")?.getAttribute("data-session-id") ?? null'))
+    .toBe(sessionId)
   await page.keyboard.type(text)
   await page.keyboard.press('Enter')
   await waitFor(async () => (await paneText(e, sessionId)).includes(`echo: ${text}`), 15_000, `echo: ${text}`)
