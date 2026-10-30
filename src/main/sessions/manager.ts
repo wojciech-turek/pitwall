@@ -178,7 +178,8 @@ export class SessionManager {
 
   userInput(sessionId: string, kind: TermKind, data: string): void {
     if (kind !== 'claude') return
-    if (data !== '\x1b[I' && data !== '\x1b[O') this.clearMarkedUnread(sessionId) // not a focus report
+    // Keys only: terminal-generated replies (focus, device and cursor reports) all start with ESC.
+    if (!data.startsWith('\x1b')) this.clearMarkedUnread(sessionId)
     const t = this.tracked.get(sessionId)
     if (!t) return
     const busy = t.rt.activity === 'working' || t.rt.activity === 'needs_input'
