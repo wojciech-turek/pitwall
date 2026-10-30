@@ -133,11 +133,11 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      # Node first (its image has fewer tools preinstalled than the x64 ones), then pnpm; no package cache.
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: pnpm
+      - uses: pnpm/action-setup@v4
       - run: pnpm install --frozen-lockfile
       - name: Windows-only unit tests
         run: pnpm exec vitest run tests/main/windows-scripts.test.ts tests/main/windows-only.test.ts
