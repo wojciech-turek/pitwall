@@ -332,7 +332,9 @@ describe('the handshake', () => {
 
 describe('reattaching', () => {
   // Prints its size whenever it changes (Node programs, Claude Code among them, redraw on that, not on SIGWINCH alone).
+  // (ConPTY tells a program its size changed only while it reads in raw mode, as Claude Code does.)
   const SIZES = `
+    if (process.platform === 'win32') { process.stdin.setRawMode(true); process.stdin.resume() }
     console.log('SIZES READY')
     process.stdout.on('resize', () => console.log('size ' + process.stdout.columns + 'x' + process.stdout.rows))
     setInterval(() => {}, 1e5)
@@ -357,7 +359,8 @@ describe('reattaching', () => {
   })
 })
 
-describe('questions to the terminal', () => {
+// Windows: conhost answers these questions itself and never passes them on, so neither the host nor a terminal sees them.
+describe.skipIf(WINDOWS)('questions to the terminal', () => {
   // In raw mode, asks for device attributes and status (at start, and on `q`), and prints the answers it gets.
   const ASKS = `
     process.stdin.setRawMode(true)
@@ -517,7 +520,7 @@ describe('the launch the app uses', () => {
     expect(env.PW_FROM_APP).toBe('yes')
     expect(env.PW_SESSION).toBe('only here')
     expect(env.ELECTRON_RUN_AS_NODE).toBeUndefined()
-    expect(env.TERM).toBe('xterm-256color')
+    if (!WINDOWS) expect(env.TERM).toBe('xterm-256color') // (node-pty sets no TERM on Windows; Windows programs don't need one)
   })
 
   test('a host that fails to start is reported with where to look', async () => {

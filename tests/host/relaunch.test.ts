@@ -134,7 +134,9 @@ describe.each(LAUNCHERS)('with the %s launcher', (launcher) => {
     await m.ensureTerminalTarget(id, 'shell')
     const name = shellTmuxName(id)
     await waitFor(async () => {
-      await backend.sendKeys(name, ['echo "S:$GIT_AUTHOR_EMAIL:$GH_TOKEN"', 'Enter'])
+      // (The Shell tab is PowerShell on Windows.)
+      const echo = process.platform === 'win32' ? 'echo "S:${env:GIT_AUTHOR_EMAIL}:${env:GH_TOKEN}"' : 'echo "S:$GIT_AUTHOR_EMAIL:$GH_TOKEN"'
+      await backend.sendKeys(name, [echo, 'Enter'])
       return (await backend.capture(name)).includes('S:m@x.io:token-for-dev-work')
     }, 10_000, 'identity in the Shell tab')
   })

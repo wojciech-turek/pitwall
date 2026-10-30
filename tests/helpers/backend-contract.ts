@@ -172,8 +172,9 @@ function alive(pid: number): boolean {
 }
 
 // Node rather than a shell, so it runs wherever the backend does. It reports how it started to the file in argv,
-// prints its size (again on resize), answers each line with `got:<line>`, and exits on `exit`.
-// (No argument may end in `;`: tmux would take it for a command separator.)
+// prints its size (again on resize), answers each line with `got:<line>`, and exits on `exit`. On Windows it reads in
+// raw mode, echoing and splitting lines itself: ConPTY reports size changes only to a program reading raw (as Claude
+// Code does). (No argument may end in `;`: tmux would take it for a command separator.)
 const PROGRAM = `
 const fs = require('node:fs')
 const report = { cwd: process.cwd(), env: process.env.PW_CONTRACT ?? null, args: process.argv.slice(1), pid: process.pid, ppid: process.ppid }
@@ -182,9 +183,24 @@ const size = () => console.log('size=' + process.stdout.columns + 'x' + process.
 process.stdout.on('resize', size)
 console.log('ready')
 size()
-require('node:readline').createInterface({ input: process.stdin }).on('line', (l) => {
+const onLine = (l) => {
   if (l === 'exit') process.exit(3)
   console.log('got:' + l)
-})
+}
+if (process.platform === 'win32') {
+  process.stdin.setRawMode(true)
+  let line = ''
+  process.stdin.setEncoding('utf8').on('data', (d) => {
+    for (const ch of d) {
+      if (ch !== '\\r' && ch !== '\\n') { line += ch; process.stdout.write(ch); continue }
+      process.stdout.write('\\r\\n')
+      const l = line
+      line = ''
+      onLine(l)
+    }
+  })
+} else {
+  require('node:readline').createInterface({ input: process.stdin }).on('line', onLine)
+}
 setInterval(() => {}, 60000)
 `

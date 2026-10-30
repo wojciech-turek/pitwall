@@ -129,7 +129,8 @@ describe.skipIf(process.platform !== 'win32')('pitwall-statusline.ps1', () => {
     const dir = await folder()
     const bash = findGitBash(process.env, isFile)!
     const r = await statusLine(dir, payload(9), {
-      PITWALL_USER_STATUSLINE: `read -r j; printf '%s' "$j" | grep -o '"used_percentage":[0-9]*'; printf ' ✓'`, PITWALL_GIT_BASH: bash
+      // (tr: grep ends its match with a newline, which the script passes on byte for byte too.)
+      PITWALL_USER_STATUSLINE: `read -r j; printf '%s' "$j" | grep -o '"used_percentage":[0-9]*' | tr -d '\n'; printf ' ✓'`, PITWALL_GIT_BASH: bash
     })
     expect(r).toMatchObject({ code: 0, stdout: '"used_percentage":9 ✓', stderr: '' })
   })

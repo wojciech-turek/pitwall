@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { exec } from '../../src/main/exec'
-import { GitClient } from '../../src/main/git'
+import { fromGit, GitClient } from '../../src/main/git'
 import { sessionDir } from '../../src/main/paths'
 import { archiveSession, type ArchiveDeps } from '../../src/main/sessions/archive'
 import { SessionManager } from '../../src/main/sessions/manager'
@@ -15,6 +15,7 @@ import type { SessionBackend } from '../../src/main/backend'
 import { claudeTmuxName } from '../../src/main/tmux'
 import type { NewSessionInput, Project, Session, StartProgress, SubProject } from '../../src/shared/types'
 import { makeTestEnv } from '../helpers/env'
+import { WINDOWS } from '../helpers/processes'
 import { makeRepo } from '../helpers/repo'
 import { waitFor } from '../helpers/wait'
 
@@ -111,12 +112,18 @@ const git = (r: { env: Record<string, string> }, cwd: string, ...args: string[])
 const branchesOf = async (r: { root: string; env: Record<string, string> }) =>
   (await git(r, r.root, 'branch', '--format=%(refname:short)')).stdout.split('\n').filter(Boolean)
 const worktrees = async (r: { root: string; env: Record<string, string> }) =>
-  (await git(r, r.root, 'worktree', 'list', '--porcelain')).stdout.split('\n').filter((l) => l.startsWith('worktree ')).map((l) => l.slice(9))
+  (await git(r, r.root, 'worktree', 'list', '--porcelain')).stdout.split('\n').filter((l) => l.startsWith('worktree ')).map((l) => fromGit(l.slice(9)))
+
+/** Deletes a session's folder by hand; on Windows its agent stops first (Windows won't delete a running program's folder). */
+async function deleteByHand(s: Session, folder: string): Promise<void> {
+  if (WINDOWS) await t.backend.killSession(claudeTmuxName(s.id))
+  await rm(folder, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
+}
 
 /** Nothing of a failed resume is left: still archived, no tmux, no session files, the given folder not created. */
 async function expectNothingCreated(s: Session, notCreated?: string) {
   expect(get(s.id).archivedAt).toBeGreaterThan(0)
-  expect(await t.tmux.hasSession(claudeTmuxName(s.id))).toBe(false)
+  expect(await t.backend.hasSession(claudeTmuxName(s.id))).toBe(false)
   expect(await has(sessionDir(t.paths, s.id))).toBe(false)
   if (notCreated) expect(await has(notCreated)).toBe(false)
   expect(manager.snapshot().sessions.map((x) => x.id)).not.toContain(s.id)
@@ -145,7 +152,7 @@ describe('resumeSession', () => {
     expect(progress.find((p) => p.step === 'worktree' && p.state === 'done')?.message)
       .toBe('Branch pitwall/fix-tax-rounding was deleted — new branch pitwall/fix-tax-rounding from main')
     expect((await git(r, s.worktreePath!, 'rev-parse', '--abbrev-ref', 'HEAD')).stdout.trim()).toBe('pitwall/fix-tax-rounding')
-    expect(await t.tmux.hasSession(claudeTmuxName(s.id))).toBe(true)
+    expect(await t.backend.hasSession(claudeTmuxName(s.id))).toBe(true)
     expect(await has(join(sessionDir(t.paths, s.id), 'started'))).toBe(true)
     await waitFor(async () => (await readFile(claudeLog, 'utf8')).includes(`--resume ${s.claudeSessionId}`), 8000, 'claude --resume')
     expect((await readFile(claudeLog, 'utf8')).match(/--session-id/g)).toHaveLength(1) // only the original start
@@ -316,7 +323,7 @@ describe('resumeSession', () => {
     )
     expect(await readFile(join(b.worktreePath!, 'b-work.txt'), 'utf8')).toBe('b')
     expect((await git(r, b.worktreePath!, 'rev-parse', '--abbrev-ref', 'HEAD')).stdout.trim()).toBe(b.branch)
-    expect(await t.tmux.hasSession(claudeTmuxName(b.id))).toBe(true)
+    expect(await t.backend.hasSession(claudeTmuxName(b.id))).toBe(true)
     await waitFor(async () => (await readFile(claudeLog, 'utf8')).includes(`--resume ${a.claudeSessionId}`), 8000, 'claude --resume')
   })
 
@@ -396,7 +403,7 @@ describe('resumeSession', () => {
     await git(r, r.root, 'worktree', 'add', '-b', 'mine', theirs)
     await rm(theirs, { recursive: true, force: true })
     const s = await startOne(sp)
-    await rm(s.worktreePath!, { recursive: true, force: true })
+    await deleteByHand(s, s.worktreePath!)
     await archive(s, true)
     const res = await resume(s.id)
     expect(res.ok).toBe(true)
@@ -412,7 +419,7 @@ describe('resumeSession', () => {
     setup(r.env, { paths: { ...t.paths, worktreesRoot: join(t.tmp, 'linked-worktrees') } })
     const s = await startOne(sp)
     expect(s.worktreePath!.startsWith(join(t.tmp, 'linked-worktrees'))).toBe(true)
-    await rm(dirname(s.worktreePath!), { recursive: true, force: true }) // its parent folder too
+    await deleteByHand(s, dirname(s.worktreePath!)) // its parent folder too
     await archive(s, true)
     const res = await resume(s.id)
     expect(res.ok).toBe(true)
@@ -424,7 +431,7 @@ describe('resumeSession', () => {
     const s = await startOne(sp)
     const res = await resume(s.id)
     expect(res).toEqual({ ok: false, step: 'identity', error: 'This session is already running.' })
-    expect(await t.tmux.hasSession(claudeTmuxName(s.id))).toBe(true)
+    expect(await t.backend.hasSession(claudeTmuxName(s.id))).toBe(true)
     expect(await resume('s_nope')).toEqual({ ok: false, step: 'identity', error: 'Session not found.' })
   })
 
@@ -472,7 +479,7 @@ describe('resumeSession', () => {
   test('the conversation id at resume is the latest one (after /clear)', async () => {
     const { sp } = await addFolder()
     const s = await startOne(sp)
-    await t.tmux.sendKeys(claudeTmuxName(s.id), ['clear', 'Enter'])
+    await t.backend.sendKeys(claudeTmuxName(s.id), ['clear', 'Enter'])
     await waitFor(async () => get(s.id).claudeSessionId === `${s.claudeSessionId}-cleared`, 8000, 'cleared')
     await archive(s)
     expect((await resume(s.id)).ok).toBe(true)

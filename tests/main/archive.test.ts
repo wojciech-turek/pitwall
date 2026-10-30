@@ -13,7 +13,9 @@ import { Store } from '../../src/main/store'
 import { claudeTmuxName, shellTmuxName } from '../../src/main/tmux'
 import type { NewSessionInput, Project, Session, SubProject } from '../../src/shared/types'
 import { makeTestEnv } from '../helpers/env'
+import { WINDOWS } from '../helpers/processes'
 import { makeRepo } from '../helpers/repo'
+import { waitFor } from '../helpers/wait'
 
 const run = promisify(execFile)
 const has = (p: string) => access(p).then(() => true, () => false)
@@ -102,8 +104,8 @@ describe('archive', () => {
     expect(await archiveSession(s.id, { confirmedDataLoss: false }, deps)).toEqual({ ok: true })
     expect(await has(s.worktreePath!)).toBe(false)
     expect(await branchesOf(r)).toEqual(['main'])
-    expect(await t.tmux.hasSession(claudeTmuxName(s.id))).toBe(false)
-    expect(await t.tmux.hasSession(shellTmuxName(s.id))).toBe(false)
+    expect(await t.backend.hasSession(claudeTmuxName(s.id))).toBe(false)
+    expect(await t.backend.hasSession(shellTmuxName(s.id))).toBe(false)
     expect(await has(sessionDir(t.paths, s.id))).toBe(false)
     expect(closed.sort()).toEqual([`${s.id}:claude`, `${s.id}:shell`])
     expect(detached).toEqual([])
@@ -120,7 +122,7 @@ describe('archive', () => {
     const res = await archiveSession(s.id, { confirmedDataLoss: false }, deps)
     expect(res).toMatchObject({ ok: false, needsConfirm: { uncommittedFiles: 1 } })
     expect(await has(s.worktreePath!)).toBe(true)
-    expect(await t.tmux.hasSession(claudeTmuxName(s.id))).toBe(true)
+    expect(await t.backend.hasSession(claudeTmuxName(s.id))).toBe(true)
     expect(closed).toEqual([])
     expect(store.state.sessions[0].archivedAt).toBeUndefined()
     expect(manager.snapshot().sessions).toHaveLength(1)
@@ -207,7 +209,7 @@ describe('archive', () => {
     })
     expect(await archiveSession(s.id, { confirmedDataLoss: false }, deps)).toEqual({ ok: true })
     expect(await has(join(folder, 'notes.md'))).toBe(true)
-    expect(await t.tmux.hasSession(claudeTmuxName(s.id))).toBe(false)
+    expect(await t.backend.hasSession(claudeTmuxName(s.id))).toBe(false)
     expect(manager.snapshot().archived).toHaveLength(1)
   })
 
@@ -231,7 +233,7 @@ describe('archive', () => {
     expect(res).toEqual({ ok: false, error: expect.stringContaining('worktree is locked') })
     expect(await has(s.worktreePath!)).toBe(true)
     expect(await branchesOf(r)).toContain(s.branch)
-    expect(await t.tmux.hasSession(claudeTmuxName(s.id))).toBe(true)
+    expect(await t.backend.hasSession(claudeTmuxName(s.id))).toBe(true)
     expect(store.state.sessions[0].archivedAt).toBeUndefined()
     expect(manager.snapshot().sessions).toHaveLength(1)
     // Its terminals were closed for the archive: they offer to reattach instead of staying frozen.
@@ -244,10 +246,11 @@ describe('archive', () => {
     expect(await checkArchive('nope', deps)).toMatchObject({ willRemoveWorktree: false, willDeleteBranch: false })
   })
 
+  // Teardown commands are sh here; Windows runs cmd.exe (its tests: windows-only.test.ts, and the non-zero exit below).
   describe('teardown', () => {
     const setTeardown = (cmd: string) => store.update((d) => { d.subProjects[0].teardownCommand = cmd })
 
-    test('runs after tmux is killed, before the worktree is removed, in the folder, with the session env', async () => {
+    test.skipIf(WINDOWS)('runs after tmux is killed, before the worktree is removed, in the folder, with the session env', async () => {
       const { sp, deps } = await addRepo()
       const s = await startOne(sp)
       const out = join(t.tmp, 'td.txt')
@@ -270,7 +273,7 @@ describe('archive', () => {
       expect(await has(s.worktreePath!)).toBe(false)
     })
 
-    test("with a project GitHub account: the project's token and extra env reach teardown, inherited tokens don't", async () => {
+    test.skipIf(WINDOWS)("with a project GitHub account: the project's token and extra env reach teardown, inherited tokens don't", async () => {
       const { sp, deps } = await addRepo()
       const s = await startOne(sp)
       await store.update((d) => { d.projects[0].extraEnv = [{ key: 'GITHUB_TOKEN', value: 'from-project' }] })
@@ -284,7 +287,9 @@ describe('archive', () => {
     test('non-zero exit reports the code and last 4 KB, leaves the worktree', async () => {
       const { sp, deps } = await addRepo()
       const s = await startOne(sp)
-      await setTeardown('head -c 10000 /dev/zero | tr "\\0" x; echo; echo boom >&2; exit 3')
+      await setTeardown(WINDOWS
+        ? `node -e "process.stdout.write('x'.repeat(10000))" & echo. & echo boom 1>&2 & exit /b 3`
+        : 'head -c 10000 /dev/zero | tr "\\0" x; echo; echo boom >&2; exit 3')
       const res = await archiveSession(s.id, { confirmedDataLoss: false }, deps)
       expect(res).toMatchObject({ ok: false, teardownFailed: { exitCode: 3, timedOut: false } })
       const out = (res as { teardownFailed: { output: string } }).teardownFailed.output
@@ -294,9 +299,9 @@ describe('archive', () => {
       expect(store.state.sessions[0].archivedAt).toBeUndefined()
       // The agent was stopped for the teardown: its terminals offer to reattach, which relaunches it (Cancel).
       expect(detached.sort()).toEqual([`${s.id}:claude`, `${s.id}:shell`])
-      expect(await t.tmux.hasSession(claudeTmuxName(s.id))).toBe(false)
+      expect(await t.backend.hasSession(claudeTmuxName(s.id))).toBe(false)
       await manager.ensureTerminalTarget(s.id, 'claude')
-      expect(await t.tmux.hasSession(claudeTmuxName(s.id))).toBe(true)
+      expect(await t.backend.hasSession(claudeTmuxName(s.id))).toBe(true)
     })
 
     test('skipTeardown archives without running it', async () => {
@@ -309,7 +314,7 @@ describe('archive', () => {
       expect(await has(s.worktreePath!)).toBe(false)
     })
 
-    test('a command past the limit is killed with its process group', async () => {
+    test.skipIf(WINDOWS)('a command past the limit is killed with its process group', async () => {
       const { sp, deps } = await addRepo()
       const s = await startOne(sp)
       const marker = join(t.tmp, 'late')
@@ -325,7 +330,7 @@ describe('archive', () => {
       expect(detached.sort()).toEqual([`${s.id}:claude`, `${s.id}:shell`])
     })
 
-    test('a backgrounded child that outlives the command does not keep archive waiting', async () => {
+    test.skipIf(WINDOWS)('a backgrounded child that outlives the command does not keep archive waiting', async () => {
       const { sp, deps } = await addRepo()
       const s = await startOne(sp)
       await setTeardown('sleep 20 & echo started')
@@ -335,7 +340,7 @@ describe('archive', () => {
       expect(Date.now() - t0).toBeLessThan(5000)
     })
 
-    test("gh acts as the project's account: the token is in the teardown's env only, never in argv or on disk", async () => {
+    test.skipIf(WINDOWS)("gh acts as the project's account: the token is in the teardown's env only, never in argv or on disk", async () => {
       const { sp, deps } = await addRepo()
       const s = await startOne(sp)
       const argv: string[] = []
@@ -359,7 +364,7 @@ describe('archive', () => {
       }
     })
 
-    test("an account with no token runs gh signed out, never as the machine's active account", async () => {
+    test.skipIf(WINDOWS)("an account with no token runs gh signed out, never as the machine's active account", async () => {
       const { sp, deps } = await addRepo()
       const s = await startOne(sp)
       await store.update((d) => { d.projects[0].identity.ghAccount = 'signed-out-account' })
@@ -381,7 +386,7 @@ describe('archive', () => {
       expect(await archiveSession(s.id, { confirmedDataLoss: false }, deps)).toEqual({ ok: true })
     })
 
-    test('folder sessions run it in the folder', async () => {
+    test.skipIf(WINDOWS)('folder sessions run it in the folder', async () => {
       const dir = join(t.tmp, 'plain')
       await mkdir(dir)
       const sp: SubProject = { id: 'sp_f', projectId: 'p_1', name: 'Plain', kind: 'folder', path: dir, createdAt: 0, teardownCommand: 'pwd -P > where.txt' }
@@ -397,7 +402,11 @@ describe('archive', () => {
     const { sp, deps } = await addRepo()
     const s = await startOne(sp)
     await manager.ensureTerminalTarget(s.id, 'shell')
-    const roots = [await t.backend.processRoots(claudeTmuxName(s.id)), await t.backend.processRoots(shellTmuxName(s.id))]
+    // (In the host the launcher starts each program a moment later, after checking the scripts.)
+    const roots = await waitFor(async () => {
+      const rs = [await t.backend.processRoots(claudeTmuxName(s.id)), await t.backend.processRoots(shellTmuxName(s.id))]
+      return rs.every((r) => r.panePids.length === 1) && rs
+    }, 15_000, 'both panes running')
     const server = roots[0].serverPid!
     const [claudePane, shellPane] = roots.flatMap((r) => r.panePids)
     // A Windows process list (pid ppid created): the panes under the server, a child of the Claude pane, a stale
@@ -409,9 +418,11 @@ describe('archive', () => {
     ].join('\r\n')
     const order: string[] = []
     let listed = 0
-    const real = deps.backend.killSession.bind(deps.backend)
+    const real = deps.backend
     deps.backend = Object.assign(Object.create(deps.backend), {
-      killSession: async (n: string) => { order.push(`kill ${n}`); return real(n) }
+      killSession: async (n: string) => { order.push(`kill ${n}`); return real.killSession(n) },
+      // The made-up creation times above stand for the panes: no real start times to check them against.
+      processRoots: async (n: string) => { const { paneStarts: _, ...r } = await real.processRoots(n); return r }
     })
     deps.platform = 'win32'
     deps.leftovers = {
@@ -425,21 +436,21 @@ describe('archive', () => {
     ])
   })
 
-  test('archiving stops processes the session left running, and only those', async () => {
+  test.skipIf(WINDOWS)('archiving stops processes the session left running, and only those', async () => {
     const { sp, deps } = await addRepo()
     const s = await startOne(sp)
     const f1 = join(t.tmp, 'pid1'), f2 = join(t.tmp, 'pid2')
     await manager.ensureTerminalTarget(s.id, 'shell')
     const shellName = shellTmuxName(s.id)
-    await t.tmux.sendKeys(shellName, [`nohup sleep 301 >/dev/null 2>&1 & echo $! > ${f1}; nohup sh -c 'sleep 302 & echo $! > ${f2}; wait' >/dev/null 2>&1 &`], true)
-    await t.tmux.sendKeys(shellName, ['Enter'])
+    await t.backend.sendKeys(shellName, [`nohup sleep 301 >/dev/null 2>&1 & echo $! > ${f1}; nohup sh -c 'sleep 302 & echo $! > ${f2}; wait' >/dev/null 2>&1 &`], true)
+    await t.backend.sendKeys(shellName, ['Enter'])
     const outside = spawn('sleep', ['303'], { stdio: 'ignore' })
     // A sibling Pitwall session with its own background process.
     const sib = await startOne(sp, { requestId: 'r2', title: 'Other work' })
     await manager.ensureTerminalTarget(sib.id, 'shell')
     const f3 = join(t.tmp, 'pid3')
-    await t.tmux.sendKeys(shellTmuxName(sib.id), [`nohup sleep 304 >/dev/null 2>&1 & echo $! > ${f3}`], true)
-    await t.tmux.sendKeys(shellTmuxName(sib.id), ['Enter'])
+    await t.backend.sendKeys(shellTmuxName(sib.id), [`nohup sleep 304 >/dev/null 2>&1 & echo $! > ${f3}`], true)
+    await t.backend.sendKeys(shellTmuxName(sib.id), ['Enter'])
     const alive = (pid: number) => { try { process.kill(pid, 0); return true } catch { return false } }
     const pidOf = async (f: string) => {
       for (let i = 0; i < 100; i++) {
@@ -458,7 +469,7 @@ describe('archive', () => {
       expect(alive(p2)).toBe(false)
       expect(alive(outside.pid!)).toBe(true)
       expect(alive(p3)).toBe(true)
-      expect(await t.tmux.hasSession(claudeTmuxName(sib.id))).toBe(true)
+      expect(await t.backend.hasSession(claudeTmuxName(sib.id))).toBe(true)
     } finally {
       outside.kill('SIGKILL')
       await pidOf(f3).then((p) => process.kill(p, 'SIGKILL')).catch(() => undefined)

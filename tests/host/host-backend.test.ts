@@ -18,6 +18,15 @@ let tmp: string
 let dataDir: string
 let key: Buffer
 let server: net.Server | null
+const sockets = new Set<net.Socket>()
+
+/** Closes the fake host and the connections it accepted (a Windows pipe name stays taken while one is open). */
+async function closeFake(): Promise<void> {
+  for (const s of sockets) s.destroy()
+  sockets.clear()
+  if (server) await new Promise((r) => server!.close(r))
+  server = null
+}
 
 beforeEach(async () => {
   ;({ tmp, dataDir } = await makeHostDirs())
@@ -26,7 +35,7 @@ beforeEach(async () => {
   server = null
 })
 afterEach(async () => {
-  if (server) await new Promise((r) => server!.close(r))
+  await closeFake()
   await rm(tmp, { recursive: true, force: true })
 })
 
@@ -56,6 +65,7 @@ async function fakeHost(
   let conns = 0
   const received: Msg[][] = []
   server = net.createServer((s) => {
+    sockets.add(s)
     const n = ++conns
     const got: Msg[] = []
     received.push(got)
@@ -181,7 +191,7 @@ test('a proven host of another version is named, with its version cleaned of any
   await expect(backend().listSessions()).rejects.toThrow(
     `Pitwall's background host (pid 4242, from Pitwall 9.1.0) speaks protocol ${PROTOCOL + 1}; this Pitwall speaks protocol ${PROTOCOL}`
   )
-  server!.close()
+  await closeFake()
   await fakeHost(() => {}, { helloFields: { protocol: PROTOCOL + 1, appVersion: HOSTILE.appVersion } })
   const e = await backend().listSessions().then(() => null, (err: Error) => err)
   expect(e?.message).toContain('(pid 4242, from Pitwall unknown)')

@@ -84,8 +84,7 @@ const start = (i: NewSessionInput) => startSession(i, deps, (p) => progress.push
 const branchesOf = async (root: string, env: Record<string, string>) =>
   (await run('git', ['branch', '--format=%(refname:short)'], { cwd: root, env })).stdout.split('\n').filter(Boolean)
 
-// Sessions in tmux (macOS); on Windows the host runs them (tests/host/relaunch.test.ts, the e2e suite).
-describe.skipIf(WINDOWS)('startSession', () => {
+describe('startSession', () => {
   test('repo session happy path', async () => {
     const { r, sp } = await addRepo()
     const res = await start(input(sp))
@@ -98,13 +97,13 @@ describe.skipIf(WINDOWS)('startSession', () => {
     expect(await has(s.worktreePath!)).toBe(true)
     expect(s.baseBranch).toBe('main')
     expect(s.baseCommit).toMatch(/^[0-9a-f]{40}$/)
-    expect(await t.tmux.hasSession(claudeTmuxName(s.id))).toBe(true)
+    expect(await t.backend.hasSession(claudeTmuxName(s.id))).toBe(true)
     const envFile = join(sessionDir(t.paths, s.id), 'env.sh')
-    expect((await stat(envFile)).mode & 0o777).toBe(0o600)
+    if (!WINDOWS) expect((await stat(envFile)).mode & 0o777).toBe(0o600) // (no POSIX modes on Windows)
     expect(await readFile(envFile, 'utf8')).not.toContain('token-for')
     // The same variables as JSON, for the host's launcher (Windows): owner-only, no token either.
     const envJson = join(sessionDir(t.paths, s.id), 'env.json')
-    expect((await stat(envJson)).mode & 0o777).toBe(0o600)
+    if (!WINDOWS) expect((await stat(envJson)).mode & 0o777).toBe(0o600)
     const vars = JSON.parse(await readFile(envJson, 'utf8')) as Record<string, string>
     expect(vars).toMatchObject({ PITWALL_SESSION_ID: s.id, GIT_AUTHOR_EMAIL: expect.any(String), PITWALL_GH_ACCOUNT: expect.any(String) })
     expect(JSON.stringify(vars)).not.toContain('token-for')
@@ -156,7 +155,7 @@ describe.skipIf(WINDOWS)('startSession', () => {
     const res = await start(input(sp))
     expect(res).toEqual({ ok: false, step: 'tmux', error: `Session folder not found: ${folder}` })
     expect(store.state.sessions).toEqual([])
-    expect(await t.tmux.listSessions()).toEqual([])
+    expect(await t.backend.listSessions()).toEqual([])
   })
 
   test('monorepo subfolder starts in matching subfolder', async () => {
