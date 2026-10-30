@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { mkdirSync } from 'node:fs'
 import * as net from 'node:net'
 import { StringDecoder } from 'node:string_decoder'
@@ -8,7 +8,9 @@ import {
   encodeDataChunks, encodeJson, FrameDecoder, MAX_TERM_SIZE, parseHostMessage, PROTOCOL, type ErrorCode, type Frame,
   type HostMessage, type ProcessRoots, type Request
 } from '../host/protocol'
+import { envValue, quoteWindowsArg } from '../host/win-command'
 import type { Attachment, AttachHandlers, NewSessionOptions, SessionBackend } from './backend'
+import { windowsPowerShell } from './platform'
 
 /** How to start a host: the app's own executable as Node, running out/host/index.js for this data dir. */
 export interface HostLaunch { file: string; args: string[]; env: Record<string, string> }
@@ -475,9 +477,9 @@ export class HostBackend implements SessionBackend {
     if (!launch) throw new HostError('No Pitwall host is running.')
     mkdirSync(this.o.dataDir, { recursive: true })
     const state = { failure: null as string | null }
-    const child = spawn(launch.file, launch.args, {
-      detached: true, stdio: 'ignore', env: launch.env, cwd: this.o.dataDir, windowsHide: true
-    })
+    const child = process.platform === 'win32'
+      ? startViaShell(launch, this.o.dataDir)
+      : spawn(launch.file, launch.args, { detached: true, stdio: 'ignore', env: launch.env, cwd: this.o.dataDir, windowsHide: true })
     child.on('error', (e) => { state.failure = e.message })
     // Exit code 0 is a host that found another one already serving: keep connecting, to that one.
     child.on('exit', (code, signal) => { if (code !== 0) state.failure = signal ? `it was killed (${signal})` : `it exited with code ${code}` })
@@ -493,6 +495,41 @@ export class HostBackend implements SessionBackend {
       await sleep(50)
     }
   }
+}
+
+/** How long PowerShell waits for a host it started on Windows, so one that fails at once still reports its exit code. */
+const SHELL_START_WAIT_MS = 1500
+
+/**
+ * Windows: the host is started with ShellExecute (PowerShell's Start-Process), not CreateProcess. Electron leaves its
+ * own stdout/stderr inheritable, and CreateProcess hands every inheritable handle to the child: a host started
+ * directly would hold open whatever pipes started Pitwall (pnpm dev, a test runner, CI) for as long as it lives.
+ * ShellExecute passes no handles. PowerShell exits with the host's code if it ends within SHELL_START_WAIT_MS, else 0;
+ * the host gets PowerShell's environment as the app gave it (the variables used here, and PowerShell's own change to
+ * PSModulePath, are put back first).
+ */
+function startViaShell(launch: HostLaunch, cwd: string): ChildProcess {
+  const psModulePath = envValue(launch.env, 'PSModulePath')
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    '$file = $env:PITWALL_HOST_FILE; $argLine = $env:PITWALL_HOST_ARGS; $dir = $env:PITWALL_HOST_CWD',
+    "if ($env:PITWALL_HOST_PSMP_SET -eq '1') { $env:PSModulePath = $env:PITWALL_HOST_PSMP } else { Remove-Item Env:PSModulePath -ErrorAction SilentlyContinue }",
+    'Remove-Item Env:PITWALL_HOST_FILE, Env:PITWALL_HOST_ARGS, Env:PITWALL_HOST_CWD, Env:PITWALL_HOST_PSMP, Env:PITWALL_HOST_PSMP_SET -ErrorAction SilentlyContinue',
+    '$p = Start-Process -FilePath $file -ArgumentList $argLine -WorkingDirectory $dir -WindowStyle Hidden -PassThru',
+    `if ($p.WaitForExit(${SHELL_START_WAIT_MS})) { exit $p.ExitCode }`,
+    'exit 0'
+  ].join('\n')
+  return spawn(windowsPowerShell(launch.env), ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], {
+    stdio: 'ignore', windowsHide: true,
+    env: {
+      ...launch.env,
+      PITWALL_HOST_FILE: launch.file,
+      PITWALL_HOST_ARGS: launch.args.map(quoteWindowsArg).join(' '),
+      PITWALL_HOST_CWD: cwd,
+      PITWALL_HOST_PSMP: psModulePath ?? '',
+      PITWALL_HOST_PSMP_SET: psModulePath === undefined ? '0' : '1'
+    }
+  })
 }
 
 function missing(name: string): never {
