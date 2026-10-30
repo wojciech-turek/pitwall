@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, appendFil
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
-import { Launcher, MESSAGES, type FetchToken, type LauncherOptions, type PtyLike } from '../../src/host/launcher'
+import { Launcher, MESSAGES, WARNINGS, type FetchToken, type LauncherOptions, type PtyLike, type RunProbe } from '../../src/host/launcher'
 
 class FakePty implements PtyLike {
   static next = 1000
@@ -151,7 +151,7 @@ describe('the host launcher', () => {
     await until(() => spawned.length === 2, 'fresh launch')
     expect(screen).toContain(MESSAGES.resumeFailed())
     expect(lastPty().args).toEqual(['--session-id', ID, '--settings', join(sd, 'hooks.json'), '--name', TITLE])
-    expect(eventList().map((e) => [e.e, e.mode ?? e.code])).toEqual([
+    expect(eventList().filter((e) => e.e !== 'pitwall:warning').map((e) => [e.e, e.mode ?? e.code])).toEqual([
       ['pitwall:launch', 'resume'], ['pitwall:exited', 1], ['pitwall:launch', 'new']
     ])
     lastPty().exit(0)
@@ -352,6 +352,127 @@ describe('the host launcher', () => {
     expect(typeof p.args).toBe('string')
     expect(p.args).toMatch(/^\/d \/s \/c "C:\\stub\\claude\.cmd \^\^\^"--session-id\^\^\^" /)
     expect(p.env.GH_TOKEN).toBe('token-for-dev-work')
+  })
+})
+
+describe('warnings as banners (pitwall:warning, logged after each launch)', () => {
+  const kinds = () => eventList().map((e) => (e.e === 'pitwall:warning' ? `warning:${e.kind}` : e.e === 'pitwall:launch' ? `launch:${e.mode}` : e.e))
+
+  test('signed out and a failed setup: printed, and logged right after the launch', async () => {
+    writeEnv({ ...baseVars(), PITWALL_GH_ACCOUNT: 'nobody', PITWALL_SETUP_COMMAND: 'false' })
+    launcher().start()
+    await until(() => spawned.length === 1, 'setup')
+    lastPty().exit(1)
+    await until(() => spawned.length === 2, 'claude')
+    expect(kinds()).toEqual(['launch:new', 'warning:gh', 'warning:setup'])
+    expect(eventList().filter((e) => e.e === 'pitwall:warning').map((e) => e.msg)).toEqual([WARNINGS.gh('nobody'), WARNINGS.setup(1)])
+  })
+
+  test("a resume that falls back says so after the new conversation's launch too", async () => {
+    writeFileSync(join(sd, 'started'), '')
+    launcher().start()
+    await until(() => spawned.length === 1, 'resume')
+    lastPty().exit(1)
+    await until(() => spawned.length === 2, 'fresh launch')
+    expect(kinds()).toEqual(['launch:resume', 'pitwall:exited', 'warning:resume', 'launch:new', 'warning:resume'])
+  })
+
+  test('the Shell tab logs nothing', async () => {
+    writeEnv({ ...baseVars(), PITWALL_GH_ACCOUNT: 'nobody' })
+    launcher({ spec: { kind: 'shell', sessionDir: sd }, argv: ['/bin/sh'] }).start()
+    await until(() => spawned.length === 1, 'shell')
+    expect(eventList()).toEqual([])
+  })
+})
+
+describe('the PowerShell scripts are tried before Claude first starts (exec-form hooks: Windows)', () => {
+  const PS = 'C:/WINDOWS/System32/WindowsPowerShell/v1.0/powershell.exe'
+  const FLAGS = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File']
+  let probes: Array<{ file: string; args: string[]; input: string; env: Record<string, string> }>
+
+  function writeHooks(o: { statusLine?: boolean } = {}): void {
+    const hook = { type: 'command', command: PS, args: [...FLAGS, '/bin/dir/pitwall-hook.ps1', events, 's_1'], timeout: 10 }
+    writeFileSync(join(sd, 'hooks.json'), JSON.stringify({
+      hooks: { SessionStart: [{ hooks: [hook] }], Stop: [{ hooks: [hook] }] },
+      ...(o.statusLine === false ? {} : { statusLine: { type: 'command', command: 'powershell -File x', padding: 0 } })
+    }))
+  }
+  /** A fake PowerShell: the hook and status line work, unless blocked. */
+  const probe = (blocked: { hook?: boolean | 'silent'; statusLine?: boolean } = {}): RunProbe => async (file, args, input, env) => {
+    probes.push({ file, args, input, env })
+    const script = args[FLAGS.length]
+    if (script.endsWith('pitwall-hook.ps1')) {
+      if (blocked.hook === true) return 1
+      if (blocked.hook !== 'silent') appendFileSync(args[FLAGS.length + 1], `{"c":"probe","t":1,"e":"${JSON.parse(input).hook_event_name}"}\n`)
+      return 0
+    }
+    if (blocked.statusLine) return 1
+    writeFileSync(join(args[FLAGS.length + 1], 'statusline.json'), input)
+    return 0
+  }
+  const settingsArg = () => { const a = lastPty().args as string[]; return a[a.indexOf('--settings') + 1] }
+
+  beforeEach(() => { probes = [] })
+
+  test('both run: Claude gets hooks.json; each script was tried with the same flags, outside the real files', async () => {
+    writeHooks()
+    writeEnv({ ...baseVars(), PITWALL_USER_STATUSLINE: 'my-line' })
+    launcher({ runProbe: probe() }).start()
+    await until(() => spawned.length === 1, 'claude')
+    expect(settingsArg()).toBe(join(sd, 'hooks.json'))
+    expect(probes.map((p) => [p.file, p.args.slice(0, FLAGS.length + 1)])).toEqual([
+      [PS, [...FLAGS, '/bin/dir/pitwall-hook.ps1']], [PS, [...FLAGS, join('/bin/dir', 'pitwall-statusline.ps1')]]
+    ])
+    expect(probes[0].args.slice(FLAGS.length + 1)).toEqual([join(sd, 'probe', 'events.jsonl'), 'probe'])
+    expect(probes[1].env.PITWALL_USER_STATUSLINE).toBeUndefined() // the user's line isn't run by the check
+    expect(existsSync(join(sd, 'probe'))).toBe(false)
+    expect(existsSync(events)).toBe(true)
+    expect(readFileSync(events, 'utf8')).not.toContain('PitwallProbe') // never in the session's own log
+    expect(eventList().some((e) => e.e === 'pitwall:warning')).toBe(false)
+  })
+
+  test("blocked: Claude starts without the hooks and status line; it's printed and shown; checked once, applied every launch", async () => {
+    writeHooks()
+    const l = launcher({ runProbe: probe({ hook: true, statusLine: true }) })
+    l.start()
+    await until(() => spawned.length === 1, 'claude')
+    expect(settingsArg()).toBe(join(sd, 'hooks-without-scripts.json'))
+    expect(JSON.parse(readFileSync(join(sd, 'hooks-without-scripts.json'), 'utf8'))).toEqual({})
+    expect(screen).toContain(`pitwall: ${WARNINGS.scripts()}`)
+    expect(eventList().filter((e) => e.e === 'pitwall:warning')).toEqual([{ c: 's_1', t: 42, e: 'pitwall:warning', kind: 'scripts', msg: WARNINGS.scripts() }])
+    lastPty().exit(0)
+    await until(() => screen.includes('Press Enter'), 'prompt')
+    l.write('\r')
+    await until(() => spawned.length === 2, 'relaunch')
+    expect(settingsArg()).toBe(join(sd, 'hooks-without-scripts.json'))
+    expect(probes).toHaveLength(2) // hook + status line, once
+    expect(eventList().filter((e) => e.e === 'pitwall:warning')).toHaveLength(2) // again after the relaunch
+  })
+
+  test('a hook that exits 0 but writes nothing counts as blocked', async () => {
+    writeHooks({ statusLine: false })
+    launcher({ runProbe: probe({ hook: 'silent' }) }).start()
+    await until(() => spawned.length === 1, 'claude')
+    expect(settingsArg()).toBe(join(sd, 'hooks-without-scripts.json'))
+    expect(probes).toHaveLength(1) // no status line to try
+  })
+
+  test('only the status line blocked: the hooks stay, the status line goes, and that is what the banner says', async () => {
+    writeHooks()
+    launcher({ runProbe: probe({ statusLine: true }) }).start()
+    await until(() => spawned.length === 1, 'claude')
+    const settings = JSON.parse(readFileSync(settingsArg(), 'utf8'))
+    expect(Object.keys(settings.hooks)).toEqual(['SessionStart', 'Stop'])
+    expect(settings.statusLine).toBeUndefined()
+    expect(eventList().filter((e) => e.e === 'pitwall:warning').map((e) => e.kind)).toEqual(['statusline'])
+  })
+
+  test('sh hooks (macOS) are not tried', async () => {
+    writeFileSync(join(sd, 'hooks.json'), JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: 'command', command: "'/b/pitwall-hook' 'e' 's'" }] }] } }))
+    launcher({ runProbe: probe({ hook: true }) }).start()
+    await until(() => spawned.length === 1, 'claude')
+    expect(probes).toEqual([])
+    expect(settingsArg()).toBe(join(sd, 'hooks.json'))
   })
 })
 

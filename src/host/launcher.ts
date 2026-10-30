@@ -10,11 +10,15 @@
  *   reported SessionStart falls back to a new conversation;
  * - when Claude exits: "Press Enter to resume.", and Enter relaunches it. End of input (Ctrl+D) or Ctrl+C at that
  *   prompt ends the terminal, as they end the script's `read`.
+ * Beyond the script: what it prints that matters (signed out of GitHub, setup failed, couldn't resume) is also logged
+ * as a pitwall:warning event, which the app shows as a banner (a ConPTY repaint can wipe the printed line). And on
+ * Windows the PowerShell hook and status line are tried once before Claude first starts: if Windows won't run them
+ * (an execution policy), Claude gets settings without them, so they can never get in its way, and a warning says so.
  * The Shell tab (`kind: 'shell'`) gets the same identity, then its shell, once.
  * Everything that touches the outside world (the pty, gh, the file system for PATH lookups) is injected.
  */
 import { execFile } from 'node:child_process'
-import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { deleteEnv, envValue, mergeEnv, windowsCommand, windowsShellCommand, type IsFile } from './win-command'
 
@@ -37,6 +41,8 @@ export type SpawnPty = (
 export type KillPty = (p: PtyLike, sig: 'SIGHUP' | 'SIGKILL') => void
 /** The account's token, or null. Never throws. */
 export type FetchToken = (ghBin: string, account: string, env: Record<string, string>) => Promise<string | null>
+/** Runs a program with no shell, `input` on its stdin; its exit code (non-zero if it couldn't start). Never throws. */
+export type RunProbe = (file: string, args: string[], input: string, env: Record<string, string>) => Promise<number>
 
 export interface LauncherOptions {
   spec: LauncherSpec
@@ -51,6 +57,8 @@ export interface LauncherOptions {
   spawn: SpawnPty
   kill: KillPty
   fetchToken?: FetchToken
+  /** How the PowerShell scripts are tried (a test seam; default execFile). */
+  runProbe?: RunProbe
   isFile?: IsFile
   now?: () => number
 }
@@ -67,6 +75,31 @@ export const MESSAGES = {
   noToken: (account: string) =>
     `pitwall: couldn't get a GitHub token for ${account} — gh commands will run signed out. Check \`gh auth status\`.`
 }
+
+/** The same, as banners in the app (pitwall:warning, one per kind), plus what only the host's launcher checks. */
+export const WARNINGS = {
+  gh: (account: string) => `Couldn't get a GitHub token for ${account}: gh commands run signed out. Check \`gh auth status\`.`,
+  setup: (rc: number) => `The setup command failed (exit ${rc}); Claude started anyway.`,
+  resume: () => "Couldn't resume the previous conversation, so a new one started.",
+  scripts: () => "Windows blocked Pitwall's status scripts (PowerShell execution policy) — status won't update for this session.",
+  statusLine: () => "Windows blocked Pitwall's status line script (PowerShell execution policy) — the usage meter won't update for this session."
+}
+
+const PROBE_EVENT = 'PitwallProbe'
+
+const execProbe: RunProbe = (file, args, input, env) => new Promise((resolve) => {
+  try {
+    const child = execFile(file, args, { env, timeout: 20_000, windowsHide: true }, (err) => {
+      if (!err) return resolve(0)
+      const code = (err as { code?: unknown }).code
+      resolve(typeof code === 'number' && code !== 0 ? code : 1)
+    })
+    child.stdin?.on('error', () => {})
+    child.stdin?.end(input)
+  } catch {
+    resolve(127)
+  }
+})
 
 const isFileDefault: IsFile = (p) => {
   try {
@@ -107,6 +140,10 @@ export class Launcher {
   private rows: number
   private dataCbs: Array<(d: string) => void> = []
   private exitCbs: Array<(code: number) => void> = []
+  /** This run of Claude's warnings (logged again after each pitwall:launch, which clears the app's banners). */
+  private warnings: Array<{ kind: string; msg: string }> = []
+  private launched = false
+  private scripts: Promise<{ hooks: boolean; statusLine: boolean }> | null = null
   private readonly isFile: IsFile
   private readonly fetchToken: FetchToken
   private readonly now: () => number
@@ -188,6 +225,8 @@ export class Launcher {
 
   /** One launch or resume, like the script's run_claude; returns Claude's exit code. */
   private async runClaude(): Promise<number> {
+    this.warnings = []
+    this.launched = false
     const env = await this.launchEnv()
     const setup = envValue(env, 'PITWALL_SETUP_COMMAND', this.o.platform)
     const done = this.file('setup-done')
@@ -195,23 +234,29 @@ export class Launcher {
       this.print(MESSAGES.setup(setup))
       const rc = await this.runShellCommand(setup, env)
       if (this.stopping) return rc // killed during setup: it runs again next time, as with the script
-      if (rc !== 0) this.print(MESSAGES.setupFailed(rc))
+      if (rc !== 0) {
+        this.print(MESSAGES.setupFailed(rc))
+        this.warn(env, 'setup', WARNINGS.setup(rc))
+      }
       writeFileSync(done, '')
     }
+    if (this.stopping) return 129
+    const settings = await this.settingsFile(env)
     if (this.stopping) return 129
     const id = readFileSync(this.file('claude-id'), 'utf8').trim()
     let rc: number
     if (!existsSync(this.file('started'))) {
       writeFileSync(this.file('started'), '')
-      rc = await this.launchNew(id, env)
+      rc = await this.launchNew(id, settings, env)
     } else {
       const before = this.eventLines(env).length
-      this.logEvent(env, { e: 'pitwall:launch', mode: 'resume' })
-      rc = await this.run(this.claudeBin(env), ['--resume', id, '--settings', this.file('hooks.json')], env)
+      this.logLaunch(env, 'resume')
+      rc = await this.run(this.claudeBin(env), ['--resume', id, '--settings', settings], env)
       if (rc !== 0 && !this.stopping && !this.eventLines(env).slice(before).some(isSessionStart)) {
         this.logEvent(env, { e: 'pitwall:exited', code: rc })
         this.print(MESSAGES.resumeFailed())
-        rc = await this.launchNew(id, env)
+        this.warn(env, 'resume', WARNINGS.resume())
+        rc = await this.launchNew(id, settings, env)
       }
     }
     // Killed: the script dies with its terminal and logs nothing more.
@@ -219,10 +264,83 @@ export class Launcher {
     return rc
   }
 
-  private launchNew(id: string, env: Record<string, string>): Promise<number> {
-    this.logEvent(env, { e: 'pitwall:launch', mode: 'new' })
+  private launchNew(id: string, settings: string, env: Record<string, string>): Promise<number> {
+    this.logLaunch(env, 'new')
     const title = envValue(env, 'PITWALL_TITLE', this.o.platform) ?? ''
-    return this.run(this.claudeBin(env), ['--session-id', id, '--settings', this.file('hooks.json'), '--name', title], env)
+    return this.run(this.claudeBin(env), ['--session-id', id, '--settings', settings, '--name', title], env)
+  }
+
+  /** pitwall:launch, then this run's warnings again (the app clears its banners at each launch). */
+  private logLaunch(env: Record<string, string>, mode: 'new' | 'resume'): void {
+    this.logEvent(env, { e: 'pitwall:launch', mode })
+    this.launched = true
+    for (const w of this.warnings) this.logEvent(env, { e: 'pitwall:warning', kind: w.kind, msg: w.msg })
+  }
+
+  /** A warning for this run of Claude: shown as a banner from its launch on (the Shell tab logs no events). */
+  private warn(env: Record<string, string>, kind: string, msg: string): void {
+    if (this.o.spec.kind !== 'claude') return
+    this.warnings = [...this.warnings.filter((w) => w.kind !== kind), { kind, msg }]
+    if (this.launched) this.logEvent(env, { e: 'pitwall:warning', kind, msg })
+  }
+
+  /**
+   * The settings Claude starts with: hooks.json, or (when Windows won't run the PowerShell scripts) a copy without
+   * them, so an execution policy can never get in the way of Claude's tool calls.
+   */
+  private async settingsFile(env: Record<string, string>): Promise<string> {
+    const file = this.file('hooks.json')
+    this.scripts ??= this.tryScripts(env).catch(() => ({ hooks: true, statusLine: true }))
+    const ok = await this.scripts
+    if (ok.hooks && ok.statusLine) return file
+    if (!ok.hooks) {
+      this.print(`pitwall: ${WARNINGS.scripts()}`)
+      this.warn(env, 'scripts', WARNINGS.scripts())
+    } else {
+      this.print(`pitwall: ${WARNINGS.statusLine()}`)
+      this.warn(env, 'statusline', WARNINGS.statusLine())
+    }
+    const settings = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>
+    if (!ok.hooks) delete settings.hooks
+    if (!ok.statusLine) delete settings.statusLine
+    const fallback = this.file('hooks-without-scripts.json')
+    writeFileSync(fallback, JSON.stringify(settings, null, 2) + '\n')
+    return fallback
+  }
+
+  /**
+   * Runs the PowerShell hook and status line once, as Claude would (exec form, the same flags), on a probe payload
+   * into a scratch folder. Only for exec-form hooks (Windows): sh scripts elsewhere need no such check.
+   */
+  private async tryScripts(env: Record<string, string>): Promise<{ hooks: boolean; statusLine: boolean }> {
+    const settings = JSON.parse(readFileSync(this.file('hooks.json'), 'utf8')) as {
+      hooks?: { SessionStart?: Array<{ hooks?: Array<{ command?: unknown; args?: unknown }> }> }; statusLine?: unknown
+    }
+    const hook = settings.hooks?.SessionStart?.[0]?.hooks?.[0]
+    const args = hook?.args
+    const at = Array.isArray(args) ? args.indexOf('-File') : -1
+    if (typeof hook?.command !== 'string' || !Array.isArray(args) || at < 0 || at + 1 >= args.length) return { hooks: true, statusLine: true }
+    const run = this.o.runProbe ?? execProbe
+    const probeEnv = { ...env }
+    deleteEnv(probeEnv, 'PITWALL_USER_STATUSLINE', this.o.platform) // the user's own line isn't ours to try
+    const dir = this.file('probe')
+    rmSync(dir, { recursive: true, force: true })
+    mkdirSync(dir, { recursive: true })
+    try {
+      const events = join(dir, 'events.jsonl')
+      const hookRc = await run(hook.command, [...args.slice(0, at + 2), events, 'probe'],
+        JSON.stringify({ hook_event_name: PROBE_EVENT, session_id: 'probe' }), probeEnv)
+      const hooks = hookRc === 0 && readIfAny(events).includes(`"e":"${PROBE_EVENT}"`)
+      let statusLine = true
+      if (settings.statusLine) {
+        const script = join(dirname(args[at + 1]), 'pitwall-statusline.ps1')
+        const rc = await run(hook.command, [...args.slice(0, at + 1), script, dir], JSON.stringify({ session_id: 'probe' }), probeEnv)
+        statusLine = rc === 0 && existsSync(join(dir, 'statusline.json'))
+      }
+      return { hooks, statusLine }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   }
 
   /**
@@ -247,7 +365,9 @@ export class Launcher {
     const dir = join(envValue(env, 'PITWALL_SESSION_DIR', platform) || this.o.spec.sessionDir, 'gh-unauthenticated')
     mkdirSync(dir, { recursive: true })
     this.print(MESSAGES.noToken(account))
-    return mergeEnv(env, { GH_CONFIG_DIR: dir }, platform)
+    const out = mergeEnv(env, { GH_CONFIG_DIR: dir }, platform)
+    this.warn(out, 'gh', WARNINGS.gh(account))
+    return out
   }
 
   private readSessionEnv(): Record<string, string> {
@@ -374,5 +494,13 @@ function isSessionStart(line: string): boolean {
     return (JSON.parse(line) as { e?: unknown }).e === 'SessionStart'
   } catch {
     return false
+  }
+}
+
+function readIfAny(file: string): string {
+  try {
+    return readFileSync(file, 'utf8')
+  } catch {
+    return ''
   }
 }

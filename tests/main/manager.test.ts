@@ -281,6 +281,24 @@ describe('SessionManager', () => {
     expect(m.snapshot().sessions[0].startWarning).toBeUndefined()
   })
 
+  test("the launcher's warnings show as banners until Claude's next launch; blocked scripts aren't a trust prompt", async () => {
+    t.env.STUB_CLAUDE_SILENT = '1'
+    const m = await ready(800)
+    const res = await m.start({ requestId: 'r', subProjectId: 'sp_1', title: 'Blocked', branchMode: 'new', branch: '' }, () => {})
+    if (!res.ok) throw new Error(res.error)
+    const id = res.sessionId
+    // After the launcher's own pitwall:launch (which clears banners), as the host's launcher logs them.
+    await waitFor(async () => (await readFile(eventsFile(t.paths, id), 'utf8').catch(() => '')).includes('pitwall:launch'), 8000, 'launch')
+    await ev(id, { e: 'pitwall:warning', kind: 'scripts', msg: 'Windows blocked the scripts' })
+    await ev(id, { e: 'pitwall:warning', kind: 'gh', msg: 'Signed out' })
+    await waitFor(async () => m.snapshot().sessions[0].launchWarnings?.length === 2, 8000, 'banners')
+    expect(m.snapshot().sessions[0].launchWarnings).toEqual(['Windows blocked the scripts', 'Signed out'])
+    await new Promise((r) => setTimeout(r, 1500))
+    expect(m.snapshot().sessions[0].startWarning).toBeUndefined()
+    await ev(id, { e: 'pitwall:launch', mode: 'resume' })
+    await waitFor(async () => m.snapshot().sessions[0].launchWarnings === undefined, 8000, 'banners cleared')
+  })
+
   test('silent claude: start returns at once; the trust-prompt warning shows after the timeout and clears on the first event', async () => {
     t.env.STUB_CLAUDE_SILENT = '1'
     const m = await ready(500)

@@ -39,12 +39,16 @@ export interface PersistedState {
 export interface HookEvent {
   c: string; t: number; e: string; sid?: string | null; tool?: string | null; nt?: string | null
   src?: string | null; reason?: string | null; msg?: string | null; err?: string | null; code?: number | null; mode?: string | null
+  /** pitwall:warning: what the warning is about (one banner per kind). */
+  kind?: string | null
 }
 export type Activity = 'starting' | 'idle' | 'working' | 'needs_input' | 'exited'
 export type NeedsInputReason = 'permission' | 'question' | 'other'
 export interface SessionRuntime {
   activity: Activity; needsInput?: NeedsInputReason; claudeSessionId?: string
   firstEventSeen: boolean; lastEventAt?: number; lastFinishedAt?: number; lastMessage?: string; lastError?: string; exitCode?: number
+  /** What the launcher warned about since Claude last started, by kind (pitwall:warning). */
+  warnings?: Record<string, string>
 }
 export type DisplayStatus = 'starting' | 'working' | 'needs_you' | 'unread' | 'read' | 'exited'
 export interface ChangedFile { path: string; status: 'M' | 'A' | 'D' | '?'; additions: number; deletions: number; binary: boolean }
@@ -58,6 +62,8 @@ export interface SessionView extends Session {
   status: DisplayStatus; needsInput?: NeedsInputReason; lastError?: string
   diffStat?: { additions: number; deletions: number }; liveBranch?: string; startWarning?: string
   lastActivityAt?: number
+  /** The launcher's warnings for this run of Claude (a terminal repaint can wipe its printed lines). */
+  launchWarnings?: string[]
 }
 export interface AppSnapshot {
   projects: Project[]; subProjects: SubProject[]; sessions: SessionView[]; archived: Session[]; settings: AppSettings

@@ -51,6 +51,7 @@ export default function SessionHeader({ session, subProject, multi = false, onCl
         </div>
       )}
       {session.startWarning && <div className="banner warn" role="status" data-testid="start-warning">{session.startWarning}</div>}
+      {session.launchWarnings?.map((w) => <div key={w} className="banner warn" role="status" data-testid="launch-warning">{w}</div>)}
       {session.lastError && <div className="banner error" role="alert" data-testid="last-error">{session.lastError}</div>}
     </div>
   )

@@ -116,6 +116,7 @@ export class SessionManager {
       if (lastError) view.lastError = lastError
       const warning = this.warnings.get(s.id)
       if (warning) view.startWarning = warning
+      if (rt.warnings) view.launchWarnings = Object.values(rt.warnings)
       return view
     })
     return {
@@ -288,7 +289,8 @@ export class SessionManager {
     const seen = await this.waitForFirstEvent(id, this.deps.firstEventTimeoutMs ?? FIRST_EVENT_TIMEOUT_MS)
       .catch(() => false)
     const t = this.tracked.get(id)
-    if (seen || this.disposed || !t || t.rt.firstEventSeen || this.session(id)?.archivedAt !== undefined) return
+    // Hooks that Windows wouldn't run say so themselves (a launcher warning): not a trust prompt.
+    if (seen || this.disposed || !t || t.rt.firstEventSeen || t.rt.warnings?.scripts || this.session(id)?.archivedAt !== undefined) return
     this.warnings.set(id, START_WARNING)
     this.publish()
   }
