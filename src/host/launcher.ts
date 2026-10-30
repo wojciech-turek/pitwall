@@ -12,7 +12,7 @@
  *   prompt ends the terminal, as they end the script's `read`.
  * Beyond the script: what it prints that matters (signed out of GitHub, setup failed, couldn't resume) is also logged
  * as a pitwall:warning event, which the app shows as a banner (a ConPTY repaint can wipe the printed line). And on
- * Windows the PowerShell hook and status line are tried once before Claude first starts: if Windows won't run them
+ * Windows the PowerShell hook and status line are tried before each start of Claude: if Windows won't run them
  * (an execution policy), Claude gets settings without them, so they can never get in its way, and a warning says so.
  * The Shell tab (`kind: 'shell'`) gets the same identity, then its shell, once.
  * Everything that touches the outside world (the pty, gh, the file system for PATH lookups) is injected.
@@ -130,6 +130,7 @@ type Key = 'enter' | 'eof' | 'interrupt' | 'stopped'
 
 export class Launcher {
   private current: PtyLike | null = null
+  private currentStartedAt: number | null = null
   private stopping = false
   private finished = false
   private waiting: ((k: Key) => void) | null = null
@@ -143,7 +144,7 @@ export class Launcher {
   /** This run of Claude's warnings (logged again after each pitwall:launch, which clears the app's banners). */
   private warnings: Array<{ kind: string; msg: string }> = []
   private launched = false
-  private scripts: Promise<{ hooks: boolean; statusLine: boolean }> | null = null
+  private probes = 0
   private readonly isFile: IsFile
   private readonly fetchToken: FetchToken
   private readonly now: () => number
@@ -159,6 +160,11 @@ export class Launcher {
   /** The program running now (Claude, setup or the shell); null while waiting for Enter. */
   get pid(): number | null {
     return this.current?.pid ?? null
+  }
+
+  /** When that program was started (ms since 1970). */
+  get startedAt(): number | null {
+    return this.current ? this.currentStartedAt : null
   }
 
   onData(cb: (d: string) => void): void {
@@ -286,12 +292,12 @@ export class Launcher {
 
   /**
    * The settings Claude starts with: hooks.json, or (when Windows won't run the PowerShell scripts) a copy without
-   * them, so an execution policy can never get in the way of Claude's tool calls.
+   * them, so an execution policy can never get in the way of Claude's tool calls. Tried at every start, so a policy
+   * that changed between runs is noticed. Anything unexpected while trying counts as blocked (fail closed).
    */
   private async settingsFile(env: Record<string, string>): Promise<string> {
     const file = this.file('hooks.json')
-    this.scripts ??= this.tryScripts(env).catch(() => ({ hooks: true, statusLine: true }))
-    const ok = await this.scripts
+    const ok = await this.tryScripts(env).catch(() => ({ hooks: false, statusLine: false }))
     if (ok.hooks && ok.statusLine) return file
     if (!ok.hooks) {
       this.print(`pitwall: ${WARNINGS.scripts()}`)
@@ -300,7 +306,12 @@ export class Launcher {
       this.print(`pitwall: ${WARNINGS.statusLine()}`)
       this.warn(env, 'statusline', WARNINGS.statusLine())
     }
-    const settings = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>
+    let settings: Record<string, unknown> = {}
+    try {
+      settings = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>
+    } catch {
+      // unreadable: start with no settings of ours rather than with scripts that may not run
+    }
     if (!ok.hooks) delete settings.hooks
     if (!ok.statusLine) delete settings.statusLine
     const fallback = this.file('hooks-without-scripts.json')
@@ -323,8 +334,8 @@ export class Launcher {
     const run = this.o.runProbe ?? execProbe
     const probeEnv = { ...env }
     deleteEnv(probeEnv, 'PITWALL_USER_STATUSLINE', this.o.platform) // the user's own line isn't ours to try
-    const dir = this.file('probe')
-    rmSync(dir, { recursive: true, force: true })
+    // A new folder each time: a leftover one (a scanner holding it) never needs removing first.
+    const dir = this.file(`probe-${process.pid}-${++this.probes}`)
     mkdirSync(dir, { recursive: true })
     try {
       const events = join(dir, 'events.jsonl')
@@ -339,7 +350,8 @@ export class Launcher {
       }
       return { hooks, statusLine }
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      // Best effort: tidying up never changes what was found.
+      try { rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }) } catch { /* left for later */ }
     }
   }
 
@@ -408,6 +420,7 @@ export class Launcher {
   private runPty(what: string, file: string, args: string[] | string, env: Record<string, string>): Promise<number> {
     if (this.stopping) return Promise.resolve(129)
     let p: PtyLike
+    const startedAt = Date.now()
     try {
       p = this.o.spawn(file, args, { cwd: this.o.cwd, env, cols: this.cols, rows: this.rows })
     } catch (e) {
@@ -415,6 +428,7 @@ export class Launcher {
       return Promise.resolve(127)
     }
     this.current = p
+    this.currentStartedAt = startedAt
     return new Promise((resolve) => {
       p.onData((d) => this.emit(d))
       p.onExit(({ exitCode, signal }) => {

@@ -104,6 +104,9 @@ describe.each(STUBS)('the host launcher, with the %s', (_label, claudeBin) => {
     const roots = await b.processRoots(NAME)
     expect(roots.serverPid).toBe(b.hostPid)
     const [pane] = roots.panePids
+    // When the host started it (Windows tells a reused pane pid apart by this).
+    expect(roots.paneStarts).toHaveLength(1)
+    expect(Date.now() - roots.paneStarts![0]).toBeLessThan(30_000)
     const ppid = Number((await run('ps', ['-o', 'ppid=', '-p', String(pane)])).stdout.trim())
     expect(ppid).toBe(roots.serverPid)
   })

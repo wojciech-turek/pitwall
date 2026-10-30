@@ -25,13 +25,13 @@ describe('the menu on Windows', () => {
   const flatten = (items: MenuItemConstructorOptions[]): MenuItemConstructorOptions[] =>
     items.flatMap((i) => [i, ...(Array.isArray(i.submenu) ? flatten(i.submenu) : [])])
 
-  test('shows its shortcuts but registers none (the renderer maps them); macOS registers them as before', () => {
-    const win = flatten(buildMenuTemplate(() => {}, false, 'win32')).filter((i) => i.accelerator)
-    expect(win.length).toBe(16)
-    for (const i of win) expect(i.registerAccelerator).toBe(false)
-    for (const i of flatten(buildMenuTemplate(() => {}, false, 'darwin')).filter((x) => x.accelerator)) {
-      expect('registerAccelerator' in i).toBe(false)
-    }
+  test('shows its shortcuts but registers none, built-in ones included (undo, copy, minimize…); macOS as before', () => {
+    const all = flatten(buildMenuTemplate(() => {}, true, 'win32'))
+    expect(all.filter((i) => i.accelerator)).toHaveLength(16)
+    const keyed = all.filter((i) => i.accelerator || i.role)
+    expect(keyed.map((i) => i.role).filter(Boolean)).toEqual(expect.arrayContaining(['undo', 'redo', 'cut', 'copy', 'paste', 'selectAll', 'minimize', 'reload', 'toggleDevTools']))
+    for (const i of keyed) expect(i.registerAccelerator).toBe(false)
+    for (const i of flatten(buildMenuTemplate(() => {}, true, 'darwin'))) expect('registerAccelerator' in i).toBe(false)
   })
 })
 

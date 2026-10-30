@@ -38,8 +38,11 @@ export interface SessionBackend {
   sendKeys(name: string, keys: string[], literal?: boolean): Promise<void>
   /** Pastes as one paste (bracketed if the program asked for it), never pressing Enter. */
   pasteText(name: string, text: string): Promise<void>
-  /** Process ids to snapshot before killing (leftover cleanup); [] where not supported. */
-  processRoots(name: string): Promise<{ serverPid: number | null; panePids: number[] }>
+  /**
+   * Process ids to snapshot before killing (leftover cleanup); [] where not supported. The host also says when it
+   * started each pane (`paneStarts`, ms), so a pane pid reused since can be told apart (Windows).
+   */
+  processRoots(name: string): Promise<{ serverPid: number | null; panePids: number[]; paneStarts?: number[] }>
   /** A missing session gives an attachment that exits at once (or a rejection). */
   attach(name: string, cols: number, rows: number, h: AttachHandlers): Promise<Attachment>
   /** Ends every session and the backend's server. Never called on quit: agents must outlive the app. */

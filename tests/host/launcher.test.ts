@@ -1,6 +1,6 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, appendFileSync, statSync, mkdirSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, appendFileSync, statSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { Launcher, MESSAGES, WARNINGS, type FetchToken, type LauncherOptions, type PtyLike, type RunProbe } from '../../src/host/launcher'
 
@@ -81,6 +81,8 @@ beforeEach(() => {
   events = join(sd, 'events.jsonl')
   writeEnv(baseVars())
   writeFileSync(join(sd, 'claude-id'), `${ID}\n`)
+  // As writeSessionFiles leaves it on macOS (sh hooks: nothing to try first).
+  writeFileSync(join(sd, 'hooks.json'), JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: 'command', command: "'/b/pitwall-hook' 'e' 's_1'", timeout: 10 }] }] } }))
   spawned = []
   screen = ''
   exits = []
@@ -385,7 +387,7 @@ describe('warnings as banners (pitwall:warning, logged after each launch)', () =
   })
 })
 
-describe('the PowerShell scripts are tried before Claude first starts (exec-form hooks: Windows)', () => {
+describe('the PowerShell scripts are tried before each start of Claude (exec-form hooks: Windows)', () => {
   const PS = 'C:/WINDOWS/System32/WindowsPowerShell/v1.0/powershell.exe'
   const FLAGS = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File']
   let probes: Array<{ file: string; args: string[]; input: string; env: Record<string, string> }>
@@ -423,15 +425,18 @@ describe('the PowerShell scripts are tried before Claude first starts (exec-form
     expect(probes.map((p) => [p.file, p.args.slice(0, FLAGS.length + 1)])).toEqual([
       [PS, [...FLAGS, '/bin/dir/pitwall-hook.ps1']], [PS, [...FLAGS, join('/bin/dir', 'pitwall-statusline.ps1')]]
     ])
-    expect(probes[0].args.slice(FLAGS.length + 1)).toEqual([join(sd, 'probe', 'events.jsonl'), 'probe'])
+    const scratch = dirname(probes[0].args[FLAGS.length + 1])
+    expect(dirname(scratch)).toBe(sd)
+    expect(probes[0].args.slice(FLAGS.length + 1)).toEqual([join(scratch, 'events.jsonl'), 'probe'])
+    expect(probes[1].args[FLAGS.length + 1]).toBe(scratch)
     expect(probes[1].env.PITWALL_USER_STATUSLINE).toBeUndefined() // the user's line isn't run by the check
-    expect(existsSync(join(sd, 'probe'))).toBe(false)
+    expect(existsSync(scratch)).toBe(false)
     expect(existsSync(events)).toBe(true)
     expect(readFileSync(events, 'utf8')).not.toContain('PitwallProbe') // never in the session's own log
     expect(eventList().some((e) => e.e === 'pitwall:warning')).toBe(false)
   })
 
-  test("blocked: Claude starts without the hooks and status line; it's printed and shown; checked once, applied every launch", async () => {
+  test("blocked: Claude starts without the hooks and status line; it's printed and shown; checked again at each launch", async () => {
     writeHooks()
     const l = launcher({ runProbe: probe({ hook: true, statusLine: true }) })
     l.start()
@@ -445,8 +450,57 @@ describe('the PowerShell scripts are tried before Claude first starts (exec-form
     l.write('\r')
     await until(() => spawned.length === 2, 'relaunch')
     expect(settingsArg()).toBe(join(sd, 'hooks-without-scripts.json'))
-    expect(probes).toHaveLength(2) // hook + status line, once
+    expect(probes).toHaveLength(4) // hook + status line, at each launch (a policy may change between runs)
     expect(eventList().filter((e) => e.e === 'pitwall:warning')).toHaveLength(2) // again after the relaunch
+  })
+
+  test('a policy lifted between runs is noticed at the next launch', async () => {
+    writeHooks()
+    let blocked = true
+    const l = launcher({ runProbe: (...a) => probe(blocked ? { hook: true, statusLine: true } : {})(...a) })
+    l.start()
+    await until(() => spawned.length === 1, 'claude')
+    expect(settingsArg()).toBe(join(sd, 'hooks-without-scripts.json'))
+    blocked = false
+    lastPty().exit(0)
+    await until(() => screen.includes('Press Enter'), 'prompt')
+    l.write('\r')
+    await until(() => spawned.length === 2, 'relaunch')
+    expect(settingsArg()).toBe(join(sd, 'hooks.json'))
+  })
+
+  test('anything unexpected while trying counts as blocked (fail closed)', async () => {
+    writeHooks()
+    launcher({ runProbe: async () => { throw new Error('EPERM: spawn') } }).start()
+    await until(() => spawned.length === 1, 'claude')
+    expect(settingsArg()).toBe(join(sd, 'hooks-without-scripts.json'))
+    expect(JSON.parse(readFileSync(settingsArg(), 'utf8'))).toEqual({})
+    expect(eventList().filter((e) => e.e === 'pitwall:warning').map((e) => e.kind)).toEqual(['scripts'])
+  })
+
+  test("a scratch folder that can't be removed (a scanner holding it) changes nothing either way", async () => {
+    for (const blocked of [true, false]) {
+      spawned = []
+      probes = []
+      rmSync(join(sd, 'started'), { force: true })
+      writeHooks()
+      const run = probe(blocked ? { hook: true, statusLine: true } : {})
+      // Leave something in the scratch folder and take away the right to delete it, as a scanner's lock would.
+      launcher({ runProbe: async (file, args, input, env) => {
+        const rc = await run(file, args, input, env)
+        if (args[FLAGS.length].endsWith('pitwall-statusline.ps1')) {
+          writeFileSync(join(args[FLAGS.length + 1], 'locked'), '')
+          chmodSync(args[FLAGS.length + 1], 0o500)
+        }
+        return rc
+      } }).start()
+      await until(() => spawned.length === 1, 'claude')
+      expect(settingsArg()).toBe(join(sd, blocked ? 'hooks-without-scripts.json' : 'hooks.json'))
+      for (const d of readdirSync(sd).filter((n) => n.startsWith('probe-'))) {
+        chmodSync(join(sd, d), 0o700)
+        rmSync(join(sd, d), { recursive: true, force: true })
+      }
+    }
   })
 
   test('a hook that exits 0 but writes nothing counts as blocked', async () => {

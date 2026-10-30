@@ -8,7 +8,7 @@ import { buildSessionEnv, buildSshCommand, withoutGhTokens } from '../../src/mai
 import { resolvePaths } from '../../src/main/paths'
 import { appUserModelId, findGitBash, openInCursorCommand, shellTabArgv, windowsPowerShell } from '../../src/main/platform'
 import {
-  parseWindowsPs, snapshotLeftovers, stopLeftovers, stopProcessTree, windowsEndScript, WINDOWS_PS_SCRIPT
+  parseWindowsPs, snapshotLeftovers, startedAround, stopLeftovers, stopProcessTree, toFileTime, windowsEndScript, WINDOWS_PS_SCRIPT
 } from '../../src/main/sessions/leftovers'
 import { teardownSpawn } from '../../src/main/sessions/teardown'
 import type { Tmux } from '../../src/main/tmux'
@@ -318,17 +318,49 @@ describe('teardown and leftovers on Windows', () => {
     expect(script).toContain("Join-Path $env:SystemRoot 'System32\\taskkill.exe'")
     expect(script).toContain('$pids = @(4242,5001)')
     expect(script).toContain("$starts = @('2000','3500')")
-    expect(script).toContain('& $taskkill /F /PID ([int]$pids[$i])')
-    expect(script).toContain('$null = $p.Handle') // opened first: the pid can't be reused while it is checked
-    expect(script).toContain('CreationDate.ToFileTimeUtc().ToString() -eq $starts[$i]')
+    expect(script).toContain('& $taskkill /F /PID $id')
     expect(script).not.toMatch(/\/T\b/)
+    // All opened first (their pids can't be reused while held), then one listing, then the matching ones ended.
+    const opened = script.indexOf('$null = $p.Handle')
+    const listed = script.indexOf('Get-CimInstance Win32_Process')
+    const killed = script.indexOf('& $taskkill')
+    expect(opened).toBeGreaterThan(0)
+    expect(listed).toBeGreaterThan(opened)
+    expect(killed).toBeGreaterThan(listed)
+    expect(script.split('Get-CimInstance').length - 1).toBe(1)
+    expect(script).toContain('$held.ContainsKey($id) -and $created[$id] -eq $starts[$i]')
+    expect(script.indexOf('$p.Dispose()')).toBeGreaterThan(killed)
   })
 
-  test('a teardown that ran too long: its own tree, walked by creation time', async () => {
+  test('a teardown that ran too long: its own tree, walked by creation time, if the root is still the one started', async () => {
+    const spawned = Date.UTC(2026, 9, 30, 12, 0, 0)
+    const at = (ms: number) => toFileTime(ms).toString()
+    const list = [
+      `900 4 ${at(spawned - 60_000)}`, `4242 900 ${at(spawned + 30)}`, `5000 4242 ${at(spawned + 2000)}`, `5100 4242 ${at(spawned - 9000)}`
+    ].join('\r\n')
     const ended: Array<[number, string]>[] = []
-    await stopProcessTree(4242, { ps: async () => LIST, end: async (t) => { ended.push(t) } })
-    expect(ended.map((t) => t.map(([p]) => p).sort())).toEqual([[4242, 5000, 5001]])
-    await expect(stopProcessTree(1, { ps: async () => { throw new Error('x') } })).resolves.toBeUndefined()
+    const end = async (t: Array<[number, string]>) => { ended.push(t) }
+    await stopProcessTree(4242, spawned, { ps: async () => list, end })
+    expect(ended.map((t) => t.map(([p]) => p).sort())).toEqual([[4242, 5000]])
+    // The command exited as the time ran out and 4242 went to another process before the list: nothing is ended.
+    ended.length = 0
+    await stopProcessTree(4242, spawned - 60_000, { ps: async () => list, end })
+    await stopProcessTree(4242, spawned + 60_000, { ps: async () => list, end })
+    await stopProcessTree(7777, spawned, { ps: async () => list, end })
+    expect(ended).toEqual([])
+    await expect(stopProcessTree(1, spawned, { ps: async () => { throw new Error('x') } })).resolves.toBeUndefined()
+    expect(startedAround(at(spawned + 4000), spawned)).toBe(true)
+    expect(startedAround(at(spawned - 6000), spawned)).toBe(false)
+  })
+
+  test('a pane the host started at another time is not that pane (its pid was reused)', async () => {
+    const t0 = Date.UTC(2026, 9, 30, 12, 0, 0)
+    const at = (ms: number) => toFileTime(ms).toString()
+    const list = [`900 4 ${at(t0)}`, `4242 900 ${at(t0 + 60_000)}`, `5000 4242 ${at(t0 + 61_000)}`].join('\r\n')
+    const ps = async () => list
+    expect([...(await snapshotLeftovers([4242], 900, { platform: 'win32', ps, paneStartedAt: new Map([[4242, t0 + 60_010]]) })).keys()])
+      .toEqual(expect.arrayContaining([4242, 5000]))
+    expect(await snapshotLeftovers([4242], 900, { platform: 'win32', ps, paneStartedAt: new Map([[4242, t0 + 10_000]]) })).toEqual(new Map())
   })
 })
 

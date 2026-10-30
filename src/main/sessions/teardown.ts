@@ -29,8 +29,8 @@ export function runTeardown(
   command: string,
   o: {
     cwd: string; env: Record<string, string>; timeoutMs?: number; platform?: NodeJS.Platform
-    /** Windows: ends the command's process tree (a test seam; default stopProcessTree). */
-    stopTree?: (pid: number) => Promise<void>
+    /** Windows: ends the command's process tree, started at `startedAt` ms (a test seam; default stopProcessTree). */
+    stopTree?: (pid: number, startedAt: number) => Promise<void>
   }
 ): Promise<TeardownResult> {
   return new Promise((resolve) => {
@@ -38,6 +38,7 @@ export function runTeardown(
     let settled = false
     const platform = o.platform ?? process.platform
     const plan = teardownSpawn(command, o.env, platform)
+    const startedAt = Date.now() // Windows: the tree's root is checked against this before anything is ended
     const child = spawn(plan.file, plan.args, {
       cwd: o.cwd, env: o.env, detached: plan.detached, stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true, windowsVerbatimArguments: plan.verbatim
@@ -59,7 +60,7 @@ export function runTeardown(
     }
     const killGroup = (): void => {
       if (!child.pid) return
-      if (platform === 'win32') return void (o.stopTree ?? stopProcessTree)(child.pid)
+      if (platform === 'win32') return void (o.stopTree ?? stopProcessTree)(child.pid, startedAt)
       try { process.kill(-child.pid, 'SIGKILL') } catch { /* already gone */ }
     }
     const timer = setTimeout(() => {

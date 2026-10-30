@@ -135,10 +135,18 @@ export function describeBackendContract(
 
     test('processRoots gives the program and its parent (for the leftover snapshot)', async () => {
       expect(await f.backend.processRoots('pw-none')).toEqual({ serverPid: null, panePids: [] })
+      const before = Date.now()
       const r = await start('pw-r')
-      expect(await f.backend.processRoots('pw-r')).toEqual(
+      const { paneStarts, ...roots } = await f.backend.processRoots('pw-r')
+      expect(roots).toEqual(
         o.processRoots === false ? { serverPid: null, panePids: [] } : { serverPid: r.ppid, panePids: [r.pid] }
       )
+      // A backend that says when it started each pane (the host) says so truly.
+      if (paneStarts) {
+        expect(paneStarts).toHaveLength(1)
+        expect(paneStarts[0]).toBeGreaterThanOrEqual(before - 1000)
+        expect(paneStarts[0]).toBeLessThanOrEqual(Date.now())
+      }
     })
 
     test('shutdown ends every session', async () => {

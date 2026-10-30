@@ -83,6 +83,18 @@ function ancestors(rows: Row[], pid: number, o: { bornAfterParent?: boolean } = 
 export const WINDOWS_PS_SCRIPT =
   "Get-CimInstance Win32_Process | ForEach-Object { if ($_.CreationDate) { '{0} {1} {2}' -f $_.ProcessId, $_.ParentProcessId, $_.CreationDate.ToFileTimeUtc() } }"
 
+/** Milliseconds since 1970 as a Windows FILETIME (100 ns since 1601). */
+export const toFileTime = (ms: number): bigint => (BigInt(Math.round(ms)) + 11_644_473_600_000n) * 10_000n
+
+/** How far a process's creation time may be from when its starter says it started it. */
+const STARTED_SLACK = 5n * 1000n * 10_000n // 5 s in FILETIME units
+
+/** True if `created` (FILETIME text) is within a few seconds of `startedAt` (ms). */
+export function startedAround(created: string, startedAt: number): boolean {
+  const d = BigInt(created) - toFileTime(startedAt)
+  return (d < 0n ? -d : d) <= STARTED_SLACK
+}
+
 export function parseWindowsPs(text: string): Row[] {
   const rows: Row[] = []
   for (const line of text.split(/\r?\n/)) {
@@ -94,8 +106,11 @@ export function parseWindowsPs(text: string): Row[] {
 
 /**
  * Ends each target with `%SystemRoot%\System32\taskkill.exe /F /PID <pid>` (never /T: a tree is walked here, by
- * creation time), and only if it is still the process recorded: it is first opened (so its pid can't be reused while
- * it is checked and ended), then its creation time must match.
+ * creation time), and only if it is still the process recorded. All targets are opened first (a process held open
+ * keeps its pid, so it can't be reused while checked and ended), then one listing gives their creation times, then
+ * those that match are ended, then the handles are let go.
+ * (node-pty's own kill of a session on Windows lists the console's processes and then kills them by pid without
+ * holding them: library behaviour, used by the host when a session is killed.)
  */
 export function windowsEndScript(targets: Array<[number, string]>): string {
   const pids = targets.map(([pid]) => String(Math.trunc(pid))).join(',')
@@ -104,15 +119,17 @@ export function windowsEndScript(targets: Array<[number, string]>): string {
     "$taskkill = Join-Path $env:SystemRoot 'System32\\taskkill.exe'",
     `$pids = @(${pids})`,
     `$starts = @(${starts})`,
+    '$held = @{}',
     'for ($i = 0; $i -lt $pids.Count; $i++) {',
-    '  try {',
-    '    $p = [System.Diagnostics.Process]::GetProcessById([int]$pids[$i])',
-    '    $null = $p.Handle',
-    "    $c = Get-CimInstance Win32_Process -Filter ('ProcessId=' + [int]$pids[$i])",
-    '    if ($c -and $c.CreationDate -and $c.CreationDate.ToFileTimeUtc().ToString() -eq $starts[$i]) { & $taskkill /F /PID ([int]$pids[$i]) | Out-Null }',
-    '    $p.Dispose()',
-    '  } catch { }',
-    '}'
+    '  try { $p = [System.Diagnostics.Process]::GetProcessById([int]$pids[$i]); $null = $p.Handle; $held[[int]$pids[$i]] = $p } catch { }',
+    '}',
+    '$created = @{}',
+    'Get-CimInstance Win32_Process | ForEach-Object { if ($_.CreationDate) { $created[[int]$_.ProcessId] = $_.CreationDate.ToFileTimeUtc().ToString() } }',
+    'for ($i = 0; $i -lt $pids.Count; $i++) {',
+    '  $id = [int]$pids[$i]',
+    '  if ($held.ContainsKey($id) -and $created[$id] -eq $starts[$i]) { try { & $taskkill /F /PID $id | Out-Null } catch { } }',
+    '}',
+    'foreach ($p in $held.Values) { $p.Dispose() }'
   ].join('\n')
 }
 
@@ -133,6 +150,8 @@ export interface LeftoverOptions {
   kill?: KillFn
   end?: EndFn
   graceMs?: number
+  /** Windows: when the server started each pane (ms), where it says; a pane created at another time isn't it. */
+  paneStartedAt?: Map<number, number>
 }
 
 const isWindows = (o: LeftoverOptions): boolean => (o.platform ?? process.platform) === 'win32'
@@ -155,7 +174,9 @@ export async function snapshotLeftovers(
     const roots = panePids.filter((p) => {
       const r = byPid.get(p)
       if (r?.ppid !== serverPid) return false
-      return !windows || (!!server && BigInt(r.start) >= BigInt(server.start))
+      if (!windows) return true
+      const startedAt = o.paneStartedAt?.get(p)
+      return !!server && BigInt(r.start) >= BigInt(server.start) && (startedAt === undefined || startedAround(r.start, startedAt))
     })
     // Pitwall, its parents and its own children are never touched (ppid too, in case ps missed our row).
     const exclude = [...ancestors(rows, process.pid, { bornAfterParent: windows }), process.pid, process.ppid, ...(windows ? [serverPid] : [])]
@@ -212,12 +233,15 @@ export async function stopLeftovers(snap: Leftovers, o: LeftoverOptions = {}): P
 }
 
 /**
- * Windows: ends `root` (a process of ours that is still running, such as a teardown command that ran too long) and
- * everything it started, walked by creation time. Never throws.
+ * Windows: ends `root` (a teardown command that ran too long) and everything it started, walked by creation time.
+ * `startedAt` is when it was started (ms): the process listed under that pid must have been created then, or it is
+ * not ours (the command exited and its pid was reused before the list was taken) and nothing is ended. Never throws.
  */
-export async function stopProcessTree(root: number, o: Pick<LeftoverOptions, 'ps' | 'end'> = {}): Promise<void> {
+export async function stopProcessTree(root: number, startedAt: number, o: Pick<LeftoverOptions, 'ps' | 'end'> = {}): Promise<void> {
   try {
     const rows = parseWindowsPs(await (o.ps ?? windowsPs)())
+    const row = rows.find((r) => r.pid === root)
+    if (!row || !startedAround(row.start, startedAt)) return
     const exclude = [...ancestors(rows, process.pid, { bornAfterParent: true }), process.pid, process.ppid]
     const tree = descendants(rows, [root], exclude, { bornAfterParent: true })
     await (o.end ?? windowsEnd)([...tree])

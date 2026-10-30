@@ -123,7 +123,15 @@ export async function archiveSession(
     ]
     const serverPid = panes.find((p) => p.serverPid)?.serverPid ?? null
     const platform = deps.platform ?? process.platform
-    const leftoverOptions: LeftoverOptions = { platform, ...deps.leftovers }
+    // The host says when it started each pane: on Windows a pane pid created at another time was reused since.
+    const paneStartedAt = new Map<number, number>()
+    for (const p of panes) {
+      p.panePids.forEach((pid, i) => {
+        const at = p.paneStarts?.[i]
+        if (typeof at === 'number' && Number.isFinite(at)) paneStartedAt.set(pid, at)
+      })
+    }
+    const leftoverOptions: LeftoverOptions = { platform, paneStartedAt, ...deps.leftovers }
     const leftovers = await snapshotLeftovers(panes.flatMap((p) => p.panePids), serverPid, leftoverOptions)
     deps.ptyBridge.close(s.id, 'claude')
     deps.ptyBridge.close(s.id, 'shell')

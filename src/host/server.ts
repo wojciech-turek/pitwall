@@ -55,6 +55,8 @@ const ROWS = 50
 interface Program {
   /** The process running now; null while the launcher waits for Enter. */
   readonly pid: number | null
+  /** When that process was started (ms since 1970). */
+  readonly startedAt: number | null
   write(data: string | Buffer): void
   resize(cols: number, rows: number): void
   /** SIGHUP (or SIGKILL) to what runs; the program then exits and ends the terminal. */
@@ -445,7 +447,10 @@ export class Host {
       case 'roots': {
         const t = this.terms.get(m.name)
         const pid = t?.p.pid
-        const roots: ProcessRoots = t ? { serverPid: process.pid, panePids: pid ? [pid] : [] } : { serverPid: null, panePids: [] }
+        const startedAt = t?.p.startedAt
+        const roots: ProcessRoots = t
+          ? { serverPid: process.pid, panePids: pid ? [pid] : [], paneStarts: pid && startedAt ? [startedAt] : [] }
+          : { serverPid: null, panePids: [] }
         return roots
       }
       case 'shutdown': return undefined
@@ -474,9 +479,11 @@ export class Host {
       l.start()
       this.log(`started ${name} (${launcher.kind} launcher)`)
     } else {
+      const startedAt = Date.now()
       const p = pty.spawn(argv[0], argv.slice(1), { name: 'xterm-256color', cols: COLS, rows: ROWS, cwd, env: sessionEnv })
       t.p = {
         pid: p.pid,
+        startedAt,
         write: (d) => p.write(d),
         resize: (c, r) => p.resize(c, r),
         signal: (sig) => this.killPty(p, sig)
@@ -582,6 +589,8 @@ export class Host {
 
   private killPty(p: PtyLike & { kill(signal?: string): void }, sig: 'SIGHUP' | 'SIGKILL'): void {
     if (this.platform === 'win32') {
+      // node-pty (library behaviour): lists the processes attached to the session's console, then kills each by pid
+      // without holding it open, and closes the console. Leftover cleanup in the app checks creation times instead.
       try { p.kill() } catch { /* gone */ }
       return
     }

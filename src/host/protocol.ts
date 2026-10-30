@@ -182,7 +182,8 @@ export type Notice =
 
 export type ClientMessage = Hello | Auth | Request | Notice
 
-export interface ProcessRoots { serverPid: number | null; panePids: number[] }
+/** `paneStarts` (the host): when each pane's process was started, ms since 1970, in `panePids`' order. */
+export interface ProcessRoots { serverPid: number | null; panePids: number[]; paneStarts?: number[] }
 
 /** `no-session`: the named session doesn't exist. `exists`: a session has that name. */
 export type ErrorCode = 'no-session' | 'exists' | 'bad-request' | 'failed'
