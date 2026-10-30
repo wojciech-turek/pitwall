@@ -36,3 +36,6 @@ export function hostSocketPath(
 export const hostPidFile = (dataDir: string): string => join(dataDir, 'host.pid')
 
 export const hostLogFile = (dataDir: string): string => join(dataDir, 'host.log')
+
+/** The host key: a secret only this user can read, written by each host as it starts (see protocol.ts). */
+export const hostKeyFile = (dataDir: string): string => join(dataDir, 'host.key')

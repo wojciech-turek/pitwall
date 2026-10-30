@@ -1,6 +1,7 @@
 import { appendFileSync, chmodSync, mkdirSync, readFileSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import * as net from 'node:net'
 import * as pty from 'node-pty'
+import { checkProof, newNonce, proofFor, writeHostKey } from './auth'
 import { pasteBytes, sendKeysBytes } from './keys'
 import { ModeTracker } from './modes'
 import { hostLogFile, hostPidFile, hostSocketPath } from './paths'
@@ -57,7 +58,10 @@ interface Viewer { conn: Conn; ch: number; term: Term; behind: boolean }
 interface Conn {
   socket: net.Socket
   decoder: FrameDecoder
-  hello: boolean
+  /** new → (hello) → proving: we proved ourselves and wait for the app's proof → (auth) → ready. */
+  state: 'new' | 'proving' | 'ready'
+  /** Our nonce, for the app's proof. */
+  nonce: string
   viewers: Map<number, Viewer>
   closed: boolean
 }
@@ -85,6 +89,7 @@ export class Host {
   private server: net.Server | null = null
   private idleTimer: NodeJS.Timeout | null = null
   private exiting = false
+  private key: Buffer | null = null
   private readonly platform: NodeJS.Platform
   private readonly env: Record<string, string>
   private readonly idleMs: number
@@ -112,6 +117,8 @@ export class Host {
     }
     this.server = server
     server.on('error', (e) => this.log(`server error: ${e.message}`))
+    // Before any connection is served (they're handled on later turns of the event loop).
+    this.key = writeHostKey(this.o.dataDir)
     this.writePidFile()
     this.log(`host ${this.o.appVersion} (protocol ${PROTOCOL}) listening, pid ${process.pid}`)
     this.armIdle()
@@ -213,9 +220,9 @@ export class Host {
       socket.destroy()
       return
     }
-    const conn: Conn = { socket, decoder: new FrameDecoder(), hello: false, viewers: new Map(), closed: false }
+    const conn: Conn = { socket, decoder: new FrameDecoder(), state: 'new', nonce: '', viewers: new Map(), closed: false }
     this.conns.add(conn)
-    const helloTimer = setTimeout(() => { if (!conn.hello) this.drop(conn, 'no hello') }, HELLO_TIMEOUT_MS)
+    const helloTimer = setTimeout(() => { if (conn.state !== 'ready') this.drop(conn, 'no handshake') }, HELLO_TIMEOUT_MS)
     socket.on('data', (chunk: Buffer) => {
       let frames: Frame[]
       try {
@@ -261,7 +268,7 @@ export class Host {
 
   private onFrame(conn: Conn, f: Frame): void {
     if (f.type === 'data') {
-      if (!conn.hello) return this.drop(conn, 'data before hello')
+      if (conn.state !== 'ready') return this.drop(conn, 'data before the handshake')
       const v = conn.viewers.get(f.ch)
       if (v) this.input(v.term, f.data)
       return
@@ -270,7 +277,7 @@ export class Host {
     try {
       msg = parseClientMessage(f.msg)
     } catch (e) {
-      if (!conn.hello) return this.drop(conn, (e as Error).message)
+      if (conn.state !== 'ready') return this.drop(conn, (e as Error).message)
       // One bad message must not end the connection's other terminals: answer it, or (a notice) skip it.
       const id = (f.msg as { id?: unknown }).id
       if (typeof id === 'number' && Number.isSafeInteger(id) && id >= 0) {
@@ -280,24 +287,10 @@ export class Host {
       }
       return
     }
-    if (!conn.hello) {
-      if (msg.t !== 'hello') return this.drop(conn, 'expected hello')
-      if (msg.protocol !== PROTOCOL) {
-        this.log(`refused Pitwall ${msg.appVersion}: it speaks protocol ${msg.protocol}`)
-        this.send(conn, {
-          t: 'hello', protocol: PROTOCOL, appVersion: this.o.appVersion, pid: process.pid,
-          error: `this host speaks protocol ${PROTOCOL}, not ${msg.protocol}`
-        })
-        conn.socket.end()
-        return
-      }
-      conn.hello = true
-      this.send(conn, { t: 'hello', protocol: PROTOCOL, appVersion: this.o.appVersion, pid: process.pid })
-      return
-    }
+    if (conn.state !== 'ready') return this.handshake(conn, msg)
     if (this.exiting) return // after bye: not run, so the app may send it to the next host
     switch (msg.t) {
-      case 'hello': return
+      case 'hello': case 'auth': return
       case 'detach': {
         const v = conn.viewers.get(msg.ch)
         if (v) this.detach(v)
@@ -311,6 +304,35 @@ export class Host {
       default:
         this.request(conn, msg)
     }
+  }
+
+  /** Hello, then each side proves it knows the host key (see protocol.ts). Anything else ends the connection. */
+  private handshake(conn: Conn, msg: ClientMessage): void {
+    if (conn.state === 'new' && msg.t === 'hello') {
+      if (msg.protocol !== PROTOCOL) {
+        this.log(`refused Pitwall ${msg.appVersion}: it speaks protocol ${msg.protocol}`)
+        this.send(conn, {
+          t: 'hello', protocol: PROTOCOL, appVersion: this.o.appVersion, pid: process.pid,
+          error: `this host speaks protocol ${PROTOCOL}, not ${msg.protocol}`
+        })
+        conn.socket.end()
+        return
+      }
+      if (!msg.nonce || !this.key) return this.drop(conn, 'hello without a nonce')
+      conn.state = 'proving'
+      conn.nonce = newNonce()
+      this.send(conn, {
+        t: 'hello', protocol: PROTOCOL, appVersion: this.o.appVersion, pid: process.pid,
+        nonce: conn.nonce, proof: proofFor(this.key, 'host', msg.nonce)
+      })
+      return
+    }
+    if (conn.state === 'proving' && msg.t === 'auth' && this.key && checkProof(this.key, 'app', conn.nonce, msg.proof)) {
+      conn.state = 'ready'
+      this.send(conn, { t: 'ready' })
+      return
+    }
+    this.drop(conn, msg.t === 'auth' ? "the app's proof doesn't match the host key" : `${msg.t} before the handshake`)
   }
 
   private request(conn: Conn, msg: Request): void {

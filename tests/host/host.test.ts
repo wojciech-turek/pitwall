@@ -5,11 +5,11 @@ import * as net from 'node:net'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
-import { hostLogFile, hostPidFile, hostSocketPath } from '../../src/host/paths'
-import { encodeJson, FrameDecoder, PROTOCOL, type Frame } from '../../src/host/protocol'
+import { hostKeyFile, hostLogFile, hostPidFile, hostSocketPath } from '../../src/host/paths'
+import { encodeJson, PROTOCOL } from '../../src/host/protocol'
 import type { Attachment } from '../../src/main/backend'
 import { HostBackend } from '../../src/main/host-backend'
-import { alive, hostLaunch, hostPids, makeHostBackend, makeHostDirs, stopHost } from '../helpers/host'
+import { alive, hostLaunch, hostPids, makeHostBackend, makeHostDirs, rawClient, stopHost } from '../helpers/host'
 import { waitFor } from '../helpers/wait'
 
 const run = promisify(execFile)
@@ -75,19 +75,6 @@ async function attach(b: HostBackend, name: string): Promise<{ a: Attachment; ou
 
 const pidFromFile = async (): Promise<number> => Number((await readFile(hostPidFile(dataDir), 'utf8')).trim())
 
-/** A raw protocol client, for what the app never does. */
-async function rawClient(): Promise<{ s: net.Socket; frames: Frame[]; closed: () => boolean }> {
-  const s = net.connect(hostSocketPath(dataDir))
-  const frames: Frame[] = []
-  const d = new FrameDecoder()
-  let closed = false
-  s.on('data', (c: Buffer) => { try { frames.push(...d.push(c)) } catch { /* ignore */ } })
-  s.on('close', () => { closed = true })
-  s.on('error', () => {})
-  await new Promise<void>((r) => s.once('connect', () => r()))
-  return { s, frames, closed: () => closed }
-}
-
 describe('agents outlive the app', () => {
   test('the app quits: the agent keeps running; a new app reattaches and sees its recent output replayed', async () => {
     const first = app()
@@ -120,18 +107,33 @@ describe('agents outlive the app', () => {
   test('the app crashes while attached: the host notices the dead connection and carries on', async () => {
     const b = app()
     await startAgent(b, 'pw-c')
-    const frames = Buffer.concat([
-      encodeJson({ t: 'hello', protocol: PROTOCOL, appVersion: 'crashy' }),
-      encodeJson({ t: 'attach', id: 1, name: 'pw-c', ch: 1, cols: 80, rows: 24 })
-    ]).toString('base64')
+    // Another process speaking the protocol (with the handshake), killed while attached.
     const crashy = spawn(process.execPath, ['-e', `
+      const crypto = require('node:crypto')
+      const key = Buffer.from(require('node:fs').readFileSync(${JSON.stringify(join(dataDir, 'host.key'))}, 'utf8'), 'hex')
+      const proof = (role, nonce) => crypto.createHmac('sha256', key).update('pitwall-host-v1:' + role + ':' + nonce).digest('hex')
+      const frame = (m) => { const b = Buffer.from(JSON.stringify(m)); const h = Buffer.alloc(5); h.writeUInt32BE(b.length + 1); h[4] = 1; return Buffer.concat([h, b]) }
       const s = require('node:net').connect(${JSON.stringify(hostSocketPath(dataDir))})
-      s.on('connect', () => s.write(Buffer.from('${frames}', 'base64')))
-      s.on('data', (d) => { if (d.includes('AGENT READY')) console.log('attached') })
+      s.on('connect', () => s.write(frame({ t: 'hello', protocol: ${PROTOCOL}, appVersion: 'crashy', nonce: crypto.randomBytes(32).toString('hex') })))
+      let buf = Buffer.alloc(0)
+      s.on('data', (d) => {
+        buf = Buffer.concat([buf, d])
+        while (buf.length >= 4 && buf.length >= 4 + buf.readUInt32BE(0)) {
+          const len = buf.readUInt32BE(0), type = buf[4], body = buf.subarray(5, 4 + len)
+          buf = buf.subarray(4 + len)
+          if (type === 2) { if (body.includes('AGENT READY')) console.log('attached'); continue }
+          const m = JSON.parse(body)
+          if (m.t === 'hello') s.write(frame({ t: 'auth', proof: proof('app', m.nonce) }))
+          if (m.t === 'ready') s.write(frame({ t: 'attach', id: 1, name: 'pw-c', ch: 1, cols: 80, rows: 24 }))
+        }
+      })
       setInterval(() => {}, 60000)
     `], { stdio: ['ignore', 'pipe', 'ignore'] })
-    await new Promise<void>((resolve) => crashy.stdout.on('data', (d: Buffer) => { if (d.includes('attached')) resolve() }))
-    crashy.kill('SIGKILL')
+    try {
+      await new Promise<void>((resolve) => crashy.stdout.on('data', (d: Buffer) => { if (d.includes('attached')) resolve() }))
+    } finally {
+      crashy.kill('SIGKILL')
+    }
     await new Promise((r) => crashy.once('exit', r))
     await b.sendKeys('pw-c', ['still here', 'Enter'])
     await waitFor(async () => (await b.capture('pw-c')).includes('agent: still here'), 8000, 'agent alive after the crash')
@@ -187,6 +189,7 @@ describe('lifecycle', () => {
     await startAgent(b, 'pw-f')
     expect(await pidFromFile()).toBe(b.hostPid)
     expect(statSync(hostSocketPath(dataDir)).mode & 0o777).toBe(0o600)
+    expect(statSync(hostKeyFile(dataDir)).mode & 0o777).toBe(0o600)
     expect(hostSocketPath(dataDir)).toBe(join(dataDir, 'host.sock'))
     const log = await readFile(hostLogFile(dataDir), 'utf8')
     expect(log).toContain('listening')
@@ -246,11 +249,45 @@ describe('lifecycle', () => {
   })
 })
 
+describe('the handshake', () => {
+  test('the host serves only an app that proves it knows the host key', async () => {
+    const b = app()
+    await startAgent(b, 'pw-k')
+    const early = await rawClient(dataDir, { handshake: false })
+    early.s.write(encodeJson({ t: 'has', id: 1, name: 'pw-k' })) // no hello
+    await waitFor(async () => early.closed(), 5000, 'request before hello refused')
+    expect(early.frames).toEqual([])
+
+    for (const after of ['skip auth', 'wrong proof'] as const) {
+      const c = await rawClient(dataDir, { handshake: false })
+      c.s.write(encodeJson({ t: 'hello', protocol: PROTOCOL, appVersion: 'x', nonce: 'a'.repeat(64) }))
+      await waitFor(async () => c.frames.length === 1, 5000, 'host hello')
+      expect(c.frames[0]).toMatchObject({ type: 'json', msg: { t: 'hello', proof: expect.stringMatching(/^[0-9a-f]{64}$/) } })
+      if (after === 'skip auth') c.s.write(encodeJson({ t: 'list', id: 2 }))
+      else c.s.write(encodeJson({ t: 'auth', proof: 'b'.repeat(64) }))
+      await waitFor(async () => c.closed(), 5000, `${after}: refused`)
+      expect(c.frames).toHaveLength(1) // nothing but the host's hello
+    }
+    expect(await readFile(hostLogFile(dataDir), 'utf8')).toContain("the app's proof doesn't match the host key")
+    expect(await b.listSessions()).toEqual(['pw-k']) // and it carries on
+  })
+
+  test('a host started afresh writes a new key; apps follow it', async () => {
+    const b = app()
+    await startAgent(b, 'pw-1')
+    const first = await readFile(hostKeyFile(dataDir), 'utf8')
+    await b.shutdown()
+    await startAgent(b, 'pw-2')
+    expect(await readFile(hostKeyFile(dataDir), 'utf8')).not.toBe(first)
+    expect(await app().listSessions()).toEqual(['pw-2'])
+  })
+})
+
 describe('versions and bad clients', () => {
   test("the host refuses an app that speaks another protocol, and keeps running", async () => {
     const b = app()
     await startAgent(b, 'pw-v')
-    const c = await rawClient()
+    const c = await rawClient(dataDir, { handshake: false })
     c.s.write(encodeJson({ t: 'hello', protocol: PROTOCOL + 1, appVersion: '9.0.0' }))
     await waitFor(async () => c.closed(), 5000, 'refused')
     expect(c.frames[0]).toMatchObject({ type: 'json', msg: { t: 'hello', protocol: PROTOCOL, error: expect.stringMatching(/protocol/) } })
@@ -268,7 +305,7 @@ describe('versions and bad clients', () => {
       await expect(b.listSessions()).rejects.toThrow(
         `Pitwall's background host (pid 4242, from Pitwall 9.0.0) speaks protocol ${PROTOCOL + 1}; this Pitwall speaks protocol ${PROTOCOL}`
       )
-      await expect(b.newSession({ name: 'pw-n', cwd, argv: ['true'] })).rejects.toThrow(/kill 4242/)
+      await expect(b.newSession({ name: 'pw-n', cwd, argv: ['true'] })).rejects.toThrow(/end that host \(pid 4242\)/)
     } finally {
       await new Promise((r) => fake.close(r))
     }
@@ -277,24 +314,23 @@ describe('versions and bad clients', () => {
   test('an oversize or garbled frame closes only that connection; a malformed request gets an error', async () => {
     const b = app()
     await startAgent(b, 'pw-g')
-    const big = await rawClient()
+    const big = await rawClient(dataDir, { handshake: false })
     const header = Buffer.alloc(4)
     header.writeUInt32BE(64 * 1024 * 1024)
     big.s.write(header)
     await waitFor(async () => big.closed(), 5000, 'oversize frame closes the connection')
-    const garbled = await rawClient()
+    const garbled = await rawClient(dataDir, { handshake: false })
     garbled.s.write(Buffer.from([0, 0, 0, 3, 1, 0x7b, 0x7b]))
     await waitFor(async () => garbled.closed(), 5000, 'garbled frame closes the connection')
-    const bad = await rawClient()
-    bad.s.write(encodeJson({ t: 'hello', protocol: PROTOCOL, appVersion: 'x' }))
+    const bad = await rawClient(dataDir)
     bad.s.write(encodeJson({ t: 'new', id: 7, name: 'pw-z', cwd, argv: [] }))
-    await waitFor(async () => bad.frames.length === 2, 5000, 'answer')
-    expect(bad.frames[1]).toMatchObject({ type: 'json', msg: { t: 'res', id: 7, ok: false, code: 'bad-request' } })
+    await waitFor(async () => bad.frames.length === 1, 5000, 'answer')
+    expect(bad.frames[0]).toMatchObject({ type: 'json', msg: { t: 'res', id: 7, ok: false, code: 'bad-request' } })
     // A bad notice (no id to answer) is skipped; the connection and its terminals carry on.
     bad.s.write(encodeJson({ t: 'resize', ch: 1, cols: 0, rows: 24 }))
     bad.s.write(encodeJson({ t: 'has', id: 8, name: 'pw-g' }))
-    await waitFor(async () => bad.frames.length === 3, 5000, 'answer after a bad notice')
-    expect(bad.frames[2]).toMatchObject({ type: 'json', msg: { t: 'res', id: 8, ok: true, value: true } })
+    await waitFor(async () => bad.frames.length === 2, 5000, 'answer after a bad notice')
+    expect(bad.frames[1]).toMatchObject({ type: 'json', msg: { t: 'res', id: 8, ok: true, value: true } })
     expect(bad.closed()).toBe(false)
     bad.s.destroy()
     expect(await b.listSessions()).toEqual(['pw-g'])
@@ -306,14 +342,10 @@ describe('output bursts', () => {
     const b = app()
     await startAgent(b, 'pw-burst')
     await startAgent(b, 'pw-calm')
-    const stuck = await rawClient()
-    const got: Buffer[] = []
-    const dec = new FrameDecoder()
-    stuck.s.removeAllListeners('data')
-    stuck.s.on('data', (c: Buffer) => { for (const f of dec.push(c)) if (f.type === 'data') got.push(f.data) })
-    stuck.s.write(encodeJson({ t: 'hello', protocol: PROTOCOL, appVersion: 'stuck' }))
+    const stuck = await rawClient(dataDir)
+    const got = (): Buffer => Buffer.concat(stuck.frames.flatMap((f) => (f.type === 'data' ? [f.data] : [])))
     stuck.s.write(encodeJson({ t: 'attach', id: 1, name: 'pw-burst', ch: 1, cols: 100, rows: 30 }))
-    await waitFor(async () => Buffer.concat(got).includes('AGENT READY'), 5000, 'stuck app attached')
+    await waitFor(async () => got().includes('AGENT READY'), 5000, 'stuck app attached')
     stuck.s.pause() // and never reads again (until later)
 
     const hostPid = b.hostPid!
@@ -331,13 +363,12 @@ describe('output bursts', () => {
     expect(peakKb).toBeLessThan(200 * 1024) // the host holds ~1 MB of output per terminal, not 50 MB
     console.log(`burst: ${Date.now() - t0} ms, host peak RSS ${Math.round(peakKb / 1024)} MB`)
 
-    const before = Buffer.concat(got).length
-    got.length = 0
+    const before = got().length
+    stuck.frames.length = 0
     stuck.s.resume()
-    await waitFor(async () => Buffer.concat(got).includes('BURST DONE'), 15_000, 'the stuck app catches up')
-    const after = Buffer.concat(got)
-    expect(after.includes('\x1bc')).toBe(true) // resynced from the recent output, not fed all 50 MB
-    expect(before + after.length).toBeLessThan(20 * 1024 * 1024)
+    await waitFor(async () => got().includes('BURST DONE'), 15_000, 'the stuck app catches up')
+    expect(got().includes('\x1bc')).toBe(true) // resynced from the recent output, not fed all 50 MB
+    expect(before + got().length).toBeLessThan(20 * 1024 * 1024)
     stuck.s.destroy()
   })
 })

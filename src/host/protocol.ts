@@ -4,8 +4,14 @@
  * A connection carries frames: a u32 big-endian length L, then L bytes: one type byte and its body.
  *   JSON (1): a UTF-8 JSON object, a ClientMessage or a HostMessage.
  *   DATA (2): a u32 big-endian channel, then raw terminal bytes (host → app: output; app → host: input).
- * The app speaks first with `hello`; the host answers `hello` (or refuses, with `error`) before anything else.
  * A frame longer than MAX_FRAME, or one that doesn't parse, ends the connection.
+ *
+ * Handshake. Each side proves it knows the host key (`host.key` in the data dir, readable only by the user, written
+ * afresh by each host as it starts), so the app never talks to an impostor and the host never serves a stranger:
+ *   app  → hello { protocol, appVersion, nonce }
+ *   host → hello { protocol, appVersion, pid, nonce, proof: HMAC(key, host, app's nonce) }   (or `error`: refused)
+ *   app checks the proof before sending anything else, then → auth { proof: HMAC(key, app, host's nonce) }
+ *   host → ready. Only then requests, notices and data.
  */
 export const PROTOCOL = 1
 export const MAX_FRAME = 16 * 1024 * 1024
@@ -142,7 +148,9 @@ function parseFrame(body: Buffer): Frame {
 
 // ---- messages ---------------------------------------------------------------
 
-export interface Hello { t: 'hello'; protocol: number; appVersion: string }
+/** `nonce` is required by this protocol; a hello from another protocol may lack it and is refused by version. */
+export interface Hello { t: 'hello'; protocol: number; appVersion: string; nonce?: string }
+export interface Auth { t: 'auth'; proof: string }
 
 export type Request =
   | { t: 'list'; id: number }
@@ -163,7 +171,7 @@ export type Notice =
   | { t: 'detach'; ch: number }
   | { t: 'resize'; ch: number; cols: number; rows: number }
 
-export type ClientMessage = Hello | Request | Notice
+export type ClientMessage = Hello | Auth | Request | Notice
 
 export interface ProcessRoots { serverPid: number | null; panePids: number[] }
 
@@ -171,7 +179,9 @@ export interface ProcessRoots { serverPid: number | null; panePids: number[] }
 export type ErrorCode = 'no-session' | 'exists' | 'bad-request' | 'failed'
 
 export type HostMessage =
-  | { t: 'hello'; protocol: number; appVersion: string; pid: number; error?: string }
+  | { t: 'hello'; protocol: number; appVersion: string; pid: number; nonce?: string; proof?: string; error?: string }
+  /** The app's proof checked out: requests may follow. */
+  | { t: 'ready' }
   | { t: 'res'; id: number; ok: true; value?: unknown }
   | { t: 'res'; id: number; ok: false; error: string; code: ErrorCode }
   /** The session behind an attachment ended (or was killed). The channel is closed. */
@@ -205,6 +215,8 @@ const stringMap = (v: unknown, what: string): Record<string, string> => {
   if (!isObject(v) || !Object.values(v).every((x) => typeof x === 'string')) bad(`${what} must map names to strings`)
   return v as Record<string, string>
 }
+const hex64 = (v: unknown, what: string): string => (typeof v === 'string' && /^[0-9a-f]{64}$/.test(v) ? v : bad(`${what} must be 64 hex digits`))
+const optional = <T>(v: unknown, parse: (x: unknown) => T): T | undefined => (v === undefined ? undefined : parse(v))
 const id = (v: Record<string, unknown>): number => int(v.id, 0, Number.MAX_SAFE_INTEGER, 'id')
 const ch = (v: Record<string, unknown>): number => int(v.ch, 1, MAX_CHANNEL, 'ch')
 const size = (v: unknown, what: string): number => int(v, 1, MAX_TERM_SIZE, what)
@@ -213,7 +225,13 @@ const size = (v: unknown, what: string): number => int(v, 1, MAX_TERM_SIZE, what
 export function parseClientMessage(v: unknown): ClientMessage {
   if (!isObject(v)) bad('a message must be an object')
   switch (v.t) {
-    case 'hello': return { t: 'hello', protocol: int(v.protocol, 0, MAX_CHANNEL, 'protocol'), appVersion: str(v.appVersion, 'appVersion', 100) }
+    case 'hello': {
+      const m: Hello = { t: 'hello', protocol: int(v.protocol, 0, MAX_CHANNEL, 'protocol'), appVersion: str(v.appVersion, 'appVersion', 100) }
+      const nonce = optional(v.nonce, (x) => hex64(x, 'nonce'))
+      if (nonce !== undefined) m.nonce = nonce
+      return m
+    }
+    case 'auth': return { t: 'auth', proof: hex64(v.proof, 'proof') }
     case 'list': return { t: 'list', id: id(v) }
     case 'has': return { t: 'has', id: id(v), name: name(v.name) }
     case 'new': {
@@ -245,8 +263,11 @@ export function parseHostMessage(v: unknown): HostMessage {
         pid: int(v.pid, 0, Number.MAX_SAFE_INTEGER, 'pid')
       }
       if (v.error !== undefined) m.error = str(v.error, 'error')
+      if (v.nonce !== undefined) m.nonce = hex64(v.nonce, 'nonce')
+      if (v.proof !== undefined) m.proof = hex64(v.proof, 'proof')
       return m
     }
+    case 'ready': return { t: 'ready' }
     case 'res':
       if (v.ok === true) return { t: 'res', id: id(v), ok: true, value: v.value }
       return { t: 'res', id: id(v), ok: false, error: str(v.error, 'error'), code: str(v.code, 'code') as ErrorCode }

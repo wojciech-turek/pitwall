@@ -81,7 +81,11 @@ describe('framing', () => {
 
 describe('messages', () => {
   test('valid client messages pass, with defaults', () => {
-    expect(parseClientMessage({ t: 'hello', protocol: 1, appVersion: '0.3.0' })).toEqual({ t: 'hello', protocol: 1, appVersion: '0.3.0' })
+    const nonce = 'a'.repeat(64)
+    expect(parseClientMessage({ t: 'hello', protocol: 1, appVersion: '0.3.0', nonce })).toEqual({ t: 'hello', protocol: 1, appVersion: '0.3.0', nonce })
+    // Another protocol's hello may lack a nonce; it is still read, so it can be refused by version.
+    expect(parseClientMessage({ t: 'hello', protocol: 2, appVersion: '9.0.0' })).toEqual({ t: 'hello', protocol: 2, appVersion: '9.0.0' })
+    expect(parseClientMessage({ t: 'auth', proof: 'b'.repeat(64) })).toEqual({ t: 'auth', proof: 'b'.repeat(64) })
     expect(parseClientMessage({ t: 'new', id: 1, name: 'pw-a', cwd: '/tmp/a b', argv: ['x', 'y'] }))
       .toEqual({ t: 'new', id: 1, name: 'pw-a', cwd: '/tmp/a b', argv: ['x', 'y'], env: {} })
     expect(parseClientMessage({ t: 'send', id: 2, name: 'pw-a', keys: ['C-u', 'Enter'] }))
@@ -103,6 +107,9 @@ describe('messages', () => {
     [{ t: 'attach', id: 1, name: 'a', ch: 1, cols: 0, rows: 24 }, /cols/],
     [{ t: 'resize', ch: 1, cols: 80, rows: 1e9 }, /rows/],
     [{ t: 'kill', id: -1, name: 'a' }, /id/],
+    [{ t: 'hello', protocol: 1, appVersion: 'x', nonce: 'short' }, /nonce/],
+    [{ t: 'auth' }, /proof/],
+    [{ t: 'auth', proof: 'B'.repeat(64) }, /proof/],
     ['hello', /object/]
   ])('rejects %j', (msg, err) => {
     expect(() => parseClientMessage(msg)).toThrow(err)
@@ -114,6 +121,11 @@ describe('messages', () => {
     expect(parseHostMessage({ t: 'res', id: 1, ok: false, error: 'no', code: 'no-session' }))
       .toEqual({ t: 'res', id: 1, ok: false, error: 'no', code: 'no-session' })
     expect(parseHostMessage({ t: 'exit', ch: 2, code: 0 })).toEqual({ t: 'exit', ch: 2, code: 0 })
+    expect(parseHostMessage({ t: 'ready' })).toEqual({ t: 'ready' })
+    const proof = 'c'.repeat(64)
+    expect(parseHostMessage({ t: 'hello', protocol: 1, appVersion: 'x', pid: 5, nonce: proof, proof }))
+      .toEqual({ t: 'hello', protocol: 1, appVersion: 'x', pid: 5, nonce: proof, proof })
+    expect(() => parseHostMessage({ t: 'hello', protocol: 1, appVersion: 'x', pid: 5, proof: 'nope' })).toThrow(/proof/)
     expect(() => parseHostMessage({ t: 'res', id: 1, ok: false })).toThrow(ProtocolError)
     expect(() => parseHostMessage({ t: 'hello', protocol: 1, appVersion: 'x' })).toThrow(/pid/)
   })

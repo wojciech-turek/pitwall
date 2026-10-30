@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process'
 import { mkdirSync } from 'node:fs'
 import * as net from 'node:net'
 import { StringDecoder } from 'node:string_decoder'
+import { checkProof, HostKeyError, newNonce, proofFor, readHostKey } from '../host/auth'
 import { hostLogFile, hostSocketPath } from '../host/paths'
 import {
   encodeDataChunks, encodeJson, FrameDecoder, MAX_TERM_SIZE, parseHostMessage, PROTOCOL, type ErrorCode, type Frame,
@@ -20,6 +21,8 @@ export interface HostBackendOptions {
   platform?: NodeJS.Platform
   startTimeoutMs?: number
   requestTimeoutMs?: number
+  /** For connecting and the handshake. */
+  connectTimeoutMs?: number
 }
 
 export class HostError extends Error {
@@ -31,7 +34,16 @@ export class HostError extends Error {
 /** The host is gone (or leaving) before it answered, so it didn't run the request. */
 class HostGone extends Error {}
 
-const CONNECT_TIMEOUT_MS = 5000
+interface OpenOptions {
+  path: string
+  dataDir: string
+  platform: NodeJS.Platform
+  appVersion: string
+  connectTimeoutMs: number
+  requestTimeoutMs: number
+}
+
+const noHost = (): Error => Object.assign(new Error('no host'), { noHost: true })
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 const duration = (ms: number): string => (ms < 1000 ? `${ms} ms` : `${Math.round(ms / 1000)}s`)
 /** A terminal dimension the host accepts. */
@@ -55,11 +67,16 @@ class Connection {
 
   private constructor(private readonly socket: net.Socket, readonly pid: number, private readonly requestTimeoutMs: number) {}
 
-  /** Rejects with `no-host` when nothing listens, or with a HostError the user should see. */
-  static open(path: string, appVersion: string, requestTimeoutMs: number): Promise<Connection> {
+  /**
+   * Connects and completes the handshake (protocol.ts): the host proves it knows the host key before this app sends
+   * it anything but hello. Rejects with `noHost` when nothing listens, or with a HostError the user should see.
+   */
+  static open(o: OpenOptions): Promise<Connection> {
     return new Promise((resolve, reject) => {
-      const socket = net.connect(path)
+      const socket = net.connect(o.path)
       const decoder = new FrameDecoder()
+      const nonce = newNonce()
+      let hostPid: number | null = null // once the host has greeted us
       let settled = false
       const fail = (e: Error): void => {
         if (settled) return
@@ -68,45 +85,67 @@ class Connection {
         socket.destroy()
         reject(e)
       }
-      const timer = setTimeout(() => fail(new HostError(`The Pitwall host isn't answering (${path}).`)), CONNECT_TIMEOUT_MS)
-      const onConnect = (): void => { socket.write(encodeJson({ t: 'hello', protocol: PROTOCOL, appVersion })) }
+      const refused = (pid: number, why: string): Error => new HostError(
+        `Something answering as Pitwall's background host at ${o.path} (pid ${pid}) couldn't prove it is one (${why}), ` +
+        `so Pitwall sent it nothing and won't use it. If that process is an old Pitwall host, end it (pid ${pid}) and reopen Pitwall.`
+      )
+      const timer = setTimeout(() => fail(new HostError(`The Pitwall host isn't answering (${o.path}).`)), o.connectTimeoutMs)
+      const onConnect = (): void => { socket.write(encodeJson({ t: 'hello', protocol: PROTOCOL, appVersion: o.appVersion, nonce })) }
       const onError = (e: NodeJS.ErrnoException): void => {
-        const noHost = e.code === 'ENOENT' || e.code === 'ECONNREFUSED'
-        fail(noHost ? Object.assign(new Error('no host'), { noHost: true }) : new HostError(`Couldn't reach the Pitwall host: ${e.message}`))
+        if (hostPid === null && (e.code === 'ENOENT' || e.code === 'ECONNREFUSED')) return fail(noHost())
+        fail(new HostError(`Couldn't reach the Pitwall host: ${e.message}`))
       }
-      const onClose = (): void => fail(Object.assign(new Error('no host'), { noHost: true }))
+      const onClose = (): void => {
+        fail(hostPid === null ? noHost() : new HostError(`The Pitwall host (pid ${hostPid}) refused this app. See ${hostLogFile(o.dataDir)}.`))
+      }
+      const unreadable = (e: unknown): void => fail(new HostError(`The Pitwall host sent something unreadable: ${(e as Error).message}`))
       const onData = (chunk: Buffer): void => {
         let frames: Frame[]
         try {
           frames = decoder.push(chunk)
         } catch (e) {
-          return fail(new HostError(`The Pitwall host sent something unreadable: ${(e as Error).message}`))
+          return unreadable(e)
         }
-        if (frames.length === 0) return
-        const [first, ...rest] = frames
-        let hello: HostMessage
-        try {
-          if (first.type !== 'json') throw new Error('expected hello')
-          hello = parseHostMessage(first.msg)
-          if (hello.t !== 'hello') throw new Error('expected hello')
-        } catch (e) {
-          return fail(new HostError(`The Pitwall host sent something unreadable: ${(e as Error).message}`))
+        while (frames.length > 0 && !settled) {
+          const f = frames.shift()!
+          let m: HostMessage
+          try {
+            if (f.type !== 'json') throw new Error('data before the handshake')
+            m = parseHostMessage(f.msg)
+          } catch (e) {
+            return unreadable(e)
+          }
+          if (hostPid === null) {
+            if (m.t !== 'hello') return unreadable(new Error(`${m.t} before hello`))
+            if (m.protocol !== PROTOCOL || m.error) {
+              return fail(new HostError(
+                `Pitwall's background host (pid ${m.pid}, from Pitwall ${m.appVersion}) speaks protocol ${m.protocol}; ` +
+                `this Pitwall speaks protocol ${PROTOCOL}, so it can't use it. Its agents are still running in it. ` +
+                `To switch, quit Pitwall, end that host (pid ${m.pid}) and reopen Pitwall: each agent restarts and resumes its conversation.`
+              ))
+            }
+            hostPid = m.pid
+            let key: Buffer
+            try {
+              key = readHostKey(o.dataDir, o.platform)
+            } catch (e) {
+              return fail(refused(m.pid, e instanceof HostKeyError ? e.message : `couldn't read the host key: ${(e as Error).message}`))
+            }
+            if (!m.nonce || !checkProof(key, 'host', nonce, m.proof)) return fail(refused(m.pid, "its proof doesn't match the host key"))
+            socket.write(encodeJson({ t: 'auth', proof: proofFor(key, 'app', m.nonce) }))
+            continue
+          }
+          if (m.t !== 'ready') return unreadable(new Error(`${m.t} before ready`))
+          settled = true
+          clearTimeout(timer)
+          socket.off('connect', onConnect).off('error', onError).off('close', onClose).off('data', onData)
+          const c = new Connection(socket, hostPid, o.requestTimeoutMs)
+          c.decoder = decoder
+          c.listen()
+          resolve(c)
+          for (const rest of frames) c.onFrame(rest)
+          return
         }
-        if (hello.protocol !== PROTOCOL || hello.error) {
-          return fail(new HostError(
-            `Pitwall's background host (pid ${hello.pid}, from Pitwall ${hello.appVersion}) speaks protocol ${hello.protocol}; ` +
-            `this Pitwall speaks protocol ${PROTOCOL}, so it can't use it. Its agents are still running in it. ` +
-            `To switch, quit Pitwall, end that host (kill ${hello.pid}) and reopen Pitwall: each agent restarts and resumes its conversation.`
-          ))
-        }
-        settled = true
-        clearTimeout(timer)
-        socket.off('connect', onConnect).off('error', onError).off('close', onClose).off('data', onData)
-        const c = new Connection(socket, hello.pid, requestTimeoutMs)
-        c.decoder = decoder
-        c.listen()
-        resolve(c)
-        for (const f of rest) c.onFrame(f)
       }
       socket.once('connect', onConnect).on('error', onError).on('close', onClose).on('data', onData)
     })
@@ -385,7 +424,10 @@ export class HostBackend implements SessionBackend {
 
   private async tryConnect(): Promise<Connection | null> {
     try {
-      const c = await Connection.open(this.socketPath, this.o.appVersion, this.requestTimeoutMs)
+      const c = await Connection.open({
+        path: this.socketPath, dataDir: this.o.dataDir, platform: this.o.platform ?? process.platform,
+        appVersion: this.o.appVersion, connectTimeoutMs: this.o.connectTimeoutMs ?? 5000, requestTimeoutMs: this.requestTimeoutMs
+      })
       this.conn = c
       c.onClose(() => { if (this.conn === c) this.conn = null })
       return c

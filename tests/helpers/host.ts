@@ -2,8 +2,12 @@ import { execFile } from 'node:child_process'
 import { mkdtemp, realpath } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import * as net from 'node:net'
 import { promisify } from 'node:util'
-import { inject } from 'vitest'
+import { expect, inject } from 'vitest'
+import { checkProof, newNonce, proofFor, readHostKey } from '../../src/host/auth'
+import { hostSocketPath } from '../../src/host/paths'
+import { encodeJson, FrameDecoder, PROTOCOL, type Frame } from '../../src/host/protocol'
 import { HostBackend, type HostLaunch } from '../../src/main/host-backend'
 import { waitFor } from './wait'
 
@@ -57,4 +61,39 @@ export function alive(pid: number): boolean {
   } catch {
     return false
   }
+}
+
+export interface RawClient {
+  s: net.Socket
+  /** Frames after the handshake (or every frame, without one). */
+  frames: Frame[]
+  closed(): boolean
+}
+
+/**
+ * A raw protocol client, for what the app never does. With `handshake` (the default) it proves it knows the host key
+ * first, as the app does.
+ */
+export async function rawClient(dataDir: string, o: { handshake?: boolean } = {}): Promise<RawClient> {
+  const s = net.connect(hostSocketPath(dataDir))
+  const frames: Frame[] = []
+  const d = new FrameDecoder()
+  let closed = false
+  s.on('data', (c: Buffer) => { try { frames.push(...d.push(c)) } catch { /* ignore */ } })
+  s.on('close', () => { closed = true })
+  s.on('error', () => {})
+  await new Promise<void>((r) => s.once('connect', () => r()))
+  const c: RawClient = { s, frames, closed: () => closed }
+  if (o.handshake === false) return c
+  const nonce = newNonce()
+  s.write(encodeJson({ t: 'hello', protocol: PROTOCOL, appVersion: 'raw', nonce }))
+  const hello = (await waitFor(async () => frames[0], 5000, 'host hello')) as Frame & { type: 'json' }
+  const m = hello.msg as { nonce: string; proof: string }
+  const key = readHostKey(dataDir)
+  if (!checkProof(key, 'host', nonce, m.proof)) throw new Error("the host's proof doesn't match")
+  s.write(encodeJson({ t: 'auth', proof: proofFor(key, 'app', m.nonce) }))
+  await waitFor(async () => frames.length === 2, 5000, 'ready')
+  expect(frames[1]).toMatchObject({ type: 'json', msg: { t: 'ready' } })
+  frames.length = 0
+  return c
 }
