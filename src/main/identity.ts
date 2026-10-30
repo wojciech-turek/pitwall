@@ -56,13 +56,23 @@ export async function listGhAccounts(ghBin: string, exec: Exec, env: Record<stri
   }
 }
 
+/** Env vars gh reads a token from before its own store; inherited ones must never stand in for a project's account. */
+export const INHERITED_GH_TOKENS = ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN']
+
+export function withoutGhTokens(env: Record<string, string>): Record<string, string> {
+  const out = { ...env }
+  for (const k of INHERITED_GH_TOKENS) delete out[k]
+  return out
+}
+
 export async function getGhToken(
   ghBin: string,
   account: string,
   exec: Exec,
   env: Record<string, string>
 ): Promise<string | null> {
-  const r = await exec(ghBin, ['auth', 'token', '--hostname', 'github.com', '--user', account], { env })
+  // An inherited token env var would make gh print that token instead of the account's own.
+  const r = await exec(ghBin, ['auth', 'token', '--hostname', 'github.com', '--user', account], { env: withoutGhTokens(env) })
   if (r.code !== 0) return null
   const token = r.stdout.trim()
   return token || null

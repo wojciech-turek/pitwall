@@ -13,6 +13,11 @@ All notable changes to Pitwall are listed here, newest first. Pitwall shows thes
 - **Teardown command** per folder, next to the setup command, for example `docker compose down`. It runs when you archive a session, before the worktree is deleted. If it fails, you can cancel or archive anyway.
 - **Archiving cleans up after the agent.** Processes a session left running, such as a dev server started in the background, are stopped when you archive it.
 
+### Fixed
+
+- Quitting right after a terminal opened could leave Pitwall unable to finish quitting.
+- A GitHub token set in your shell environment (`GITHUB_TOKEN`, `GH_TOKEN`) could stand in for a project's own GitHub account. Now only the project's account is used, and `gh` runs signed out if its token can't be found.
+
 ## [0.1.0] - 2026-10-30
 
 First public release.

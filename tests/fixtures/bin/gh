@@ -4,6 +4,7 @@ if [ -n "$STUB_GH_LOG" ]; then
   {
     echo "$*"
     if [ -n "$GH_TOKEN" ]; then echo "GH_TOKEN=set"; else echo "GH_TOKEN=unset"; fi
+    if [ -n "$GITHUB_TOKEN" ]; then echo "GITHUB_TOKEN=set"; else echo "GITHUB_TOKEN=unset"; fi
   } >> "$STUB_GH_LOG"
 fi
 case "$1 $2" in

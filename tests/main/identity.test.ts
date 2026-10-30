@@ -53,6 +53,14 @@ describe('identity', () => {
     expect(lines.some((l) => l.includes('switch'))).toBe(false)
   })
 
+  test('getGhToken ignores inherited token env vars', async () => {
+    const log = join(await tmp(), 'gh.log')
+    await getGhToken(gh, 'dev-work', exec, { STUB_GH_LOG: log, GH_TOKEN: 'inherited', GITHUB_TOKEN: 'inherited' })
+    const out = await readFile(log, 'utf8')
+    expect(out).toContain('GH_TOKEN=unset')
+    expect(out).toContain('GITHUB_TOKEN=unset')
+  })
+
   test('shellQuote', () => expect(shellQuote("it's $HOME")).toBe(`'it'"'"'s $HOME'`))
 
   test('buildSshCommand expands ~ and quotes', () =>

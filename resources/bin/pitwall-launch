@@ -7,6 +7,8 @@ dir="$1"
 load_identity() {
   . "$dir/env.sh"
   if [ -n "$PITWALL_GH_ACCOUNT" ]; then
+    # Only the project's own token may reach gh: inherited ones would win over it, even in `gh auth token`.
+    unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN
     GH_TOKEN=$("${PITWALL_GH_BIN:-gh}" auth token --hostname github.com --user "$PITWALL_GH_ACCOUNT" 2>/dev/null)
     if [ -n "$GH_TOKEN" ]; then
       export GH_TOKEN
