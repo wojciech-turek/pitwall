@@ -10,13 +10,13 @@ export interface Notifier {
 
 /**
  * Notifications and the waiting count: the Dock badge on macOS, an overlay badge on the taskbar button on Windows
- * (which also flashes when a session needs you). `disabled` (PITWALL_DISABLE_NOTIFICATIONS) silences notifications
- * only. `refresh()` puts the badge on a new window.
+ * (which also flashes when a session needs you, unless `quiet`: tests). `disabled` (PITWALL_DISABLE_NOTIFICATIONS)
+ * silences notifications only. `refresh()` puts the badge on a new window.
  */
 export function electronNotifier(
   onClick: (sessionId: string) => void,
   disabled: boolean,
-  o: { platform?: NodeJS.Platform; window?: () => BrowserWindow | null } = {}
+  o: { platform?: NodeJS.Platform; window?: () => BrowserWindow | null; quiet?: boolean } = {}
 ): Notifier & { refresh(): void } {
   const platform = o.platform ?? process.platform
   const window = (): BrowserWindow | null => {
@@ -55,7 +55,7 @@ export function electronNotifier(
       showBadge()
     },
     attention() {
-      if (platform !== 'win32') return
+      if (platform !== 'win32' || o.quiet) return // quiet: tests never draw the eye
       const w = window()
       if (w && !w.isFocused()) w.flashFrame(true)
     },

@@ -32,6 +32,15 @@ import { APP_VERSION } from '@shared/version'
 const DEV = !app.isPackaged
 app.setName(DEV ? 'Pitwall Dev' : 'Pitwall')
 const WINDOWS = process.platform === 'win32'
+// Tests (PITWALL_SHOW_INACTIVE=1, set for every e2e launch): the app never takes the keyboard or shows up while
+// someone works at the machine. macOS: no Dock icon, never the active app; its window is invisible and lets clicks
+// through (tests drive it over the DevTools protocol, which needs neither).
+const QUIET = process.env.PITWALL_SHOW_INACTIVE === '1'
+const keepInBackground = (): void => {
+  if (!QUIET || process.platform !== 'darwin') return
+  try { app.setActivationPolicy('accessory') } catch { /* not yet allowed: whenReady sets it again */ }
+}
+keepInBackground()
 // Windows ties notifications and the taskbar button to this id; it must be set before any notification.
 if (WINDOWS) app.setAppUserModelId(appUserModelId(DEV))
 // A dev build keeps its own data, tmux socket and worktrees (see resolvePaths).
@@ -69,19 +78,23 @@ function createWindow(): void {
     title: DEV ? 'Pitwall Dev' : 'Pitwall',
     backgroundColor: '#171615',
     show: false,
+    // Tests: invisible, but still painting (screenshots) and running timers as if it were in front.
+    ...(QUIET ? { opacity: 0 } : {}),
     webPreferences: {
       preload: join(import.meta.dirname, '../preload/index.cjs'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      ...(QUIET ? { backgroundThrottling: false } : {})
     }
   })
+  if (QUIET) w.setIgnoreMouseEvents(true)
   win = w
   winLoaded = false
   // The page's <title> must not override the window title.
   w.on('page-title-updated', (e) => e.preventDefault())
   // Tests open windows without taking the keyboard, so typing elsewhere during a run can't reach them.
   w.once('ready-to-show', () => {
-    if (process.env.PITWALL_SHOW_INACTIVE === '1') w.showInactive()
+    if (QUIET) w.showInactive()
     else w.show()
     refreshBadge?.() // Windows: the waiting count is an overlay on this window's taskbar button
   })
@@ -135,6 +148,10 @@ function createWindow(): void {
 function showAndFocus(): void {
   if (!win) createWindow()
   if (!win) return
+  if (QUIET) { // tests: never in front, never the keyboard
+    if (!win.isVisible()) win.showInactive()
+    return
+  }
   if (win.isMinimized()) win.restore()
   win.show()
   win.focus()
@@ -174,7 +191,7 @@ async function bootstrap(): Promise<void> {
   const store = await Store.open(paths.stateFile)
   const git = new GitClient(exec, env)
   const backend = createBackend(env)
-  const notifier = electronNotifier(focusSession, paths.notificationsDisabled, { window: () => win })
+  const notifier = electronNotifier(focusSession, paths.notificationsDisabled, { window: () => win, quiet: QUIET })
   refreshBadge = () => notifier.refresh()
   const mutex = new KeyedMutex()
   const mgr = new SessionManager({ store, paths, git, backend, exec, env, home, mutex, notifier })
@@ -253,8 +270,9 @@ if (!isPrimaryInstance) {
   })
 
   void app.whenReady().then(async () => {
-    // The packaged app gets its icon from the bundle; a dev run would show Electron's.
-    if (!app.isPackaged) {
+    keepInBackground()
+    // The packaged app gets its icon from the bundle; a dev run would show Electron's (tests show none).
+    if (!app.isPackaged && !QUIET) {
       try { app.dock?.setIcon(join(resourcesDir(), 'icon-dev.png')) } catch { /* cosmetic */ }
     }
     try {
