@@ -1,24 +1,45 @@
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
+import { windowsShellCommand } from '../../host/win-command'
+import { taskkillArgs } from './leftovers'
 
 export const TEARDOWN_LIMIT_MS = 120_000
 const KEEP_BYTES = 4096
 
 export interface TeardownResult { exitCode: number | null; timedOut: boolean; output: string }
 
+/** How the teardown command starts. Pure, for tests. */
+export function teardownSpawn(
+  command: string, env: Record<string, string>, platform: NodeJS.Platform
+): { file: string; args: string[]; verbatim: boolean; detached: boolean } {
+  if (platform === 'win32') {
+    // cmd.exe, as Node's `shell: true` runs a command. No process groups there: on timeout the tree is killed by pid.
+    const c = windowsShellCommand(command, env)
+    return { file: c.file, args: c.args, verbatim: true, detached: false }
+  }
+  return { file: '/bin/sh', args: ['-c', command], verbatim: false, detached: true }
+}
+
+const killTree = (pid: number): void => {
+  execFile('taskkill', taskkillArgs(pid), { windowsHide: true, timeout: 10_000 }, () => { /* already gone */ })
+}
+
 /**
- * Runs a shell command in its own process group. Keeps only the last 4 KB of combined output.
- * On timeout the whole group is killed. Resolves as soon as the shell exits or the limit hits, even if a
- * background child still holds the output pipes.
+ * Runs a shell command (sh; cmd.exe on Windows) in its own process group. Keeps only the last 4 KB of combined
+ * output. On timeout the whole group (Windows: the process tree) is killed. Resolves as soon as the shell exits or the
+ * limit hits, even if a background child still holds the output pipes.
  */
 export function runTeardown(
   command: string,
-  o: { cwd: string; env: Record<string, string>; timeoutMs?: number }
+  o: { cwd: string; env: Record<string, string>; timeoutMs?: number; platform?: NodeJS.Platform }
 ): Promise<TeardownResult> {
   return new Promise((resolve) => {
     let tail = Buffer.alloc(0)
     let settled = false
-    const child = spawn('/bin/sh', ['-c', command], {
-      cwd: o.cwd, env: o.env, detached: true, stdio: ['ignore', 'pipe', 'pipe']
+    const platform = o.platform ?? process.platform
+    const plan = teardownSpawn(command, o.env, platform)
+    const child = spawn(plan.file, plan.args, {
+      cwd: o.cwd, env: o.env, detached: plan.detached, stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true, windowsVerbatimArguments: plan.verbatim
     })
     const take = (b: Buffer): void => {
       tail = Buffer.concat([tail, b])
@@ -36,7 +57,9 @@ export function runTeardown(
       resolve({ ...r, output })
     }
     const killGroup = (): void => {
-      try { if (child.pid) process.kill(-child.pid, 'SIGKILL') } catch { /* already gone */ }
+      if (!child.pid) return
+      if (platform === 'win32') return killTree(child.pid)
+      try { process.kill(-child.pid, 'SIGKILL') } catch { /* already gone */ }
     }
     const timer = setTimeout(() => {
       killGroup()

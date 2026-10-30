@@ -27,6 +27,8 @@ export interface StarterDeps {
   env: Record<string, string>
   home: string
   mutex: KeyedMutex
+  /** Default: this machine's. Tests pass 'win32' to check what Windows gets. */
+  platform?: NodeJS.Platform
 }
 
 export class StepError extends Error {
@@ -106,11 +108,14 @@ export async function writeSessionFiles(session: Session, deps: StarterDeps): Pr
     ghBin: deps.paths.ghBin,
     setupCommand: sp.setupCommand,
     userStatusLine: await findUserStatusLine(session.cwd, claudeConfigDir(project, deps.home, deps.env)),
-    home: deps.home
+    home: deps.home,
+    platform: deps.platform
   })
   await mkdir(dir, { recursive: true })
   // Atomic: a relaunching launcher may be sourcing env.sh while a project edit rewrites it.
   await writeFileAtomic(join(dir, 'env.sh'), renderEnvFile(env), 0o600)
+  // The same for the host's launcher (Windows), which reads JSON, not sh.
+  await writeFileAtomic(join(dir, 'env.json'), JSON.stringify(env, null, 2) + '\n', 0o600)
   const hook = hookCommandFor(join(deps.paths.binDir, 'pitwall-hook'), events, session.id)
   const statusLine = statusLineCommandFor(join(deps.paths.binDir, 'pitwall-statusline'), dir)
   // Atomic: a running Claude or the launcher may read these at any moment.

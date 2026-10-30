@@ -393,6 +393,30 @@ describe('archive', () => {
     })
   })
 
+  test('Windows: each pane\'s process tree is ended (taskkill) while the panes still exist, before the kill; no ps', async () => {
+    const { sp, deps } = await addRepo()
+    const s = await startOne(sp)
+    await manager.ensureTerminalTarget(s.id, 'shell')
+    const roots = [await t.backend.processRoots(claudeTmuxName(s.id)), await t.backend.processRoots(shellTmuxName(s.id))]
+    const order: string[] = []
+    const real = deps.backend.killSession.bind(deps.backend)
+    deps.backend = Object.assign(Object.create(deps.backend), {
+      killSession: async (n: string) => { order.push(`kill ${n}`); return real(n) }
+    })
+    deps.platform = 'win32'
+    deps.taskkill = async (file, args) => {
+      const pid = Number(args.at(-1))
+      // The session is still there: its pane's children still name it as their parent.
+      order.push(`${file} ${args.slice(0, 3).join(' ')} ${pid} ${await t.backend.hasSession(claudeTmuxName(s.id))}`)
+    }
+    expect(await archiveSession(s.id, { confirmedDataLoss: false }, deps)).toEqual({ ok: true })
+    const panes = roots.flatMap((r) => r.panePids)
+    expect(panes).toHaveLength(2)
+    expect(order).toEqual([
+      ...panes.map((p) => `taskkill /T /F /PID ${p} true`), `kill ${claudeTmuxName(s.id)}`, `kill ${shellTmuxName(s.id)}`
+    ])
+  })
+
   test('archiving stops processes the session left running, and only those', async () => {
     const { sp, deps } = await addRepo()
     const s = await startOne(sp)

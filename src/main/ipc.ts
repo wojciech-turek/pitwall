@@ -11,6 +11,7 @@ import { claudeTmuxName } from './tmux'
 import type { SessionHistory } from './history'
 import { listGhAccounts, listSshKeys } from './identity'
 import type { AppPaths } from './paths'
+import { openInCursorCommand } from './platform'
 import type { ProjectService } from './projects'
 import type { PtyBridge } from './pty-bridge'
 import { archiveSession, checkArchive } from './sessions/archive'
@@ -114,7 +115,8 @@ export function registerIpc(d: IpcDeps): () => void {
   handle(IPC.openInCursor, async (id: string) => {
     const { cwd } = sessionFolder(id)
     try {
-      const r = await exec('open', ['-a', 'Cursor', cwd], { env })
+      const c = openInCursorCommand(cwd, process.platform)
+      const r = await exec(c.file, c.args, { env })
       return r.code === 0 ? { ok: true } : { ok: false, message: "Cursor isn't installed." }
     } catch {
       return { ok: false, message: "Cursor isn't installed." }

@@ -1,12 +1,13 @@
 import { access, mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { ArchiveCheck, ArchiveResult, Session, SubProject } from '@shared/types'
+import { deleteEnv, mergeEnv } from '../../host/win-command'
 import { buildSessionEnv, getGhToken, INHERITED_GH_TOKENS, withoutGhTokens } from '../identity'
 import { eventsFile, sessionDir } from '../paths'
 import type { PtyBridge } from '../pty-bridge'
 import { claudeTmuxName, shellTmuxName } from '../tmux'
 import type { SessionManager } from './manager'
-import { snapshotLeftovers, stopLeftovers } from './leftovers'
+import { killPaneTrees, snapshotLeftovers, stopLeftovers, type Leftovers, type RunFn } from './leftovers'
 import { runTeardown } from './teardown'
 import { launchTmuxFor, writeSessionFiles, type StarterDeps } from './starter'
 
@@ -17,6 +18,8 @@ export interface ArchiveDeps extends StarterDeps {
   ptyBridge: PtyBridge
   /** Teardown time limit; default 2 minutes. */
   teardownTimeoutMs?: number
+  /** Windows: runs `taskkill` (a test seam). */
+  taskkill?: RunFn
 }
 
 const msg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
@@ -43,7 +46,7 @@ async function applyGhAccount(env: Record<string, string>, account: string, dir:
     env.GH_TOKEN = token
     return
   }
-  for (const k of INHERITED_GH_TOKENS) delete env[k] // fail closed: no token of any kind
+  for (const k of INHERITED_GH_TOKENS) deleteEnv(env, k, deps.platform ?? process.platform) // fail closed: no token of any kind
   env.GH_CONFIG_DIR = join(dir, 'gh-unauthenticated')
   await mkdir(env.GH_CONFIG_DIR, { recursive: true })
 }
@@ -119,7 +122,11 @@ export async function archiveSession(
       await deps.backend.processRoots(shellTmuxName(s.id))
     ]
     const serverPid = panes.find((p) => p.serverPid)?.serverPid ?? null
-    const leftovers = await snapshotLeftovers(panes.flatMap((p) => p.panePids), serverPid)
+    const platform = deps.platform ?? process.platform
+    let leftovers: Leftovers = new Map()
+    // Windows has no ps to snapshot with: what the panes started is ended now, while the panes still exist.
+    if (platform === 'win32') await killPaneTrees(panes.flatMap((p) => p.panePids), serverPid, { run: deps.taskkill })
+    else leftovers = await snapshotLeftovers(panes.flatMap((p) => p.panePids), serverPid)
     deps.ptyBridge.close(s.id, 'claude')
     deps.ptyBridge.close(s.id, 'shell')
     terminalsClosed = true
@@ -131,21 +138,24 @@ export async function archiveSession(
       const project = deps.store.state.projects.find((p) => p.id === sp.projectId)
       if (project) {
         const dir = sessionDir(deps.paths, s.id)
-        const env: Record<string, string> = {
+        const env = mergeEnv(
           // With a project account, tokens inherited from the user's shell must not stand in for it; the
           // project's own extra variables (merged next) are kept.
-          ...(project.identity.ghAccount ? withoutGhTokens(deps.env) : deps.env),
-          ...buildSessionEnv({
-            project, session: s, rootPath: sp.repoRoot ?? sp.path, sessionDir: dir,
-            eventsFile: eventsFile(deps.paths, s.id), claudeBin: deps.paths.claudeBin, ghBin: deps.paths.ghBin,
-            home: deps.home
-          }),
-          PITWALL_WORKTREE_PATH: s.worktreePath ?? s.cwd,
-          PITWALL_BRANCH: s.branch ?? '',
-          PITWALL_SESSION_TITLE: s.title
-        }
+          project.identity.ghAccount ? withoutGhTokens(deps.env, platform) : deps.env,
+          {
+            ...buildSessionEnv({
+              project, session: s, rootPath: sp.repoRoot ?? sp.path, sessionDir: dir,
+              eventsFile: eventsFile(deps.paths, s.id), claudeBin: deps.paths.claudeBin, ghBin: deps.paths.ghBin,
+              home: deps.home, platform
+            }),
+            PITWALL_WORKTREE_PATH: s.worktreePath ?? s.cwd,
+            PITWALL_BRANCH: s.branch ?? '',
+            PITWALL_SESSION_TITLE: s.title
+          },
+          platform
+        )
         await applyGhAccount(env, project.identity.ghAccount, dir, deps)
-        const r = await runTeardown(sp.teardownCommand, { cwd: s.cwd, env, timeoutMs: deps.teardownTimeoutMs })
+        const r = await runTeardown(sp.teardownCommand, { cwd: s.cwd, env, timeoutMs: deps.teardownTimeoutMs, platform })
         if (r.timedOut || r.exitCode !== 0) {
           await stopLeftovers(leftovers)
           reattachable()

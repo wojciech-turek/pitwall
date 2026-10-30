@@ -41,7 +41,10 @@ export interface SessionBackend {
 
 export type BackendKind = 'tmux' | 'host'
 
-/** tmux unless PITWALL_SESSION_BACKEND=host picks the Pitwall host (src/host). */
-export function sessionBackendKind(env: Record<string, string | undefined>): BackendKind {
+/** tmux unless PITWALL_SESSION_BACKEND=host picks the Pitwall host (src/host). Windows has no tmux: always the host. */
+export function sessionBackendKind(
+  env: Record<string, string | undefined>, platform: NodeJS.Platform = process.platform
+): BackendKind {
+  if (platform === 'win32') return 'host'
   return env.PITWALL_SESSION_BACKEND === 'host' ? 'host' : 'tmux'
 }

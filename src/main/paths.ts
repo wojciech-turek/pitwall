@@ -1,5 +1,5 @@
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { posix, win32 } from 'node:path'
 
 export interface AppPaths {
   dataDir: string
@@ -23,14 +23,18 @@ export interface AppPaths {
 /**
  * `dev`: an unpackaged build (pnpm dev, tests) gets its own data dir, tmux socket and worktrees, so it never shares
  * state or agents with the installed app. Explicit PITWALL_* overrides win either way.
+ * Windows: data in %APPDATA%\pitwall, worktrees in %USERPROFILE%\pitwall\worktrees (`home` is %USERPROFILE%).
  */
 export function resolvePaths(
   env: NodeJS.ProcessEnv = process.env,
   home: string = homedir(),
-  o: { dev?: boolean } = {}
+  o: { dev?: boolean; platform?: NodeJS.Platform } = {}
 ): AppPaths {
   const suffix = o.dev ? '-dev' : ''
-  const dataDir = env.PITWALL_DATA_DIR || join(home, 'Library', 'Application Support', `pitwall${suffix}`)
+  const windows = (o.platform ?? process.platform) === 'win32'
+  const join = windows ? win32.join : posix.join
+  const appData = windows ? env.APPDATA || join(home, 'AppData', 'Roaming') : join(home, 'Library', 'Application Support')
+  const dataDir = env.PITWALL_DATA_DIR || join(appData, `pitwall${suffix}`)
   return {
     dataDir,
     stateFile: join(dataDir, 'state.json'),

@@ -99,6 +99,13 @@ describe('startSession', () => {
     const envFile = join(sessionDir(t.paths, s.id), 'env.sh')
     expect((await stat(envFile)).mode & 0o777).toBe(0o600)
     expect(await readFile(envFile, 'utf8')).not.toContain('token-for')
+    // The same variables as JSON, for the host's launcher (Windows): owner-only, no token either.
+    const envJson = join(sessionDir(t.paths, s.id), 'env.json')
+    expect((await stat(envJson)).mode & 0o777).toBe(0o600)
+    const vars = JSON.parse(await readFile(envJson, 'utf8')) as Record<string, string>
+    expect(vars).toMatchObject({ PITWALL_SESSION_ID: s.id, GIT_AUTHOR_EMAIL: expect.any(String), PITWALL_GH_ACCOUNT: expect.any(String) })
+    expect(JSON.stringify(vars)).not.toContain('token-for')
+    expect(await readFile(envFile, 'utf8')).toContain(`export PITWALL_SESSION_ID='${s.id}'`)
     const steps = ['identity', 'worktree', 'files', 'tmux', 'claude']
     expect(progress.map((p) => `${p.step}:${p.state}`)).toEqual(steps.flatMap((x) => [`${x}:running`, `${x}:done`]))
     expect(progress.at(-1)?.message).toBe('Started — answer any prompt in the terminal')

@@ -1,6 +1,7 @@
 import { readdir, open } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, posix, win32 } from 'node:path'
 import type { Exec } from './exec'
+import { deleteEnv } from '../host/win-command'
 import type { GhAccount, GitIdentity, Project, RepoIdentity, Session } from '@shared/types'
 
 export type { GhAccount, RepoIdentity }
@@ -59,9 +60,10 @@ export async function listGhAccounts(ghBin: string, exec: Exec, env: Record<stri
 /** Env vars gh reads a token from before its own store; inherited ones must never stand in for a project's account. */
 export const INHERITED_GH_TOKENS = ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN']
 
-export function withoutGhTokens(env: Record<string, string>): Record<string, string> {
+/** `env` without the inherited token variables (on Windows, whatever their case: gh reads them that way there). */
+export function withoutGhTokens(env: Record<string, string>, platform: NodeJS.Platform = process.platform): Record<string, string> {
   const out = { ...env }
-  for (const k of INHERITED_GH_TOKENS) delete out[k]
+  for (const k of INHERITED_GH_TOKENS) deleteEnv(out, k, platform)
   return out
 }
 
@@ -82,13 +84,23 @@ export function shellQuote(s: string): string {
   return `'${s.replace(/'/g, `'"'"'`)}'`
 }
 
-function expandHome(p: string, home: string): string {
+function expandHome(p: string, home: string, platform: NodeJS.Platform = process.platform): string {
   if (p === '~') return home
-  return p.startsWith('~/') ? join(home, p.slice(2)) : p
+  if (platform === 'win32') return /^~[\\/]/.test(p) ? win32.join(home, p.slice(2)) : p
+  return p.startsWith('~/') ? posix.join(home, p.slice(2)) : p
 }
 
-export function buildSshCommand(keyPath: string, home = process.env.HOME ?? ''): string {
-  return `ssh -i ${shellQuote(expandHome(keyPath, home))} -o IdentitiesOnly=yes`
+/**
+ * Git runs GIT_SSH_COMMAND (and core.sshCommand) through its shell. On Windows that is Git for Windows' sh, and the
+ * key path is written with forward slashes in double quotes (`ssh -i "C:/Users/me/.ssh/id" …`), which every ssh
+ * there (Git's own, Windows OpenSSH) reads, spaces and non-ASCII names included.
+ */
+export function buildSshCommand(keyPath: string, home = process.env.HOME ?? '', platform: NodeJS.Platform = process.platform): string {
+  const key = expandHome(keyPath, home, platform)
+  if (platform === 'win32') {
+    return `ssh -i "${key.replace(/\\/g, '/').replace(/["$`\\]/g, '\\$&')}" -o IdentitiesOnly=yes`
+  }
+  return `ssh -i ${shellQuote(key)} -o IdentitiesOnly=yes`
 }
 
 /** Why a project's extra environment variable name can't be used, or null if it can. */
@@ -111,17 +123,21 @@ export function buildSessionEnv(input: {
   setupCommand?: string
   /** The user's own status line command, run by pitwall-statusline. */
   userStatusLine?: string
+  /** Windows: Git Bash, which runs the user's status line as Claude Code would (else PowerShell does). */
+  gitBash?: string
   home: string
+  platform?: NodeJS.Platform
 }): Record<string, string> {
   const { project, session, home } = input
+  const platform = input.platform ?? process.platform
   const id = project.identity
   const env: Record<string, string> = {}
   for (const { key, value } of project.extraEnv) {
     const error = envVarNameError(key)
     if (error) throw new Error(error)
-    env[key] = expandHome(value, home) // env.sh single-quotes values, so the shell would never expand ~ itself
+    env[key] = expandHome(value, home, platform) // env.sh single-quotes values, so the shell would never expand ~ itself
   }
-  if (id.sshKeyPath) env.GIT_SSH_COMMAND = buildSshCommand(id.sshKeyPath, home)
+  if (id.sshKeyPath) env.GIT_SSH_COMMAND = buildSshCommand(id.sshKeyPath, home, platform)
   Object.assign(env, {
     GIT_AUTHOR_NAME: id.gitName,
     GIT_AUTHOR_EMAIL: id.gitEmail,
@@ -138,6 +154,7 @@ export function buildSessionEnv(input: {
   })
   if (input.setupCommand) env.PITWALL_SETUP_COMMAND = input.setupCommand
   if (input.userStatusLine) env.PITWALL_USER_STATUSLINE = input.userStatusLine
+  if (input.userStatusLine && input.gitBash) env.PITWALL_GIT_BASH = input.gitBash
   return env
 }
 

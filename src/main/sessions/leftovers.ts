@@ -97,6 +97,7 @@ function signal(pids: number[], sig: NodeJS.Signals, kill: KillFn): void {
 export async function stopLeftovers(
   snap: Leftovers, o: { graceMs?: number; ps?: PsFn; kill?: KillFn } = {}
 ): Promise<void> {
+  if (snap.size === 0) return
   const ps = o.ps ?? defaultPs
   const kill = o.kill ?? defaultKill
   let alive = await stillThere(snap, ps)
@@ -110,4 +111,31 @@ export async function stopLeftovers(
   }
   alive = await stillThere(new Map(alive.map((p) => [p, snap.get(p)!])), ps)
   signal(alive, 'SIGKILL', kill)
+}
+
+/** Windows: ends a process and everything it started. */
+export function taskkillArgs(pid: number): string[] {
+  return ['/T', '/F', '/PID', String(pid)]
+}
+
+export type RunFn = (file: string, args: string[]) => Promise<unknown>
+
+const defaultRun: RunFn = (file, args) => run(file, args, { windowsHide: true, timeout: 10_000 })
+
+/**
+ * Windows (no `ps`): ends each pane's whole process tree with `taskkill /T /F`. Call it while the session still runs,
+ * before it is killed: the host then still holds each pane's process, so its pid can't have been reused, and its
+ * children still name it as their parent (once it is gone, taskkill can't find them). Only panes of the host
+ * (`serverPid`) count; never the host, Pitwall or a system process. Best effort: never throws.
+ */
+export async function killPaneTrees(panePids: number[], serverPid: number | null, o: { run?: RunFn } = {}): Promise<void> {
+  if (!serverPid) return
+  for (const pid of new Set(panePids)) {
+    if (!safePid(pid) || pid === serverPid || pid <= 4) continue
+    try {
+      await (o.run ?? defaultRun)('taskkill', taskkillArgs(pid))
+    } catch {
+      // already gone
+    }
+  }
 }
