@@ -4,8 +4,8 @@ import { mkdir, rm } from 'node:fs/promises'
 import * as net from 'node:net'
 import { afterEach, beforeEach, expect, test } from 'vitest'
 import { checkProof, newNonce, proofFor, writeHostKey } from '../../src/host/auth'
-import { hostKeyFile, hostSocketPath } from '../../src/host/paths'
-import { encodeJson, FrameDecoder, PROTOCOL } from '../../src/host/protocol'
+import { hostKeyFile, hostLogFile, hostSocketPath } from '../../src/host/paths'
+import { DATA_CHUNK, encodeData, encodeJson, FrameDecoder, PROTOCOL } from '../../src/host/protocol'
 import { sessionBackendKind } from '../../src/main/backend'
 import { HostBackend } from '../../src/main/host-backend'
 import { makeHostDirs } from '../helpers/host'
@@ -95,6 +95,12 @@ test("a request the host leaves unanswered when it says goodbye is sent to the n
   b.disconnect()
 })
 
+test('a host that keeps going away is reported in words, with where to look', async () => {
+  await fakeHost((_msg, _n, s) => { s.end(encodeJson({ t: 'bye', reason: 'crash' })) })
+  const b = backend()
+  await expect(b.listSessions()).rejects.toThrow(`Pitwall's background process keeps stopping — see ${hostLogFile(dataDir)}.`)
+})
+
 test("a host that doesn't answer: the call fails and says so, and the next call connects afresh", async () => {
   const fake = await fakeHost(() => {})
   const b = backend({ requestTimeoutMs: 300 })
@@ -102,6 +108,19 @@ test("a host that doesn't answer: the call fails and says so, and the next call 
   await expect(b.hasSession('pw-a')).rejects.toThrow(/didn't answer/)
   expect(fake.conns()).toBe(2)
   b.disconnect()
+})
+
+test("a host that never completes the hello fails at once for a while (many sessions don't each wait on it)", async () => {
+  const fake = await fakeHost(() => {}, { hello: false })
+  const b = backend({ connectTimeoutMs: 200, failureCacheMs: 1000 })
+  await expect(b.hasSession('pw-a')).rejects.toThrow("The Pitwall host isn't answering")
+  const t0 = Date.now()
+  for (const name of ['pw-b', 'pw-c', 'pw-d']) await expect(b.hasSession(name)).rejects.toThrow("isn't answering")
+  expect(Date.now() - t0).toBeLessThan(100)
+  expect(fake.conns()).toBe(1)
+  await new Promise((r) => setTimeout(r, 1100))
+  await expect(b.hasSession('pw-e')).rejects.toThrow("isn't answering")
+  expect(fake.conns()).toBe(2)
 })
 
 test('an error from the host reaches the caller with its message', async () => {
@@ -130,6 +149,24 @@ test.each([
   await waitFor(async () => fake.received.length >= 1, 2000, 'connection')
   for (const conn of fake.received) expect(conn.map((m) => m.t)).toEqual(['hello'])
   expect(JSON.stringify(fake.received)).not.toContain('pw-secret')
+})
+
+test('a character split between two data frames arrives whole', async () => {
+  const text = 'a'.repeat(DATA_CHUNK - 1) + '❯b' // ❯ is 3 bytes: 2 end the first frame, 1 starts the next
+  const bytes = Buffer.from(text, 'utf8')
+  await fakeHost((msg, _n, s) => {
+    if (msg.t !== 'attach') return
+    s.write(encodeJson({ t: 'res', id: msg.id, ok: true }))
+    s.write(encodeData(msg.ch as number, bytes.subarray(0, DATA_CHUNK + 1)))
+    s.write(encodeData(msg.ch as number, bytes.subarray(DATA_CHUNK + 1)))
+  })
+  let out = ''
+  const b = backend()
+  const a = await b.attach('pw-u', 80, 24, { onData: (d) => { out += d }, onExit: () => {} })
+  await waitFor(async () => out.length >= text.length, 2000, 'all output')
+  expect(out).toBe(text)
+  a.close()
+  b.disconnect()
 })
 
 test('PITWALL_SESSION_BACKEND=host picks the host; anything else stays on tmux', () => {

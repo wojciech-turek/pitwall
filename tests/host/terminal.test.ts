@@ -29,9 +29,22 @@ describe('ModeTracker', () => {
     expect(m.bracketedPaste).toBe(true)
   })
 
-  test('the alternate screen comes first in the prefix; untracked modes are ignored', () => {
+  test('the alternate screen comes first in the prefix (unless left out); untracked modes are ignored', () => {
     const m = feed(new ModeTracker(), '\x1b[?2004h\x1b[?1049h\x1b[?12h\x1b[?7l')
     expect(m.prefix()).toBe('\x1b[?1049h\x1b[?2004h')
+    expect(m.prefix(false)).toBe('\x1b[?2004h')
+    expect(m.altScreen()).toBe(1049)
+    expect(feed(m, '\x1b[?1049l').altScreen()).toBeNull()
+  })
+
+  test("reports the questions a program waits on (device attributes, status), even split across chunks", () => {
+    const m = new ModeTracker()
+    expect(m.feed(Buffer.from('a\x1b[cb\x1b[0c\x1b[5n'))).toEqual(['da1', 'da1', 'dsr5'])
+    expect(m.feed(Buffer.from('x\x1b['))).toEqual([])
+    expect(m.feed(Buffer.from('5'))).toEqual([])
+    expect(m.feed(Buffer.from('n done'))).toEqual(['dsr5'])
+    // Not these: secondary attributes, cursor position, a private-mode n, colours.
+    expect(m.feed(Buffer.from('\x1b[>c\x1b[6n\x1b[?5n\x1b[1;31m\x1b[2 q'))).toEqual([])
   })
 })
 
@@ -41,11 +54,23 @@ describe('replay', () => {
     expect(replayBytes(Buffer.from('hello\r\n'), false, m).toString()).toBe('\x1bc\x1b[?2004hhello\r\n')
   })
 
-  test('after dropping bytes it starts at a line, or at least at a character', () => {
+  test('after dropping bytes it starts at a line, else at an escape sequence, else at a character', () => {
     expect(trimStart(Buffer.from('[31mtail of line\r\nnext'), true).toString()).toBe('next')
     expect(trimStart(Buffer.from('[31mtail of line\r\nnext'), false).toString()).toBe('[31mtail of line\r\nnext')
+    expect(trimStart(Buffer.from('1;31mred\x1b[0m\x1b[Hdrawn'), true).toString()).toBe('\x1b[0m\x1b[Hdrawn')
     const cut = Buffer.from('é❯x').subarray(1) // starts inside é
     expect(trimStart(cut, true).toString()).toBe('❯x')
+  })
+
+  test('the alternate screen is switched to up front only when the replayed output no longer does it', () => {
+    const m = feed(new ModeTracker(), 'shell$ vim\r\n\x1b[?1049h\x1b[Hfile')
+    // Still in the output: replayed in order, so the shell's lines stay on the main screen.
+    expect(replayBytes(Buffer.from('shell$ vim\r\n\x1b[?1049h\x1b[Hfile'), false, m).toString()).toBe('\x1bcshell$ vim\r\n\x1b[?1049h\x1b[Hfile')
+    // Dropped from the output: switched first.
+    expect(replayBytes(Buffer.from('\x1b[Hfile'), true, m).toString()).toBe('\x1bc\x1b[?1049h\x1b[Hfile')
+    // Combined with other modes, it still counts.
+    expect(replayBytes(Buffer.from('a\r\n\x1b[?2004;1049h'), false, feed(new ModeTracker(), '\x1b[?2004;1049h')).toString())
+      .toBe('\x1bc\x1b[?2004ha\r\n\x1b[?2004;1049h')
   })
 
   test("drops the program's old questions to the terminal and clipboard writes, and keeps everything else", () => {

@@ -1,12 +1,12 @@
 import { execFile, spawn } from 'node:child_process'
 import { existsSync, statSync } from 'node:fs'
-import { mkdir, readFile, rm, utimes } from 'node:fs/promises'
+import { mkdir, readFile, rm, utimes, writeFile } from 'node:fs/promises'
 import * as net from 'node:net'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { hostKeyFile, hostLogFile, hostPidFile, hostSocketPath } from '../../src/host/paths'
-import { encodeJson, PROTOCOL } from '../../src/host/protocol'
+import { encodeData, encodeJson, PROTOCOL } from '../../src/host/protocol'
 import type { Attachment } from '../../src/main/backend'
 import { HostBackend } from '../../src/main/host-backend'
 import { alive, hostLaunch, hostPids, makeHostBackend, makeHostDirs, rawClient, stopHost } from '../helpers/host'
@@ -14,21 +14,24 @@ import { waitFor } from '../helpers/wait'
 
 const run = promisify(execFile)
 
-// A stand-in agent: says it's ready, answers each line, and on `burst` writes 50 MB as fast as the terminal takes it.
+// A stand-in agent: says it's ready and answers each line; `flood` writes as fast as the terminal takes it until
+// `stop`, then says how much it wrote.
 const AGENT = `
 console.log('AGENT READY')
+let flooding = false
+let written = 0
+const chunk = ('x'.repeat(99) + '\\n').repeat(1000)
+// (A TTY's stdout is synchronous on Unix: yield between chunks, or 'stop' is never read.)
+const pump = () => {
+  if (!flooding) return console.log('FLOOD DONE ' + Math.round(written / 1048576) + ' MB')
+  written += chunk.length
+  if (process.stdout.write(chunk)) setImmediate(pump)
+  else process.stdout.once('drain', pump)
+}
 require('node:readline').createInterface({ input: process.stdin }).on('line', (l) => {
-  if (l !== 'burst') return console.log('agent: ' + l)
-  const chunk = ('x'.repeat(99) + '\\n').repeat(1000)
-  let left = 500
-  const write = () => {
-    while (left > 0) {
-      left--
-      if (!process.stdout.write(chunk)) return process.stdout.once('drain', write)
-    }
-    console.log('BURST DONE')
-  }
-  write()
+  if (l === 'flood') { flooding = true; return pump() }
+  if (l === 'stop') { flooding = false; return }
+  console.log('agent: ' + l)
 })
 setInterval(() => {}, 60000)
 `
@@ -71,6 +74,16 @@ async function attach(b: HostBackend, name: string): Promise<{ a: Attachment; ou
   const a = await b.attach(name, 100, 30, { onData: (d) => { out += d }, onExit: (c) => { exits.push(c) } })
   attachments.push(a)
   return { a, out: () => out, exits }
+}
+
+/** A socket file nobody listens on (its server was killed), at the host's path. */
+async function staleSocket(): Promise<void> {
+  await mkdir(dataDir, { recursive: true })
+  const p = spawn(process.execPath, ['-e', `require('node:net').createServer().listen(${JSON.stringify(hostSocketPath(dataDir))}, () => console.log('up'))`])
+  await new Promise<void>((resolve) => p.stdout.on('data', () => resolve()))
+  p.kill('SIGKILL')
+  await new Promise((r) => p.once('exit', r))
+  expect(existsSync(hostSocketPath(dataDir))).toBe(true)
 }
 
 const pidFromFile = async (): Promise<number> => Number((await readFile(hostPidFile(dataDir), 'utf8')).trim())
@@ -239,6 +252,29 @@ describe('lifecycle', () => {
     await waitFor(async () => !alive(pid), 8000, 'idle once the last terminal is gone')
   })
 
+  test("a host that holds the socket but doesn't answer is never replaced (that would run every agent twice)", async () => {
+    await staleSocket() // as a host with a full queue looks: there, but refusing connections
+    const wedged = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1e5)', '--', '--data', dataDir], { stdio: 'ignore' })
+    try {
+      await writeFile(hostPidFile(dataDir), `${wedged.pid}\n`)
+      const b = new HostBackend({ dataDir, appVersion: 'test', launch: hostLaunch(dataDir), startTimeoutMs: 2000 })
+      backends.push(b)
+      await expect(b.newSession({ name: 'pw-x', cwd, argv: ['true'] })).rejects.toThrow(/didn't start within 2s/)
+      expect(existsSync(hostSocketPath(dataDir))).toBe(true)
+      expect(await readFile(hostLogFile(dataDir), 'utf8')).toContain(`host ${wedged.pid} holds ${hostSocketPath(dataDir)} but doesn't answer`)
+    } finally {
+      wedged.kill('SIGKILL')
+    }
+  })
+
+  test('a pidfile naming a live process that is not a host (a reused pid) does not block a new host', async () => {
+    await staleSocket()
+    await writeFile(hostPidFile(dataDir), `${process.pid}\n`) // alive, but this test, not a host
+    const b = app()
+    await startAgent(b, 'pw-reused')
+    expect(await pidFromFile()).toBe(b.hostPid)
+  })
+
   test('killSession ends the whole foreground job, not just its first process', async () => {
     const b = app()
     const marker = join(tmp, 'child.pid')
@@ -310,6 +346,50 @@ describe('reattaching', () => {
   })
 })
 
+describe('questions to the terminal', () => {
+  // In raw mode, asks for device attributes and status (at start, and on `q`), and prints the answers it gets.
+  const ASKS = `
+    process.stdin.setRawMode(true)
+    let got = ''
+    const ask = () => { got = ''; process.stdout.write('\\x1b[c\\x1b[5n') }
+    process.stdin.on('data', (d) => {
+      const s = d.toString()
+      if (s === 'q') return ask()
+      got += s
+      if (got.includes('c') && got.includes('n')) console.log('answers: ' + JSON.stringify(got))
+    })
+    if (process.argv[1] === 'now') ask()
+    console.log('ASKS READY')
+  `
+
+  test('with no terminal attached, the host answers so a starting program never waits for good', async () => {
+    const b = app()
+    await b.newSession({ name: 'pw-q', cwd, argv: [process.execPath, '-e', ASKS, 'now'] })
+    await waitFor(async () => (await b.capture('pw-q')).includes('answers: "\\u001b[?1;2c\\u001b[0n"'), 8000, 'answered by the host')
+  })
+
+  test("with a terminal attached, the terminal answers, not the host; a replay doesn't ask again", async () => {
+    const b = app()
+    await b.newSession({ name: 'pw-q', cwd, argv: [process.execPath, '-e', ASKS] })
+    await waitFor(async () => (await b.capture('pw-q')).includes('ASKS READY'), 8000, 'ready')
+    const term = await rawClient(dataDir)
+    const out = (): string => Buffer.concat(term.frames.flatMap((f) => (f.type === 'data' ? [f.data] : []))).toString()
+    term.s.write(encodeJson({ t: 'attach', id: 1, name: 'pw-q', ch: 1, cols: 80, rows: 24 }))
+    await waitFor(async () => out().includes('ASKS READY'), 5000, 'attached')
+    await b.sendKeys('pw-q', ['q'])
+    await waitFor(async () => out().includes('\x1b[c\x1b[5n'), 5000, 'the question reaches the terminal')
+    await new Promise((r) => setTimeout(r, 500))
+    expect(await b.capture('pw-q')).not.toContain('answers')
+    term.s.write(encodeData(1, Buffer.from('\x1b[?62c\x1b[0n'))) // the terminal's own answer
+    await waitFor(async () => (await b.capture('pw-q')).includes('answers: "\\u001b[?62c\\u001b[0n"'), 5000, "the terminal's answer")
+    term.s.destroy()
+
+    const later = await attach(b, 'pw-q')
+    await waitFor(async () => later.out().includes('ASKS READY'), 5000, 'replayed')
+    expect(later.out()).not.toContain('\x1b[c')
+  })
+})
+
 describe('versions and bad clients', () => {
   test("the host refuses an app that speaks another protocol, and keeps running", async () => {
     const b = app()
@@ -365,36 +445,45 @@ describe('versions and bad clients', () => {
 })
 
 describe('output bursts', () => {
-  test('a stuck app never blocks an agent or grows the host; it is resynced once it reads again', { timeout: 60_000 }, async () => {
+  test('a flood never blocks other agents, nor grows the host for an app that stopped reading; that app is resynced', { timeout: 60_000 }, async () => {
     const b = app()
-    await startAgent(b, 'pw-burst')
+    await startAgent(b, 'pw-flood')
     await startAgent(b, 'pw-calm')
     const stuck = await rawClient(dataDir)
     const got = (): Buffer => Buffer.concat(stuck.frames.flatMap((f) => (f.type === 'data' ? [f.data] : [])))
-    stuck.s.write(encodeJson({ t: 'attach', id: 1, name: 'pw-burst', ch: 1, cols: 100, rows: 30 }))
+    stuck.s.write(encodeJson({ t: 'attach', id: 1, name: 'pw-flood', ch: 1, cols: 100, rows: 30 }))
     await waitFor(async () => got().includes('AGENT READY'), 5000, 'stuck app attached')
     stuck.s.pause() // and never reads again (until later)
 
     const hostPid = b.hostPid!
-    const t0 = Date.now()
-    await b.sendKeys('pw-burst', ['burst', 'Enter'])
     let peakKb = 0
-    await waitFor(async () => {
+    const sample = async (): Promise<void> => {
       const { stdout } = await run('/bin/ps', ['-o', 'rss=', '-p', String(hostPid)])
       peakKb = Math.max(peakKb, Number(stdout.trim()))
-      return (await b.capture('pw-burst')).includes('BURST DONE')
-    }, 45_000, '50 MB written while an app is stuck')
-    // Another agent stays responsive meanwhile (checked after: the burst may already be over).
-    await b.sendKeys('pw-calm', ['hi', 'Enter'])
-    await waitFor(async () => (await b.capture('pw-calm')).includes('agent: hi'), 8000, 'calm agent answers')
-    expect(peakKb).toBeLessThan(200 * 1024) // the host holds ~1 MB of output per terminal, not 50 MB
-    console.log(`burst: ${Date.now() - t0} ms, host peak RSS ${Math.round(peakKb / 1024)} MB`)
+    }
+    await b.sendKeys('pw-flood', ['flood', 'Enter'])
+    await new Promise((r) => setTimeout(r, 300))
+    // While it floods (it only stops when told): another agent answers every time, promptly.
+    for (let i = 0; i < 5; i++) {
+      await b.sendKeys('pw-calm', [`ping ${i}`, 'Enter'])
+      await waitFor(async () => (await b.capture('pw-calm')).includes(`agent: ping ${i}`), 3000, `calm agent answers during the flood (${i})`)
+      await sample()
+    }
+    for (let i = 0; i < 5; i++) {
+      await new Promise((r) => setTimeout(r, 200))
+      await sample()
+    }
+    await b.sendKeys('pw-flood', ['stop', 'Enter']) // its input is served during the flood too
+    const done = await waitFor(async () => /FLOOD DONE (\d+) MB/.exec(await b.capture('pw-flood')), 15_000, 'flood stops')
+    console.log(`flood: ${done[1]} MB, host peak RSS ${Math.round(peakKb / 1024)} MB`)
+    expect(Number(done[1])).toBeGreaterThan(50)
+    expect(peakKb).toBeLessThan(200 * 1024) // the host holds ~1 MB of output per terminal, not what went through
 
     const before = got().length
     stuck.frames.length = 0
     stuck.s.resume()
-    await waitFor(async () => got().includes('BURST DONE'), 15_000, 'the stuck app catches up')
-    expect(got().includes('\x1bc')).toBe(true) // resynced from the recent output, not fed all 50 MB
+    await waitFor(async () => got().includes('FLOOD DONE'), 15_000, 'the stuck app catches up')
+    expect(got().includes('\x1bc')).toBe(true) // resynced from the recent output, not fed everything
     expect(before + got().length).toBeLessThan(20 * 1024 * 1024)
     stuck.s.destroy()
   })

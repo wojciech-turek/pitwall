@@ -2,6 +2,9 @@ appId: com.wojciechturek.pitwall
 productName: Pitwall
 directories:
   output: release
+# out/** includes the host (out/host/index.js), which the app runs as `ELECTRON_RUN_AS_NODE=1 <its own executable>`
+# from inside app.asar. That needs Electron's RunAsNode fuse enabled: the default, as long as no `electronFuses`
+# setting here turns it off.
 files:
   - out/**
   - package.json

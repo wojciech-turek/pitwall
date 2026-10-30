@@ -23,6 +23,8 @@ export interface HostBackendOptions {
   requestTimeoutMs?: number
   /** For connecting and the handshake. */
   connectTimeoutMs?: number
+  /** A host that couldn't be used (no answer, refused) is reported again without retrying for this long. */
+  failureCacheMs?: number
 }
 
 export class HostError extends Error {
@@ -32,7 +34,11 @@ export class HostError extends Error {
 }
 
 /** The host is gone (or leaving) before it answered, so it didn't run the request. */
-class HostGone extends Error {}
+class HostGone extends Error {
+  constructor() {
+    super('The Pitwall host went away.')
+  }
+}
 
 interface OpenOptions {
   path: string
@@ -92,7 +98,8 @@ class Connection {
       const timer = setTimeout(() => fail(new HostError(`The Pitwall host isn't answering (${o.path}).`)), o.connectTimeoutMs)
       const onConnect = (): void => { socket.write(encodeJson({ t: 'hello', protocol: PROTOCOL, appVersion: o.appVersion, nonce })) }
       const onError = (e: NodeJS.ErrnoException): void => {
-        if (hostPid === null && (e.code === 'ENOENT' || e.code === 'ECONNREFUSED')) return fail(noHost())
+        // Nothing there, nothing listening, or not a socket at all: no host (one that starts cleans up).
+        if (hostPid === null && (e.code === 'ENOENT' || e.code === 'ECONNREFUSED' || e.code === 'ENOTSOCK')) return fail(noHost())
         fail(new HostError(`Couldn't reach the Pitwall host: ${e.message}`))
       }
       const onClose = (): void => {
@@ -283,6 +290,8 @@ export class HostBackend implements SessionBackend {
   private conn: Connection | null = null
   private connecting: Promise<Connection | null> | null = null
   private starting: Promise<Connection> | null = null
+  /** The last connect that failed for a reason worth reporting, and until when it is reported as is. */
+  private failure: { error: Error; until: number } | null = null
   private readonly startTimeoutMs: number
   private readonly requestTimeoutMs: number
 
@@ -404,8 +413,8 @@ export class HostBackend implements SessionBackend {
         return await c.request(body)
       } catch (e) {
         // The host left before answering (it went idle, or died): it didn't run this. Ask the next one.
-        if (e instanceof HostGone && attempt < 3) continue
-        throw e
+        if (!(e instanceof HostGone)) throw e
+        if (attempt >= 3) throw new HostError(`Pitwall's background process keeps stopping — see ${hostLogFile(this.o.dataDir)}.`)
       }
     }
   }
@@ -416,9 +425,14 @@ export class HostBackend implements SessionBackend {
     return (this.starting ??= this.startHost().finally(() => { this.starting = null }))
   }
 
-  /** The current connection, or a new one if a host is listening; concurrent callers share one attempt. */
+  /**
+   * The current connection, or a new one if a host is listening; concurrent callers share one attempt. A host that
+   * just failed (no answer, refused) fails again at once for a few seconds, so starting with many sessions doesn't
+   * wait on it once per session.
+   */
   private connectOnce(): Promise<Connection | null> {
     if (this.conn && !this.conn.closed) return Promise.resolve(this.conn)
+    if (this.failure && Date.now() < this.failure.until) return Promise.reject(this.failure.error)
     return (this.connecting ??= this.tryConnect().finally(() => { this.connecting = null }))
   }
 
@@ -428,11 +442,13 @@ export class HostBackend implements SessionBackend {
         path: this.socketPath, dataDir: this.o.dataDir, platform: this.o.platform ?? process.platform,
         appVersion: this.o.appVersion, connectTimeoutMs: this.o.connectTimeoutMs ?? 5000, requestTimeoutMs: this.requestTimeoutMs
       })
+      this.failure = null
       this.conn = c
       c.onClose(() => { if (this.conn === c) this.conn = null })
       return c
     } catch (e) {
       if (isNoHost(e)) return null
+      this.failure = { error: e as Error, until: Date.now() + (this.o.failureCacheMs ?? 5000) }
       throw e
     }
   }

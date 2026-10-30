@@ -1,9 +1,10 @@
+import { execFileSync } from 'node:child_process'
 import { appendFileSync, chmodSync, mkdirSync, readFileSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import * as net from 'node:net'
 import * as pty from 'node-pty'
 import { checkProof, newNonce, proofFor, writeHostKey } from './auth'
 import { pasteBytes, sendKeysBytes } from './keys'
-import { ModeTracker } from './modes'
+import { ANSWERS, ModeTracker } from './modes'
 import { hostLogFile, hostPidFile, hostSocketPath } from './paths'
 import {
   encodeDataChunks, encodeJson, FrameDecoder, parseClientMessage, PROTOCOL,
@@ -166,7 +167,14 @@ export class Host {
         try {
           if ((await this.tryListen(server)) === 'ok') return true
           if (await canConnect(this.socketPath)) return false
-          rmSync(this.socketPath, { force: true }) // nobody answers: left by a host that died
+          // Nobody answers. That may still be a live host too busy to accept (a full queue): replacing it would run
+          // every agent twice, so the socket is only removed if the host in the pidfile is gone.
+          const owner = this.pidFileOwner()
+          if (owner !== null) {
+            this.log(`host ${owner} holds ${this.socketPath} but doesn't answer; leaving it alone`)
+            return false
+          }
+          rmSync(this.socketPath, { force: true }) // left by a host that died
           if ((await this.tryListen(server)) === 'ok') return true
           return false
         } finally {
@@ -447,7 +455,10 @@ export class Host {
 
   private output(t: Term, b: Buffer): void {
     t.ring.push(b)
-    t.modes.feed(b)
+    const queries = t.modes.feed(b)
+    // With no terminal attached, nothing would answer, and a starting program may wait for the answer for good.
+    // (tmux answered these itself.) Attached, the app's terminal answers.
+    if (t.viewers.size === 0) for (const q of queries) this.input(t, ANSWERS[q])
     for (const v of t.viewers) {
       if (v.behind || !v.conn.socket.writable) continue
       if (v.conn.socket.writableLength > this.highWater) {
@@ -556,6 +567,32 @@ export class Host {
     const tmp = `${file}.${process.pid}.tmp`
     writeFileSync(tmp, `${process.pid}\n`)
     renameSync(tmp, file)
+  }
+
+  /**
+   * The pid in the pidfile if that process is alive and is a host for this data dir (a pid can be reused, e.g. after
+   * a restart). Unix only: on Windows a pipe vanishes with its host.
+   */
+  private pidFileOwner(): number | null {
+    let pid: number
+    try {
+      pid = Number(readFileSync(hostPidFile(this.o.dataDir), 'utf8').trim())
+    } catch {
+      return null
+    }
+    if (!Number.isInteger(pid) || pid <= 1 || pid === process.pid) return null
+    try {
+      process.kill(pid, 0)
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'EPERM') return null // gone
+    }
+    try {
+      const cmd = execFileSync('/bin/ps', ['-ww', '-o', 'command=', '-p', String(pid)], { encoding: 'utf8', timeout: 5000 }).trim()
+      const arg = `--data ${this.o.dataDir}`
+      return cmd.endsWith(arg) || cmd.includes(`${arg} --`) ? pid : null
+    } catch {
+      return pid // can't tell: leave it alone
+    }
   }
 
   /** Only our own: a newer host may have written its pid there already. */

@@ -11,14 +11,24 @@ const SEEK = 64 * 1024
  * old requests the terminal would act on again (see stripForReplay).
  */
 export function replayBytes(recent: Buffer, wrapped: boolean, modes: ModeTracker): Buffer {
-  return Buffer.concat([Buffer.from('\x1bc' + modes.prefix(), 'latin1'), stripForReplay(trimStart(recent, wrapped))])
+  const body = stripForReplay(trimStart(recent, wrapped))
+  // Switching to the alternate screen up front when the output switches to it itself would paint the main screen's
+  // output into the alternate one (and leave the main screen empty once the program leaves it).
+  const alt = modes.altScreen()
+  const switchesItself = alt !== null && new RegExp(`\x1b\\[\\?([0-9;]*;)?${alt}(;[0-9;]*)?h`).test(body.toString('latin1'))
+  return Buffer.concat([Buffer.from('\x1bc' + modes.prefix(!switchesItself), 'latin1'), body])
 }
 
-/** After the oldest bytes were dropped, the rest may start inside a line, a character or an escape sequence. */
+/**
+ * After the oldest bytes were dropped, the rest may start inside a line, a character or an escape sequence: start at
+ * the next line, else at the next escape sequence, else at the next character.
+ */
 export function trimStart(b: Buffer, wrapped: boolean): Buffer {
   if (!wrapped) return b
   const nl = b.indexOf(0x0a)
   if (nl !== -1 && nl < SEEK) return b.subarray(nl + 1)
+  const esc = b.indexOf(ESC)
+  if (esc !== -1 && esc < SEEK) return b.subarray(esc)
   let i = 0
   while (i < b.length && i < 4 && (b[i] & 0xc0) === 0x80) i++ // UTF-8 continuation bytes
   return b.subarray(i)
