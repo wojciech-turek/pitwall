@@ -1,0 +1,41 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: brew install tmux
+      - run: pnpm install --frozen-lockfile
+      - name: Check tag matches package.json and CHANGELOG has notes
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          PKG="$(node -p "require('./package.json').version")"
+          if [ "$VERSION" != "$PKG" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match package.json version $PKG" >&2
+            exit 1
+          fi
+          node scripts/release-notes.mjs "$VERSION" > notes.md
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm dist
+      - run: pnpm verify:sign
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          gh release create "$GITHUB_REF_NAME" "release/Pitwall-${VERSION}-arm64.dmg" \
+            --title "Pitwall ${VERSION}" --notes-file notes.md

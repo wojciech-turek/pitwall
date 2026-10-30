@@ -65,7 +65,10 @@ Like a pit wall in a race, you watch every car at once and only radio in when on
 
 ## Install
 
-Pitwall isn't notarized yet, so build it from source:
+1. Download `Pitwall-<version>-arm64.dmg` from [Releases](https://github.com/wojciech-turek/pitwall/releases) and drag Pitwall to Applications.
+2. Pitwall isn't notarized yet, so macOS blocks the first launch. Open **System Settings → Privacy & Security** and click **Open Anyway**. Alternatively, run `xattr -dr com.apple.quarantine /Applications/Pitwall.app`.
+
+### Build from source
 
 ```sh
 git clone https://github.com/wojciech-turek/pitwall.git
@@ -75,7 +78,9 @@ pnpm package                      # -> release/mac-arm64/Pitwall.app
 cp -R release/mac-arm64/Pitwall.app /Applications/
 ```
 
-The app is unsigned, so the first time you open it, right-click it and choose **Open**. Alternatively, run `xattr -dr com.apple.quarantine /Applications/Pitwall.app`.
+## Updating
+
+When a new release is out, Pitwall shows **Update available** with the changelog. Download the new DMG, quit Pitwall, and replace the app in Applications. Your agents keep running in tmux and reattach when you reopen it.
 
 ## Getting started
 
@@ -102,7 +107,7 @@ Pitwall:
 - never stores your GitHub token;
 - never deletes work without asking.
 
-Everything stays on your Mac. Pitwall has no telemetry and no account.
+Everything stays on your Mac. Pitwall has no telemetry and no account. The one network request it makes itself: once a day it asks GitHub for the list of Pitwall releases, to tell you about updates. It sends nothing about you or your work. Turn it off in Settings (**Check for updates on GitHub**).
 
 ## Keyboard shortcuts
 
@@ -142,6 +147,10 @@ pnpm build && pnpm test:e2e       # end-to-end tests against the built app, with
 ```
 
 Pitwall is built with Electron, React, TypeScript, zustand, node-pty, xterm.js and CodeMirror.
+
+## Releasing
+
+For maintainers: bump `version` in `package.json`, add a `## [X.Y.Z] - date` section to `CHANGELOG.md`, commit, tag `vX.Y.Z` and push the tag. The release workflow checks the tag against `package.json`, builds and signs the DMG, and publishes it with the changelog section as the release notes.
 
 ## License
 
