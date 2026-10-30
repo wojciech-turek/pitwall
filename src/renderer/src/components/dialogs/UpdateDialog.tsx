@@ -1,12 +1,25 @@
 import { useEffect } from 'react'
 import Dialog from './Dialog'
 import Markdown from '../Markdown'
+import { isMac } from '../../platform'
 import { useUi } from '../../state/ui'
 import { useUpdates } from '../../state/updates'
 
 const openLink = (url: string): void => { void window.pitwall.openExternal(url) }
 const formatDate = (ms: number): string =>
   new Date(ms).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+
+/**
+ * How to update by hand. Download opens the release page, which lists every platform's file. On Windows the agents'
+ * host runs from the installed Pitwall.exe, so updating stops them (they resume their conversations).
+ */
+export function updateHowTo(mac: boolean = isMac()): string {
+  return mac
+    ? 'To update, download the DMG, quit Pitwall and drag the new app into Applications. Your agents keep running and ' +
+      'reconnect when you reopen it.'
+    : 'To update, download the setup .exe for your PC (x64, or arm64 for Windows on ARM), quit Pitwall and run it. ' +
+      'Updating stops running agents; they resume their conversations when you reopen Pitwall.'
+}
 
 /** What's new in every release newer than this one, newest first, and how to update by hand. */
 export default function UpdateDialog(): React.JSX.Element | null {
@@ -36,10 +49,7 @@ export default function UpdateDialog(): React.JSX.Element | null {
           </section>
         ))}
       </div>
-      <p className="update-howto">
-        To update, download the DMG, quit Pitwall and drag the new app into Applications. Your agents keep running and
-        reconnect when you reopen it.
-      </p>
+      <p className="update-howto">{updateHowTo()}</p>
       <div className="dialog-actions">
         <button type="button" className="btn" onClick={closeDialog}>Later</button>
         <button type="button" className="btn primary" data-testid="update-download" data-autofocus onClick={download}>Download</button>
