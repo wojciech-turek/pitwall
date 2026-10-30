@@ -36,6 +36,7 @@ export class SessionManager {
   private tracked = new Map<string, Tracked>()
   private tracking = new Map<string, Promise<void>>()
   private extras = new Map<string, Extras>()
+  private clearing = new Set<string>()
   private warnings = new Map<string, string>()
   private errors = new Map<string, string>()
   private snapshotCbs = new Set<(s: AppSnapshot) => void>()
@@ -53,7 +54,10 @@ export class SessionManager {
   }
 
   async init(): Promise<void> {
-    this.unsubStore = this.deps.store.onChange(() => this.publish())
+    this.unsubStore = this.deps.store.onChange(() => {
+      this.updateBadge() // a project may have been muted or unmuted
+      this.publish()
+    })
     for (const s of this.active()) {
       try {
         await this.track(s.id)
@@ -92,7 +96,7 @@ export class SessionManager {
       const view: SessionView = {
         ...s,
         lastViewedAt: t?.viewedAt ?? s.lastViewedAt,
-        status: displayStatus(rt, t?.viewedAt ?? s.lastViewedAt),
+        status: this.statusOf(s.id),
         ...this.extras.get(s.id)
       }
       if (rt.needsInput) view.needsInput = rt.needsInput
@@ -148,8 +152,33 @@ export class SessionManager {
     this.publish()
   }
 
+  /** Show a read session as unread until the user opens it. */
+  async markUnread(sessionId: string): Promise<void> {
+    const s = this.session(sessionId)
+    if (!s || s.archivedAt !== undefined || s.markedUnread || this.statusOf(sessionId) !== 'read') return
+    await this.deps.store.update((d) => {
+      const x = d.sessions.find((y) => y.id === sessionId)
+      if (x) x.markedUnread = true
+    })
+  }
+
+  /** The user opened the session (not just saw it in a pane). */
+  sessionOpened(sessionId: string): void {
+    this.clearMarkedUnread(sessionId)
+  }
+
+  private clearMarkedUnread(sessionId: string): void {
+    if (!this.session(sessionId)?.markedUnread || this.clearing.has(sessionId)) return
+    this.clearing.add(sessionId)
+    void this.deps.store.update((d) => {
+      const x = d.sessions.find((y) => y.id === sessionId)
+      if (x) delete x.markedUnread
+    }).catch(() => {}).finally(() => { this.clearing.delete(sessionId) })
+  }
+
   userInput(sessionId: string, kind: TermKind, data: string): void {
     if (kind !== 'claude') return
+    if (data !== '\x1b[I' && data !== '\x1b[O') this.clearMarkedUnread(sessionId) // not a focus report
     const t = this.tracked.get(sessionId)
     if (!t) return
     const busy = t.rt.activity === 'working' || t.rt.activity === 'needs_input'
@@ -244,7 +273,15 @@ export class SessionManager {
 
   private statusOf(id: string): DisplayStatus {
     const t = this.tracked.get(id)
-    return displayStatus(t?.rt ?? initialRuntime, t?.viewedAt ?? this.session(id)?.lastViewedAt ?? 0)
+    const s = this.session(id)
+    const base = displayStatus(t?.rt ?? initialRuntime, t?.viewedAt ?? s?.lastViewedAt ?? 0)
+    return base === 'read' && s?.markedUnread ? 'unread' : base
+  }
+
+  private isMuted(s: Session): boolean {
+    const st = this.deps.store.state
+    const sp = st.subProjects.find((x) => x.id === s.subProjectId)
+    return st.projects.find((p) => p.id === sp?.projectId)?.muted === true
   }
 
   /** Idempotent: replay the events file (no notifications), then tail it. */
@@ -324,6 +361,7 @@ export class SessionManager {
     t.rt = reduceRuntime(t.rt, e)
     if (this.viewing.focused && this.viewing.ids.has(id)) this.markViewed(id)
     const after = this.statusOf(id)
+    if (s.markedUnread && after !== 'unread') this.clearMarkedUnread(id) // new activity replaces the mark
     this.errors.delete(id)
     if (t.rt.activity !== 'needs_input') t.inputSent = false
     if (t.rt.firstEventSeen) {
@@ -339,6 +377,7 @@ export class SessionManager {
 
   private maybeNotify(s: Session, status: DisplayStatus, rt: SessionRuntime): void {
     if (this.viewing.focused && this.viewing.ids.has(s.id)) return
+    if (this.isMuted(s)) return
     const sp = this.deps.store.state.subProjects.find((x) => x.id === s.subProjectId)
     const project = this.deps.store.state.projects.find((p) => p.id === sp?.projectId)
     this.deps.notifier.notify({
@@ -349,7 +388,7 @@ export class SessionManager {
   }
 
   private updateBadge(): void {
-    const c = countStatuses(this.active().map((s) => ({ status: this.statusOf(s.id) })))
+    const c = countStatuses(this.active().filter((s) => !this.isMuted(s)).map((s) => ({ status: this.statusOf(s.id) })))
     this.deps.notifier.setBadge(c.needsYou + c.unread)
   }
 

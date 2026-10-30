@@ -1,6 +1,9 @@
 export interface GitIdentity { sshKeyPath: string; ghAccount: string; gitName: string; gitEmail: string }
 export interface EnvVar { key: string; value: string }
-export interface Project { id: string; name: string; identity: GitIdentity; extraEnv: EnvVar[]; createdAt: number }
+export interface Project { id: string; name: string; identity: GitIdentity; extraEnv: EnvVar[]; createdAt: number
+  /** No macOS notifications and no Dock badge from this project's sessions. */
+  muted?: boolean
+}
 export type SubProjectKind = 'repo' | 'folder'
 export interface SubProject {
   id: string; projectId: string; name: string; path: string; kind: SubProjectKind
@@ -13,6 +16,8 @@ export interface Session {
   id: string; subProjectId: string; title: string; slug: string; claudeSessionId: string; cwd: string
   worktreePath?: string; branch?: string; branchCreatedByPitwall: boolean; baseBranch?: string; baseCommit?: string
   createdAt: number; lastViewedAt: number; archivedAt?: number; lastMessage?: string; pr?: PrInfo
+  /** Set by "Mark as unread"; cleared when the user opens the session. */
+  markedUnread?: boolean
 }
 export interface AppSettings {
   monoFont: string; monoFontSize: number

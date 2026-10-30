@@ -96,6 +96,12 @@ function applyLayout(s: UiState, layout: Layout, persist = true): UiState | Layo
   return layoutFields(layout, s)
 }
 
+/** The user opened a session on purpose (sidebar, pane click): main clears "marked as unread". */
+const opened = (id: string | null): void => {
+  const api = (globalThis as { window?: { pitwall?: { sessionOpened(id: string): void } } }).window?.pitwall
+  if (id) api?.sessionOpened(id)
+}
+
 export const useUi = create<UiState>()((set, get) => ({
   ...layoutFields(L.parseLayout(layoutStorage.load()), { visibleSessionIds: [], tabs: {}, activeTab: {} }),
   draggingSessionId: null,
@@ -104,10 +110,16 @@ export const useUi = create<UiState>()((set, get) => ({
   dirty: {},
   diffMode: 'split',
   setDiffMode: (diffMode) => set({ diffMode }),
-  select: (id) => set((s) => applyLayout(s, L.showSession(s.layout, id, newId))),
+  select: (id) => {
+    set((s) => applyLayout(s, L.showSession(s.layout, id, newId)))
+    opened(id)
+  },
   dropSession: (sessionId, targetPaneId, zone) =>
     set((s) => applyLayout(s, L.dropSession(s.layout, sessionId, targetPaneId, zone, newId))),
-  focusPane: (paneId) => set((s) => applyLayout(s, L.focusPane(s.layout, paneId))),
+  focusPane: (paneId) => {
+    set((s) => applyLayout(s, L.focusPane(s.layout, paneId)))
+    opened(get().selectedSessionId)
+  },
   closePane: (paneId) => set((s) => applyLayout(s, L.closePane(s.layout, paneId))),
   setRatio: (splitId, ratio, persist = true) => set((s) => applyLayout(s, L.setRatio(s.layout, splitId, ratio), persist)),
   persistLayout: () => layoutStorage.save(get().layout),

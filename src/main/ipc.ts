@@ -69,6 +69,9 @@ export function registerIpc(d: IpcDeps): () => void {
   handle(IPC.prepareNewSession, (id: string) => manager.prepareNew(id))
   handle(IPC.startSession, (i: NewSessionInput) => manager.start(i, (p) => send(IPC.startProgress, p)))
   handle(IPC.renameSession, (id: string, title: string) => manager.rename(id, title))
+  handle(IPC.setProjectMuted, (id: string, muted: boolean) => projects.setProjectMuted(id, muted === true))
+  handle(IPC.markSessionUnread, (id: string) => manager.markUnread(id))
+  on(IPC.sessionOpened, (id: unknown) => { if (typeof id === 'string') manager.sessionOpened(id) })
   handle(IPC.termOpen, (id: string, kind: TermKind, cols: number, rows: number) => bridge.open(id, kind, cols, rows))
   const sessionFolder = (id: string): { cwd: string; kind: 'repo' | 'folder' } => {
     const s = store.state.sessions.find((x) => x.id === id && x.archivedAt === undefined)

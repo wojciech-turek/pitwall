@@ -49,6 +49,15 @@ export class ProjectService {
     return project
   }
 
+  async setProjectMuted(id: string, muted: boolean): Promise<void> {
+    await this.deps.store.update((d) => {
+      const p = d.projects.find((x) => x.id === id)
+      if (!p) throw new Error('Project not found.')
+      if (muted) p.muted = true
+      else delete p.muted
+    })
+  }
+
   async updateProject(id: string, input: ProjectInput): Promise<Project> {
     const before = this.project(id)
     if (!before) throw new Error('Project not found.')

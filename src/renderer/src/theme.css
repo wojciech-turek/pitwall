@@ -42,6 +42,8 @@ body { background: var(--bg-app); color: var(--text); font-family: var(--font-ui
 .row-muted { flex: none; max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; color: var(--text-faint); }
 .project-row .project-name { font-weight: 600; flex: 0 1 auto; }
 .project-row .row-muted { flex: 1 1 0; }
+.project-muted { flex: none; display: inline-flex; width: 14px; height: 14px; color: var(--text-faint); }
+.project-muted svg { width: 100%; height: 100%; }
 .sub-row { margin-left: 8px; color: var(--text-muted); }
 .sub-row .row-title { flex: 0 1 auto; }
 .sub-row .tag { flex: 1 1 0; }

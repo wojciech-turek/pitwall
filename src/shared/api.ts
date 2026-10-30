@@ -31,6 +31,11 @@ export interface PitwallApi {
   startSession(i: NewSessionInput): Promise<StartResult>
   onStartProgress(cb: (p: StartProgress) => void): () => void
   renameSession(id: string, title: string): Promise<void>
+  setProjectMuted(projectId: string, muted: boolean): Promise<void>
+  /** Shows a read session as unread until the user opens it. No-op for any other status. */
+  markSessionUnread(sessionId: string): Promise<void>
+  /** The user opened the session (sidebar, pane click); clears "marked as unread". */
+  sessionOpened(sessionId: string): void
   setViewing(sessionIds: string[]): void
   termOpen(sessionId: string, kind: TermKind, cols: number, rows: number): Promise<void>
   termWrite(sessionId: string, kind: TermKind, data: string): void
@@ -88,6 +93,9 @@ export const IPC = {
   prepareNewSession: 'pitwall:prepareNewSession',
   startSession: 'pitwall:startSession',
   renameSession: 'pitwall:renameSession',
+  setProjectMuted: 'pitwall:setProjectMuted',
+  markSessionUnread: 'pitwall:markSessionUnread',
+  sessionOpened: 'pitwall:sessionOpened',
   setViewing: 'pitwall:setViewing',
   termOpen: 'pitwall:termOpen',
   termWrite: 'pitwall:termWrite',

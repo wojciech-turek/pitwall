@@ -231,4 +231,16 @@ describe('ProjectService', () => {
     await svc.updateSubProject(r.subProject.id, { setupCommand: 'pnpm i' })
     expect(store.state.subProjects[0].setupCommand).toBe('pnpm i')
   })
+
+  test('mute and unmute; editing the project keeps it muted', async () => {
+    const p = await svc.createProject(input())
+    expect(p.muted).toBeUndefined()
+    await svc.setProjectMuted(p.id, true)
+    expect(store.state.projects[0].muted).toBe(true)
+    await svc.updateProject(p.id, input({ name: 'Acme 2' }))
+    expect(store.state.projects[0].muted).toBe(true)
+    await svc.setProjectMuted(p.id, false)
+    expect(store.state.projects[0].muted).toBeFalsy()
+    await expect(svc.setProjectMuted('nope', true)).rejects.toThrow('Project not found.')
+  })
 })

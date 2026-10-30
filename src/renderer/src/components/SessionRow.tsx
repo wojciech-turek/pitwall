@@ -89,6 +89,9 @@ export default function SessionRow({ session, onSelect, projectName, subProjectN
       {!editing && (
         <span className="row-actions">
           <Menu testId="session-menu" items={[
+            ...(session.status === 'read'
+              ? [{ label: 'Mark as unread', testId: 'session-mark-unread', onClick: () => void window.pitwall.markSessionUnread(session.id) }]
+              : []),
             { label: 'Archive…', testId: 'session-archive', onClick: () => openDialog({ type: 'archive', sessionId: session.id }) }
           ]} />
         </span>

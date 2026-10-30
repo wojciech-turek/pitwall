@@ -431,3 +431,86 @@ describe('SessionManager', () => {
     expect(await m.waitForFirstEvent('late', 3000)).toBe(true)
   })
 })
+
+describe('muted projects and mark as unread', () => {
+  const mute = (muted: boolean) => store.update((d) => { d.projects[0].muted = muted })
+  const readSession = (id: string) =>
+    addSession(id, {}, [{ e: 'UserPromptSubmit', t: 2000 }, { e: 'Stop', t: 3000, msg: 'done' }])
+
+  test('a muted project sends no notification and adds nothing to the badge', async () => {
+    await addSession('a')
+    const m = await ready()
+    await mute(true)
+    await ev('a', { e: 'PermissionRequest', tool: 'Bash' })
+    await waitStatus(m, 'a', 'needs_you')
+    await new Promise((r) => setTimeout(r, 300))
+    expect(notes).toEqual([])
+    expect(badges.at(-1)).toBe(0)
+    expect(status(m, 'a')).toBe('needs_you') // the sidebar and title-bar counts still show it
+  })
+
+  test('unmuting brings the badge back', async () => {
+    await addSession('a')
+    await mute(true)
+    const m = await ready()
+    await ev('a', { e: 'PermissionRequest', tool: 'Bash' })
+    await waitStatus(m, 'a', 'needs_you')
+    expect(badges.at(-1)).toBe(0)
+    await mute(false)
+    await waitFor(async () => badges.at(-1) === 1)
+    await ev('a', { e: 'PermissionRequest', tool: 'Bash' })
+  })
+
+  test('mark as unread: unread, counted, stays while merely visible, clears when opened', async () => {
+    await readSession('a')
+    const m = await ready()
+    expect(status(m, 'a')).toBe('unread') // lastViewedAt 1000 < finished
+    m.setViewing(['a'], true)
+    expect(status(m, 'a')).toBe('read')
+    await m.markUnread('a')
+    expect(status(m, 'a')).toBe('unread')
+    expect(badges.at(-1)).toBe(1)
+    m.setViewing(['a'], true)
+    expect(status(m, 'a')).toBe('unread')
+    m.sessionOpened('a')
+    await waitStatus(m, 'a', 'read')
+    expect(badges.at(-1)).toBe(0)
+    expect(store.state.sessions[0].markedUnread).toBeFalsy()
+  })
+
+  test('typing into the Claude terminal clears it; shell input does not', async () => {
+    await readSession('a')
+    const m = await ready()
+    m.setViewing(['a'], true)
+    await m.markUnread('a')
+    m.userInput('a', 'shell', 'ls')
+    expect(status(m, 'a')).toBe('unread')
+    m.userInput('a', 'claude', 'h')
+    await waitStatus(m, 'a', 'read')
+  })
+
+  test('a muted project does not count a marked session in the badge', async () => {
+    await readSession('a')
+    await mute(true)
+    const m = await ready()
+    m.setViewing(['a'], true)
+    await m.markUnread('a')
+    expect(status(m, 'a')).toBe('unread')
+    expect(badges.at(-1)).toBe(0)
+  })
+
+  test('marking a session that is not read is a no-op', async () => {
+    await addSession('a', {}, [{ e: 'UserPromptSubmit', t: 2000 }])
+    const m = await ready()
+    await m.markUnread('a')
+    expect(status(m, 'a')).toBe('working')
+    expect(store.state.sessions[0].markedUnread).toBeFalsy()
+  })
+
+  test('state without the new fields loads', async () => {
+    await addSession('a')
+    const m = await ready()
+    expect(m.snapshot().projects[0].muted).toBeUndefined()
+    expect(status(m, 'a')).toBe('starting')
+  })
+})

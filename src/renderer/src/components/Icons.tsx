@@ -9,3 +9,6 @@ export const DotsIcon = (): React.JSX.Element => (
 export const FolderPlusIcon = (): React.JSX.Element => (
   <svg {...base}><path d="M2 4.5a1 1 0 0 1 1-1h3l1.3 1.5H13a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z" /><path d="M8 7.5v3M6.5 9h3" /></svg>
 )
+export const MutedBellIcon = (): React.JSX.Element => (
+  <svg {...base}><path d="M4 11.5h8l-1-1.5V7a3 3 0 0 0-6 0v3zM6.8 13.2a1.3 1.3 0 0 0 2.4 0M2.5 2.5l11 11" /></svg>
+)

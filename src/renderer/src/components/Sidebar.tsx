@@ -2,7 +2,7 @@ import type { AppSnapshot, Project, SubProject } from '@shared/types'
 import ArchivedList from './ArchivedList'
 import SessionRow from './SessionRow'
 import Menu from './Menu'
-import { FolderPlusIcon, PlusIcon } from './Icons'
+import { FolderPlusIcon, MutedBellIcon, PlusIcon } from './Icons'
 import { useUi } from '../state/ui'
 import { useToast } from '../state/toast'
 import { cleanIpcError } from '../state/errors'
@@ -66,6 +66,7 @@ export default function Sidebar({ snap, onSelect }: { snap: AppSnapshot; onSelec
           <div key={p.id} className="project-group">
             <div className="row project-row" data-testid="project-row" data-name={p.name}>
               <span className="row-title project-name">{p.name}</span>
+              {p.muted && <span className="project-muted" data-testid="project-muted" title="Notifications muted"><MutedBellIcon /></span>}
               {p.identity.ghAccount && <span className="row-muted">{p.identity.ghAccount}</span>}
               <span className="row-actions">
                 <button className="icon-btn" data-testid="add-folder" title="Add folder…" aria-label="Add folder"
@@ -75,6 +76,10 @@ export default function Sidebar({ snap, onSelect }: { snap: AppSnapshot; onSelec
                 <Menu testId="project-menu" items={[
                   { label: 'Edit project', onClick: () => openDialog({ type: 'project', projectId: p.id }) },
                   { label: 'Add folder…', onClick: () => void addFolder(p) },
+                  {
+                    label: p.muted ? 'Unmute notifications' : 'Mute notifications', testId: 'project-mute',
+                    onClick: () => void window.pitwall.setProjectMuted(p.id, !p.muted)
+                  },
                   { label: 'Remove project', danger: true, onClick: () => void run(window.pitwall.removeProject(p.id)) }
                 ]} />
               </span>
