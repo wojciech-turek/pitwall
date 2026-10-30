@@ -47,13 +47,15 @@ Like a pit wall in a race, you watch every car at once and only radio in when on
 
 - **Projects → folders → sessions.** A project (for example "Work" or "Personal") groups the folders and repos that share one git identity. Add folders with the folder picker. Each folder can run any number of sessions, and you can give each session a title.
 - **Real Claude Code in a real terminal.** The Claude tab is the actual `claude` CLI, with all your settings, plugins and skills. A Shell tab per session has the same identity and folder.
-- **Live status** from Claude Code hooks: working, needs you (permission prompts, questions), unread replies and errors. Hovering a session shows its last reply.
+- **Live status** from Claude Code hooks: working, needs you (permission prompts, questions), unread replies and errors. Hovering a session shows its last reply. **Mark as unread** keeps a session waiting for you, and **Mute notifications** quiets a whole project (its status still shows in the sidebar).
+- **Command palette (⌘K).** Jump to any session, file, past session or action by typing; **⌘Enter** opens a session split to the right. **⌘P** opens a file in the current session.
 - **Split view.** Drag sessions from the sidebar onto the middle area. A preview shows whether it will split left, right, up or down, or replace the pane. You can have up to 4 panes, resize them, and the layout survives restarts.
 - **Files and changes.** Browse the session's files, edit and save them (⌘S), view split or unified diffs against the base branch, and see +/− counts in the sidebar. **Send to agent** pastes `@path` into the prompt.
 - **Drop files onto a terminal** from Finder or Cursor to paste their paths, as in Terminal.app.
 - **PR badges** (when `gh` is set up for the project): open, merged or closed, with checks status. When a PR is merged, Pitwall offers to archive the session.
 - **Claude usage meter**: your 5-hour and weekly subscription limits and when they reset.
-- **Setup command per folder**, for example `pnpm install`, run once in each new worktree. **Open in Cursor** opens a session's worktree in Cursor.
+- **Search and resume past sessions.** Find a session by its title or anything said in its Claude conversation, including archived ones, and bring an archived session back in its folder and branch to continue the same conversation. Pitwall only reads the conversation files Claude already keeps.
+- **Setup and teardown commands per folder.** Setup (for example `pnpm install`) runs once in each new worktree; teardown (for example `docker compose down`) runs when you archive a session, before its folder is deleted. Archiving also stops processes the session left running, so nothing is left behind. **Open in Cursor** opens a session's worktree in Cursor.
 
 ## Requirements
 
@@ -113,6 +115,8 @@ Everything stays on your Mac. Pitwall has no telemetry and no account. Apart fro
 
 | Shortcut | Action |
 | --- | --- |
+| `⌘K` | Command palette: sessions, actions, files and past sessions (`⌘Enter` opens a session split right) |
+| `⌘P` | Open a file in the current session |
 | `⌘N` | New session in the active pane's folder |
 | `⌘1` … `⌘9` | Go to the Nth session in the sidebar |
 | `⌘J` | Next session that needs you (then the next unread one) |

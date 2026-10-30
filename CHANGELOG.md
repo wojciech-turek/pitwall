@@ -2,6 +2,17 @@
 
 All notable changes to Pitwall are listed here, newest first. Pitwall shows these notes when an update is available, before you download it.
 
+## [0.2.0] - 2026-10-30
+
+### Added
+
+- **Command palette (⌘K).** Type to jump to any session, file, past session or action. **⌘Enter** opens a session split to the right, and **⌘P** opens a file in the current session.
+- **Search and resume past sessions.** Find sessions by title or by anything said in their Claude conversation, archived ones included. **Resume** brings an archived session back in its folder and branch and continues the same conversation.
+- **Mute a project** from its ⋯ menu: no notifications and no Dock badge from its sessions, while the sidebar still shows their status.
+- **Mark as unread** from a session's ⋯ menu, so it waits for you like a fresh reply.
+- **Teardown command** per folder, next to the setup command, for example `docker compose down`. It runs when you archive a session, before the worktree is deleted. If it fails, you can cancel or archive anyway.
+- **Archiving cleans up after the agent.** Processes a session left running, such as a dev server started in the background, are stopped when you archive it.
+
 ## [0.1.0] - 2026-10-30
 
 First public release.
