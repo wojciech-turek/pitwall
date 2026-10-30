@@ -6,7 +6,7 @@ import { launcherChoice, sessionBackendKind, type SessionBackend } from './backe
 import { exec } from './exec'
 import { historySources, SessionHistory } from './history'
 import { HostBackend } from './host-backend'
-import { appShortcut, buildMenuTemplate } from './menu'
+import { buildMenuTemplate } from './menu'
 import { GitClient } from './git'
 import { ChangesService } from './changes'
 import { PrPoller } from './pr'
@@ -101,13 +101,6 @@ function createWindow(): void {
   w.on('focus', () => {
     if (WINDOWS) w.flashFrame(false)
     manager?.setViewing(visibleIds, true)
-  })
-  // Windows: the menu's Ctrl shortcuts go to the app even while a terminal has the keyboard (see appShortcut).
-  w.webContents.on('before-input-event', (e, input) => {
-    const command = appShortcut(input, process.platform)
-    if (!command) return
-    e.preventDefault()
-    w.webContents.send(IPC.menuCommand, command)
   })
   w.on('blur', () => manager?.setViewing(visibleIds, false))
   // Nothing may replace the app's UI (a file dropped outside a terminal used to navigate to it). The one exception is
@@ -254,7 +247,7 @@ async function bootstrap(): Promise<void> {
       mgr.setViewing(ids, win?.isFocused() ?? false)
     }
   })
-  Menu.setApplicationMenu(Menu.buildFromTemplate(buildMenuTemplate((c) => send(IPC.menuCommand, c), !app.isPackaged)))
+  Menu.setApplicationMenu(Menu.buildFromTemplate(buildMenuTemplate((c) => send(IPC.menuCommand, c), !app.isPackaged, process.platform)))
   createWindow()
 }
 

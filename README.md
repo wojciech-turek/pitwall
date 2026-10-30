@@ -124,7 +124,7 @@ Everything stays on your Mac. Pitwall has no telemetry and no account. Apart fro
 | `⌘W` | Close the file or diff tab. On a Claude or Shell tab with 2+ panes, close the pane (the session keeps running) |
 | `⌘,` | Settings (font, update checks, version) |
 
-On Windows the same shortcuts use Ctrl instead of ⌘ (`Ctrl+K`, `Ctrl+Enter`, …). In a terminal there, `Ctrl+V` pastes and `Ctrl+C` copies when text is selected (otherwise it interrupts, as usual).
+On Windows the same shortcuts use Ctrl instead of ⌘ (`Ctrl+K`, `Ctrl+Enter`, …). In a terminal use `Ctrl+Shift+<key>` instead (`Ctrl+Shift+K`, `Ctrl+Shift+1`, …): plain `Ctrl+<key>` goes to the program running there. `Ctrl+S` saves in the editor. In a terminal `Ctrl+V` pastes and `Ctrl+C` copies when text is selected (otherwise it interrupts, as usual).
 
 ## Where things live
 

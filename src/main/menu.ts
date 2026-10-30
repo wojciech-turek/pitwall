@@ -4,10 +4,14 @@ import type { MenuCommand } from '@shared/api'
 /**
  * The application menu. Pure (types only from electron) so it can be tested in node.
  * ⌘W closes the active tab, never the window.
+ * Windows: the shortcuts are shown but not registered. Ctrl+<key> belongs to the program in a terminal and to the
+ * editor or text field elsewhere; the renderer takes the app's shortcuts itself (appShortcutFor).
  */
-export function buildMenuTemplate(send: (c: MenuCommand) => void, isDev: boolean): MenuItemConstructorOptions[] {
+export function buildMenuTemplate(
+  send: (c: MenuCommand) => void, isDev: boolean, platform: NodeJS.Platform = process.platform
+): MenuItemConstructorOptions[] {
   const cmd = (label: string, accelerator: string, command: MenuCommand): MenuItemConstructorOptions => ({
-    label, accelerator, click: () => send(command)
+    label, accelerator, click: () => send(command), ...(platform === 'win32' ? { registerAccelerator: false } : {})
   })
   const sessionItems: MenuItemConstructorOptions[] = Array.from({ length: 9 }, (_, i) =>
     cmd(`Session ${i + 1}`, `CmdOrCtrl+${i + 1}`, { type: 'select-index', index: i }))
@@ -64,22 +68,3 @@ export function buildMenuTemplate(send: (c: MenuCommand) => void, isDev: boolean
   ]
 }
 
-/** The menu's Ctrl shortcuts (accelerators `CmdOrCtrl+<key>` above); a test keeps the two in step. */
-const SHORTCUTS: Record<string, MenuCommand> = {
-  ',': { type: 'settings' }, n: { type: 'new-session' }, s: { type: 'save' }, w: { type: 'close-tab' },
-  k: { type: 'command-palette' }, p: { type: 'quick-open' }, j: { type: 'next-attention' }
-}
-
-export interface KeyInput { type: string; key: string; control: boolean; meta: boolean; alt: boolean; shift: boolean }
-
-/**
- * Windows: the menu's shortcuts (Ctrl there), taken before the page sees them, so they work while a terminal has the
- * keyboard (it would send Ctrl+K and the rest to the program as control characters) and with the menu bar hidden.
- * macOS: null; the menu takes ⌘ shortcuts itself, and ⌘ never reaches a terminal as a control key.
- */
-export function appShortcut(input: KeyInput, platform: NodeJS.Platform): MenuCommand | null {
-  if (platform === 'darwin' || input.type !== 'keyDown' || !input.control || input.meta || input.alt || input.shift) return null
-  const key = input.key.toLowerCase()
-  if (/^[1-9]$/.test(key)) return { type: 'select-index', index: Number(key) - 1 }
-  return SHORTCUTS[key] ?? null
-}

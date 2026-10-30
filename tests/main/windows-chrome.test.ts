@@ -2,9 +2,8 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import type { MenuItemConstructorOptions } from 'electron'
 import { describe, expect, test } from 'vitest'
-import type { MenuCommand } from '../../src/shared/api'
 import { badgeBitmap, badgeDescription, badgeText } from '../../src/main/badge'
-import { appShortcut, buildMenuTemplate, type KeyInput } from '../../src/main/menu'
+import { buildMenuTemplate } from '../../src/main/menu'
 import { TITLE_BAR, windowChrome } from '../../src/main/window-chrome'
 
 describe('window chrome', () => {
@@ -22,45 +21,17 @@ describe('window chrome', () => {
   })
 })
 
-describe('Ctrl shortcuts on Windows', () => {
-  const press = (key: string, o: Partial<KeyInput> = {}): KeyInput =>
-    ({ type: 'keyDown', key, control: true, meta: false, alt: false, shift: false, ...o })
+describe('the menu on Windows', () => {
+  const flatten = (items: MenuItemConstructorOptions[]): MenuItemConstructorOptions[] =>
+    items.flatMap((i) => [i, ...(Array.isArray(i.submenu) ? flatten(i.submenu) : [])])
 
-  /** Every `CmdOrCtrl+<key>` in the menu, with the command it sends. */
-  function menuShortcuts(): Map<string, MenuCommand> {
-    const out = new Map<string, MenuCommand>()
-    let sent: MenuCommand | null = null
-    const walk = (items: MenuItemConstructorOptions[]): void => {
-      for (const it of items) {
-        if (Array.isArray(it.submenu)) walk(it.submenu)
-        const m = /^CmdOrCtrl\+(.)$/.exec(String(it.accelerator ?? ''))
-        if (!m || !it.click) continue
-        ;(it.click as () => void)()
-        out.set(m[1], sent!)
-      }
+  test('shows its shortcuts but registers none (the renderer maps them); macOS registers them as before', () => {
+    const win = flatten(buildMenuTemplate(() => {}, false, 'win32')).filter((i) => i.accelerator)
+    expect(win.length).toBe(16)
+    for (const i of win) expect(i.registerAccelerator).toBe(false)
+    for (const i of flatten(buildMenuTemplate(() => {}, false, 'darwin')).filter((x) => x.accelerator)) {
+      expect('registerAccelerator' in i).toBe(false)
     }
-    walk(buildMenuTemplate((c) => { sent = c }, false))
-    return out
-  }
-
-  test('each of the menu\'s shortcuts, and only those, goes to the app', () => {
-    const menu = menuShortcuts()
-    expect(menu.size).toBe(16)
-    for (const [key, command] of menu) {
-      expect(appShortcut(press(key), 'win32')).toEqual(command)
-      expect(appShortcut(press(key.toUpperCase()), 'win32')).toEqual(command)
-    }
-    for (const key of ['c', 'v', 'a', 'd', 'r', 'u', 'l', 'Enter', 'Tab', '0']) expect(appShortcut(press(key), 'win32')).toBeNull()
-  })
-
-  test('only Ctrl alone, on key down, on Windows', () => {
-    expect(appShortcut(press('k', { shift: true }), 'win32')).toBeNull()
-    expect(appShortcut(press('k', { alt: true }), 'win32')).toBeNull()
-    expect(appShortcut(press('k', { meta: true }), 'win32')).toBeNull()
-    expect(appShortcut(press('k', { control: false }), 'win32')).toBeNull()
-    expect(appShortcut(press('k', { type: 'keyUp' }), 'win32')).toBeNull()
-    expect(appShortcut(press('k'), 'darwin')).toBeNull() // the menu handles ⌘ there
-    expect(appShortcut(press('k', { control: false, meta: true }), 'darwin')).toBeNull()
   })
 })
 

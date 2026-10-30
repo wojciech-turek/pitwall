@@ -223,8 +223,9 @@ export default function CommandPalette({ snap, mode }: { snap: AppSnapshot; mode
   }
   const onKeyDown = (e: React.KeyboardEvent): void => {
     const ctrl = e.ctrlKey && !e.metaKey && !e.altKey
-    if (e.key === 'ArrowDown' || (ctrl && e.key === 'n')) { e.preventDefault(); move(1) }
-    else if (e.key === 'ArrowUp' || (ctrl && e.key === 'p')) { e.preventDefault(); move(-1) }
+    // Ctrl+N/P move here; they never reach the app's own shortcuts (new session, go to file on Windows).
+    if (e.key === 'ArrowDown' || (ctrl && e.key === 'n')) { e.preventDefault(); e.stopPropagation(); move(1) }
+    else if (e.key === 'ArrowUp' || (ctrl && e.key === 'p')) { e.preventDefault(); e.stopPropagation(); move(-1) }
     else if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); run(enterTarget(), modDown(e)) }
     else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close() }
     else if (e.key === 'Tab') e.preventDefault()

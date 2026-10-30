@@ -2,7 +2,10 @@ import { describe, expect, test } from 'vitest'
 import { formatAgentReference } from '../../src/shared/agent-ref'
 import { isMac, modDown, modKey, platform, shortcut } from '../../src/renderer/src/platform'
 import { paletteActions } from '../../src/renderer/src/state/palette'
-import { shouldPassToApp } from '../../src/renderer/src/terminal/keys'
+import { appShortcutFor, shouldPassToApp } from '../../src/renderer/src/terminal/keys'
+import { buildMenuTemplate } from '../../src/main/menu'
+import type { MenuItemConstructorOptions } from 'electron'
+import type { MenuCommand } from '../../src/shared/api'
 import { dropText, formatDroppedPaths, shellEscapePath } from '../../src/renderer/src/terminal/paths'
 import type { AppSnapshot } from '../../src/shared/types'
 
@@ -34,23 +37,71 @@ describe('platform helpers', () => {
   })
 })
 
-describe('terminal keys on Windows', () => {
-  const key = (k: string, o: { ctrlKey?: boolean; shiftKey?: boolean; altKey?: boolean; metaKey?: boolean } = {}) =>
-    ({ key: k, metaKey: false, ctrlKey: true, shiftKey: false, altKey: false, ...o })
-  const win = { platform: 'win32' }
+describe('shortcuts on Windows', () => {
+  type K = { code: string; key?: string; ctrlKey?: boolean; shiftKey?: boolean; altKey?: boolean; metaKey?: boolean }
+  const key = (o: K) => ({ key: o.key ?? o.code.replace(/^(Key|Digit)/, '').toLowerCase(), metaKey: false, ctrlKey: true, shiftKey: false, altKey: false, ...o })
+  const win = (inTerminal: boolean) => ({ platform: 'win32', inTerminal })
 
-  test('Ctrl+V pastes; Ctrl+C copies a selection and is the interrupt otherwise; Ctrl+Shift+C/V always copy/paste', () => {
-    expect(shouldPassToApp(key('v'), win)).toBe(true)
-    expect(shouldPassToApp(key('V', { shiftKey: true }), win)).toBe(true)
-    expect(shouldPassToApp(key('c'), { ...win, hasSelection: true })).toBe(true)
-    expect(shouldPassToApp(key('c'), { ...win, hasSelection: false })).toBe(false)
-    expect(shouldPassToApp(key('C', { shiftKey: true }), win)).toBe(true)
+  /** Every `CmdOrCtrl+<key>` in the menu, with the command it sends. */
+  function menuShortcuts(): Array<[string, MenuCommand]> {
+    const out: Array<[string, MenuCommand]> = []
+    let sent: MenuCommand | null = null
+    const walk = (items: MenuItemConstructorOptions[]): void => {
+      for (const it of items) {
+        if (Array.isArray(it.submenu)) walk(it.submenu)
+        const m = /^CmdOrCtrl\+(.)$/.exec(String(it.accelerator ?? ''))
+        if (!m || !it.click) continue
+        ;(it.click as () => void)()
+        out.push([m[1], sent!])
+      }
+    }
+    walk(buildMenuTemplate((c) => { sent = c }, false, 'win32'))
+    return out
+  }
+  const codeOf = (k: string) => (k === ',' ? 'Comma' : /\d/.test(k) ? `Digit${k}` : `Key${k.toUpperCase()}`)
+
+  test('every menu shortcut but Save has a renderer mapping: plain Ctrl outside terminals, Ctrl+Shift in them', () => {
+    const menu = menuShortcuts()
+    expect(menu).toHaveLength(16)
+    for (const [k, command] of menu) {
+      const code = codeOf(k)
+      if (k === 'S') {
+        // Ctrl+S is never taken: CodeMirror's Mod-s saves the open file.
+        expect(appShortcutFor(key({ code }), win(false))).toBeNull()
+        expect(appShortcutFor(key({ code, shiftKey: true }), win(true))).toBeNull()
+        continue
+      }
+      expect(appShortcutFor(key({ code }), win(false))).toEqual(command)
+      expect(appShortcutFor(key({ code, shiftKey: true }), win(false))).toEqual(command) // Shift tolerated
+      expect(appShortcutFor(key({ code, shiftKey: true }), win(true))).toEqual(command)
+      expect(appShortcutFor(key({ code }), win(true))).toBeNull() // plain Ctrl+<key> is the program's
+    }
   })
 
-  test('every other Ctrl key, and Alt combinations, stay with the program', () => {
-    for (const k of ['k', 'p', 'w', 'r', 'd', 'z', 'a', '[']) expect(shouldPassToApp(key(k), win)).toBe(false)
-    expect(shouldPassToApp(key('v', { altKey: true }), win)).toBe(false)
-    expect(shouldPassToApp(key('x', { ctrlKey: false }), win)).toBe(false)
+  test('by physical key, whatever the layout prints; AltGr (Ctrl+Alt) types characters; nothing on macOS', () => {
+    expect(appShortcutFor(key({ code: 'Digit3', key: '#' }), win(false))).toEqual({ type: 'select-index', index: 2 })
+    expect(appShortcutFor(key({ code: 'KeyK', key: 'л' }), win(false))).toEqual({ type: 'command-palette' })
+    expect(appShortcutFor(key({ code: 'KeyN', altKey: true }), win(false))).toBeNull() // AltGr+N is ń in Polish
+    expect(appShortcutFor(key({ code: 'KeyK', metaKey: true }), win(false))).toBeNull()
+    expect(appShortcutFor(key({ code: 'KeyK', ctrlKey: false }), win(false))).toBeNull()
+    expect(appShortcutFor(key({ code: 'Digit0' }), win(false))).toBeNull()
+    expect(appShortcutFor(key({ code: 'KeyK' }), { platform: 'darwin', inTerminal: false })).toBeNull()
+  })
+
+  test('in a terminal: Ctrl+Shift+<app key> goes to the app; plain Ctrl+<letter> to the program, except the clipboard', () => {
+    const t = { platform: 'win32' }
+    for (const code of ['KeyK', 'KeyP', 'KeyN', 'KeyW', 'KeyJ', 'Comma', 'Digit1', 'Digit9']) {
+      expect(shouldPassToApp(key({ code, shiftKey: true }), t)).toBe(true)
+      expect(shouldPassToApp(key({ code }), t)).toBe(false)
+    }
+    for (const code of ['KeyS', 'KeyR', 'KeyD', 'KeyZ', 'KeyA']) expect(shouldPassToApp(key({ code }), t)).toBe(false)
+    expect(shouldPassToApp(key({ code: 'KeyS', shiftKey: true }), t)).toBe(false)
+    expect(shouldPassToApp(key({ code: 'KeyV' }), t)).toBe(true)
+    expect(shouldPassToApp(key({ code: 'KeyV', shiftKey: true }), t)).toBe(true)
+    expect(shouldPassToApp(key({ code: 'KeyC' }), { ...t, hasSelection: true })).toBe(true)
+    expect(shouldPassToApp(key({ code: 'KeyC' }), { ...t, hasSelection: false })).toBe(false)
+    expect(shouldPassToApp(key({ code: 'KeyC', shiftKey: true }), t)).toBe(true)
+    expect(shouldPassToApp(key({ code: 'KeyK', shiftKey: true, altKey: true }), t)).toBe(false)
   })
 
   test('macOS is unchanged', () => {
