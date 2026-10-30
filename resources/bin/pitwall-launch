@@ -7,14 +7,17 @@ dir="$1"
 load_identity() {
   . "$dir/env.sh"
   if [ -n "$PITWALL_GH_ACCOUNT" ]; then
-    # Only the project's own token may reach gh: inherited ones would win over it, even in `gh auth token`.
+    # Tokens inherited from the user's shell must not stand in for the project's account (gh prefers them, even
+    # for `gh auth token`). Drop them, then re-apply env.sh so the project's own extra variables stay.
     unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN
-    GH_TOKEN=$("${PITWALL_GH_BIN:-gh}" auth token --hostname github.com --user "$PITWALL_GH_ACCOUNT" 2>/dev/null)
+    . "$dir/env.sh"
+    GH_TOKEN=$(env -u GITHUB_TOKEN -u GH_ENTERPRISE_TOKEN -u GITHUB_ENTERPRISE_TOKEN \
+      "${PITWALL_GH_BIN:-gh}" auth token --hostname github.com --user "$PITWALL_GH_ACCOUNT" 2>/dev/null)
     if [ -n "$GH_TOKEN" ]; then
       export GH_TOKEN
     else
       # Fail closed: signed-out gh beats gh silently acting as whichever account is active.
-      unset GH_TOKEN
+      unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN
       export GH_CONFIG_DIR="$PITWALL_SESSION_DIR/gh-unauthenticated"
       mkdir -p "$GH_CONFIG_DIR"
       echo "pitwall: couldn't get a GitHub token for $PITWALL_GH_ACCOUNT — gh commands will run signed out. Check \`gh auth status\`."

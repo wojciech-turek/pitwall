@@ -270,6 +270,17 @@ describe('archive', () => {
       expect(await has(s.worktreePath!)).toBe(false)
     })
 
+    test("with a project GitHub account: the project's token and extra env reach teardown, inherited tokens don't", async () => {
+      const { sp, deps } = await addRepo()
+      const s = await startOne(sp)
+      await store.update((d) => { d.projects[0].extraEnv = [{ key: 'GITHUB_TOKEN', value: 'from-project' }] })
+      deps.env = { ...deps.env, GITHUB_TOKEN: 'inherited', GH_ENTERPRISE_TOKEN: 'inherited' }
+      const out = join(t.tmp, 'tokens.txt')
+      await setTeardown(`echo "$GH_TOKEN|$GITHUB_TOKEN|\${GH_ENTERPRISE_TOKEN:-none}" > ${out}`)
+      expect(await archiveSession(s.id, { confirmedDataLoss: false }, deps)).toEqual({ ok: true })
+      expect((await readFile(out, 'utf8')).trim()).toBe('token-for-dev-work|from-project|none')
+    })
+
     test('non-zero exit reports the code and last 4 KB, leaves the worktree', async () => {
       const { sp, deps } = await addRepo()
       const s = await startOne(sp)

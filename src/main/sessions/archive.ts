@@ -1,7 +1,7 @@
 import { access, mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { ArchiveCheck, ArchiveResult, Session, SubProject } from '@shared/types'
-import { buildSessionEnv, getGhToken, INHERITED_GH_TOKENS } from '../identity'
+import { buildSessionEnv, getGhToken, INHERITED_GH_TOKENS, withoutGhTokens } from '../identity'
 import { eventsFile, sessionDir } from '../paths'
 import type { PtyBridge } from '../pty-bridge'
 import { claudeTmuxName, shellTmuxName } from '../tmux'
@@ -38,13 +38,12 @@ function find(id: string, deps: ArchiveDeps): { s: Session; sp?: SubProject } | 
  */
 async function applyGhAccount(env: Record<string, string>, account: string, dir: string, deps: ArchiveDeps): Promise<void> {
   if (!account) return
-  for (const k of INHERITED_GH_TOKENS) delete env[k] // only the project's own token may reach gh
   const token = await getGhToken(deps.paths.ghBin, account, deps.exec, deps.env).catch(() => null)
   if (token) {
     env.GH_TOKEN = token
     return
   }
-  delete env.GH_TOKEN
+  for (const k of INHERITED_GH_TOKENS) delete env[k] // fail closed: no token of any kind
   env.GH_CONFIG_DIR = join(dir, 'gh-unauthenticated')
   await mkdir(env.GH_CONFIG_DIR, { recursive: true })
 }
@@ -133,7 +132,9 @@ export async function archiveSession(
       if (project) {
         const dir = sessionDir(deps.paths, s.id)
         const env: Record<string, string> = {
-          ...deps.env,
+          // With a project account, tokens inherited from the user's shell must not stand in for it; the
+          // project's own extra variables (merged next) are kept.
+          ...(project.identity.ghAccount ? withoutGhTokens(deps.env) : deps.env),
           ...buildSessionEnv({
             project, session: s, rootPath: sp.repoRoot ?? sp.path, sessionDir: dir,
             eventsFile: eventsFile(deps.paths, s.id), claudeBin: deps.paths.claudeBin, ghBin: deps.paths.ghBin,
