@@ -8,6 +8,7 @@ import type { MenuItemConstructorOptions } from 'electron'
 import type { MenuCommand } from '../../src/shared/api'
 import { dropText, formatDroppedPaths, shellEscapePath } from '../../src/renderer/src/terminal/paths'
 import type { AppSnapshot } from '../../src/shared/types'
+import { stepLabel } from '../../src/renderer/src/components/StartProgressList'
 
 describe('platform helpers', () => {
   test('macOS without a window (tests); shortcut labels say ⌘ there and Ctrl+ on Windows', () => {
@@ -142,5 +143,13 @@ describe('paths crossing into a prompt on Windows', () => {
     expect(formatAgentReference('src\\main\\index.ts', undefined, 'win32')).toBe('@src/main/index.ts ')
     expect(formatAgentReference('docs\\My Notes.md', { fromLine: 3, toLine: 9 }, 'win32')).toBe('@"docs/My Notes.md" (lines 3-9) ')
     expect(formatAgentReference('src/a\\b.ts')).toBe('@src/a\\b.ts ') // elsewhere a backslash is part of a name
+  })
+})
+
+describe('progress steps', () => {
+  test('the terminal step names tmux only on macOS', () => {
+    expect(stepLabel('tmux', true)).toBe('Start tmux')
+    expect(stepLabel('tmux', false)).toBe('Start the terminal')
+    expect(stepLabel('claude', false)).toBe('Start Claude')
   })
 })

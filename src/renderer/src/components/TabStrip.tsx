@@ -1,7 +1,6 @@
 import { useUi, type MainTab } from '../state/ui'
 import { requestFocus } from '../terminal/termCache'
-
-const basename = (p: string): string => p.split('/').filter(Boolean).pop() ?? p
+import { baseName } from '@shared/base-name'
 
 export default function TabStrip({ sessionId, tabs, active }: {
   sessionId: string; tabs: MainTab[]; active: string
@@ -14,7 +13,7 @@ export default function TabStrip({ sessionId, tabs, active }: {
     <div className="tabstrip" role="tablist">
       {tabs.map((t) => {
         const isTerm = t.id === 'claude' || t.id === 'shell'
-        const label = t.id === 'claude' ? 'Claude' : t.id === 'shell' ? 'Shell' : `${'kind' in t && t.kind === 'diff' ? 'Diff · ' : ''}${basename((t as { path: string }).path)}`
+        const label = t.id === 'claude' ? 'Claude' : t.id === 'shell' ? 'Shell' : `${'kind' in t && t.kind === 'diff' ? 'Diff · ' : ''}${baseName((t as { path: string }).path)}`
         return (
           <div key={t.id} role="tab" aria-selected={t.id === active} data-testid={`tab-${isTerm ? t.id : t.id}`}
             className={`tab${t.id === active ? ' active' : ''}`}

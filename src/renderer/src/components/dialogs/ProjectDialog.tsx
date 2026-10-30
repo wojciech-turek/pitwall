@@ -4,8 +4,7 @@ import Dialog from './Dialog'
 import { useUi } from '../../state/ui'
 import { useSnapshot } from '../../state/snapshot'
 import { cleanIpcError } from '../../state/errors'
-
-const basename = (p: string): string => p.split('/').filter(Boolean).pop() ?? p
+import { baseName } from '@shared/base-name'
 
 export default function ProjectDialog({ projectId }: { projectId?: string }): React.JSX.Element {
   const close = useUi((s) => s.closeDialog)
@@ -87,7 +86,7 @@ export default function ProjectDialog({ projectId }: { projectId?: string }): Re
         <label>SSH key
           <select data-testid="ssh-key-select" value={sshKeyPath} onChange={(e) => setSsh(e.target.value)}>
             <option value="">None — use my default SSH setup</option>
-            {keyOptions.map((k) => <option key={k} value={k}>{basename(k)}</option>)}
+            {keyOptions.map((k) => <option key={k} value={k}>{baseName(k)}</option>)}
           </select>
         </label>
         <label>GitHub account

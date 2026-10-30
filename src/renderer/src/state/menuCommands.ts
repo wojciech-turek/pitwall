@@ -9,8 +9,7 @@ import { panes } from './layout'
 import type { PaletteMode } from './palette'
 import { platform } from '../platform'
 import { appShortcutFor } from '../terminal/keys'
-
-const basename = (p: string): string => p.split('/').filter(Boolean).pop() ?? p
+import { baseName } from '@shared/base-name'
 
 /** ⌘J: the next session that needs you, then the next unread one. */
 export function goToNextAttention(s: AppSnapshot | null): void {
@@ -63,7 +62,7 @@ export function runMenuCommand(c: MenuCommand, s: AppSnapshot | null): void {
         if (active && panes(ui.layout).length > 1) ui.closePane(active)
         return
       }
-      if (ui.dirty[`${sel}:${tab.id}`]) ui.openDialog({ type: 'discard-file', sessionId: sel, tabId: tab.id, name: basename(tab.path) })
+      if (ui.dirty[`${sel}:${tab.id}`]) ui.openDialog({ type: 'discard-file', sessionId: sel, tabId: tab.id, name: baseName(tab.path) })
       else ui.closeTab(sel, tab.id)
       return
     }

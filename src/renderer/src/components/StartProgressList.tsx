@@ -1,7 +1,13 @@
 import type { StartStep } from '@shared/types'
+import { isMac } from '../platform'
 
-export const STEP_LABEL: Record<StartStep, string> = {
-  identity: 'Check identity', worktree: 'Create worktree', files: 'Write session files', tmux: 'Start tmux', claude: 'Start Claude'
+/** The step that starts the session's terminal is "tmux" inside; only macOS runs tmux. */
+export function stepLabel(step: StartStep, mac: boolean = isMac()): string {
+  const labels: Record<StartStep, string> = {
+    identity: 'Check identity', worktree: 'Create worktree', files: 'Write session files',
+    tmux: mac ? 'Start tmux' : 'Start the terminal', claude: 'Start Claude'
+  }
+  return labels[step]
 }
 export const STEPS: StartStep[] = ['identity', 'worktree', 'files', 'tmux', 'claude']
 
@@ -18,7 +24,7 @@ export default function StartProgressList({ steps, folder }: { steps: Partial<Re
         return (
           <li key={s} className={`progress-step ${info.state}`} data-step={s} data-state={info.state}>
             <span className={`progress-icon${info.state === 'running' ? ' spin' : ''}`} aria-hidden>{ICON[info.state]}</span>
-            <span className="progress-label">{STEP_LABEL[s]}</span>
+            <span className="progress-label">{stepLabel(s)}</span>
             {info.message && <div className="progress-msg">{info.message}</div>}
           </li>
         )
