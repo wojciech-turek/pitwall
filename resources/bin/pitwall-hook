@@ -1,0 +1,20 @@
+#!/bin/sh
+# Pitwall hook: reads a Claude Code hook payload on stdin, appends one compact JSON line to $1.
+# Usage: pitwall-hook <eventsFile> <pitwallSessionId>. Always exits 0; never writes to stdout.
+exec >/dev/null 2>&1
+
+JQ=/usr/bin/jq
+[ -x "$JQ" ] || JQ=$(command -v jq) || exit 0
+[ -n "$JQ" ] || exit 0
+
+input=$(cat)
+mkdir -p "$(dirname "$1")" || exit 0
+
+line=$(printf '%s' "$input" | "$JQ" -c --arg c "$2" '{c:$c, t:(now*1000|floor), e:.hook_event_name, sid:.session_id, tool:.tool_name,
+  nt:.notification_type, src:.source, reason:.reason,
+  msg:((.last_assistant_message // .message // null) | if type=="string" then .[0:300] else null end),
+  err:((.error // null) | if .==null then null elif type=="string" then .[0:300] else (tojson|.[0:300]) end)}') || exit 0
+[ -n "$line" ] || exit 0
+
+printf '%s\n' "$line" >> "$1"
+exit 0

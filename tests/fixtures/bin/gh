@@ -1,0 +1,30 @@
+#!/bin/sh
+# Stub gh CLI for tests.
+if [ -n "$STUB_GH_LOG" ]; then
+  {
+    echo "$*"
+    if [ -n "$GH_TOKEN" ]; then echo "GH_TOKEN=set"; else echo "GH_TOKEN=unset"; fi
+  } >> "$STUB_GH_LOG"
+fi
+case "$1 $2" in
+  "auth switch") exit 99 ;;
+  "auth status")
+    if [ -n "$STUB_GH_STATUS_JSON" ]; then cat "$STUB_GH_STATUS_JSON"; else
+      echo '{"hosts":{"github.com":[{"login":"dev-personal","active":true,"state":"success"},{"login":"dev-work","active":false,"state":"success"}]}}'
+    fi
+    exit 0 ;;
+  "auth token")
+    user=""
+    while [ $# -gt 0 ]; do
+      if [ "$1" = "--user" ]; then user="$2"; fi
+      shift
+    done
+    case "$user" in
+      dev-personal|dev-work) echo "token-for-$user"; exit 0 ;;
+      *) echo "no token" >&2; exit 1 ;;
+    esac ;;
+  "pr list")
+    if [ -n "$STUB_GH_PR_JSON" ]; then cat "$STUB_GH_PR_JSON"; else echo '[]'; fi
+    exit 0 ;;
+esac
+exit 0

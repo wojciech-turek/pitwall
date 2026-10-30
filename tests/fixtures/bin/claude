@@ -1,0 +1,61 @@
+#!/bin/sh
+# Stub Claude CLI for tests.
+[ -n "$STUB_CLAUDE_LOG" ] && {
+  echo "$*"
+  echo "GH_TOKEN=$GH_TOKEN"
+  echo "GH_CONFIG_DIR=$GH_CONFIG_DIR"
+  echo "GIT_AUTHOR_EMAIL=$GIT_AUTHOR_EMAIL"
+  echo "GIT_SSH_COMMAND=$GIT_SSH_COMMAND"
+} >> "$STUB_CLAUDE_LOG"
+
+settings="" id="" prev=""
+for a in "$@"; do
+  case "$prev" in
+    --settings) settings="$a" ;;
+    --session-id|--resume) id="$a" ;;
+  esac
+  prev="$a"
+done
+case " $* " in
+  *" --resume "*)
+    if [ "$STUB_CLAUDE_RESUME_FAIL" = "1" ] || { [ -n "$STUB_CLAUDE_RESUME_FAIL_FILE" ] && [ -e "$STUB_CLAUDE_RESUME_FAIL_FILE" ]; }; then exit 1; fi ;;
+esac
+cmd="" sl=""
+[ -n "$settings" ] && cmd=$(jq -r '.hooks.SessionStart[0].hooks[0].command' "$settings")
+[ -n "$settings" ] && sl=$(jq -r '.statusLine.command // empty' "$settings")
+
+emit() { [ -n "$cmd" ] && printf '%s' "$1" | sh -c "$cmd"; }
+
+# Like Claude after a reply: the status line command gets JSON with rate_limits ($STUB_RATE_LIMITS, or 42% / 18%;
+# STUB_RATE_LIMITS=null leaves them out). Its output is shown as "status: ...".
+statusline() {
+  [ -n "$sl" ] || return 0
+  now=$(date +%s)
+  limits=$STUB_RATE_LIMITS
+  [ -n "$limits" ] || limits="{\"five_hour\":{\"used_percentage\":42,\"resets_at\":$((now + 7200))},\"seven_day\":{\"used_percentage\":18,\"resets_at\":$((now + 259200))}}"
+  json=$(jq -nc --arg sid "$id" --arg cwd "$PWD" --argjson rl "$limits" \
+    '{session_id:$sid, cwd:$cwd, model:{id:"stub",display_name:"Stub"}} + (if $rl == null then {} else {rate_limits:$rl} end)') || return 0
+  out=$(printf '%s' "$json" | sh -c "$sl")
+  [ -z "$out" ] || echo "status: $out"
+}
+
+[ "$STUB_CLAUDE_SILENT" = "1" ] || emit "{\"hook_event_name\":\"SessionStart\",\"session_id\":\"$id\",\"source\":\"startup\"}"
+echo "STUB CLAUDE READY"
+while IFS= read -r line; do
+  case "$line" in
+    exit)
+      emit "{\"hook_event_name\":\"SessionEnd\",\"session_id\":\"$id\",\"reason\":\"prompt_input_exit\"}"
+      exit 0 ;;
+    ask)
+      emit "{\"hook_event_name\":\"PermissionRequest\",\"session_id\":\"$id\",\"tool_name\":\"Bash\"}"
+      echo "STUB ASKS PERMISSION" ;;
+    clear)
+      emit "{\"hook_event_name\":\"SessionStart\",\"session_id\":\"$id-cleared\",\"source\":\"clear\"}" ;;
+    *)
+      emit "{\"hook_event_name\":\"UserPromptSubmit\",\"session_id\":\"$id\"}"
+      echo "echo: $line"
+      msg=$(printf '%s' "echo: $line" | jq -Rs .)
+      emit "{\"hook_event_name\":\"Stop\",\"session_id\":\"$id\",\"last_assistant_message\":$msg}"
+      statusline ;;
+  esac
+done

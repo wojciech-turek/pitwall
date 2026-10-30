@@ -1,0 +1,215 @@
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+import { app, BrowserWindow, dialog, Menu, shell } from 'electron'
+import { IPC } from '@shared/api'
+import { exec } from './exec'
+import { buildMenuTemplate } from './menu'
+import { GitClient } from './git'
+import { ChangesService } from './changes'
+import { PrPoller } from './pr'
+import { registerIpc } from './ipc'
+import { electronNotifier } from './notifier'
+import { resolvePaths, sessionDir } from './paths'
+import { ProjectService } from './projects'
+import { PtyBridge } from './pty-bridge'
+import { installResources, resourcesDir } from './resources'
+import { SessionManager } from './sessions/manager'
+import { KeyedMutex } from './sessions/mutex'
+import { resolveShellEnv } from './shell-env'
+import { Store } from './store'
+import { Tmux } from './tmux'
+import { UsageTracker } from './usage'
+
+app.setName('Pitwall')
+// A dev build keeps its own data, tmux socket and worktrees (see resolvePaths).
+const paths = resolvePaths(process.env, homedir(), { dev: !app.isPackaged })
+app.setPath('userData', paths.dataDir)
+// One instance per data dir: a second launch only brings the first one forward.
+const isPrimaryInstance = app.requestSingleInstanceLock()
+
+let win: BrowserWindow | null = null
+let winLoaded = false
+let visibleIds: string[] = []
+let pendingFocusId: string | null = null // a session to select once the window has loaded
+let bridge: PtyBridge | null = null
+let manager: SessionManager | null = null
+let disposeIpc: (() => void) | null = null
+let disposeChanges: (() => void) | null = null
+let disposePr: (() => void) | null = null
+let disposeUsage: (() => void) | null = null
+
+const send = (channel: string, ...args: unknown[]): void => {
+  if (win && !win.isDestroyed()) win.webContents.send(channel, ...args)
+}
+
+function createWindow(): void {
+  const w = new BrowserWindow({
+    width: 1400,
+    height: 900,
+    minWidth: 900,
+    minHeight: 600,
+    titleBarStyle: 'hiddenInset',
+    trafficLightPosition: { x: 14, y: 14 },
+    backgroundColor: '#171615',
+    show: false,
+    webPreferences: {
+      preload: join(import.meta.dirname, '../preload/index.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  })
+  win = w
+  winLoaded = false
+  w.once('ready-to-show', () => w.show())
+  w.on('focus', () => manager?.setViewing(visibleIds, true))
+  w.on('blur', () => manager?.setViewing(visibleIds, false))
+  // Nothing may replace the app's UI (a file dropped outside a terminal used to navigate to it). The one exception is
+  // reloading the app's own page (the error screen's Reload button; location.reload() counts as a navigation).
+  w.webContents.on('will-navigate', (e) => {
+    if (e.url !== w.webContents.getURL()) e.preventDefault()
+  })
+  w.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) void shell.openExternal(url)
+    return { action: 'deny' }
+  })
+  w.webContents.on('did-start-loading', () => { if (win === w) winLoaded = false })
+  w.webContents.on('did-finish-load', () => {
+    if (win !== w) return
+    winLoaded = true
+    if (pendingFocusId) w.webContents.send(IPC.focusSession, pendingFocusId)
+    pendingFocusId = null
+  })
+  w.on('closed', () => {
+    if (win === w) win = null
+    // The renderer is gone; its terminals are detached (tmux sessions keep running) and nothing is being viewed.
+    bridge?.closeAll()
+    visibleIds = []
+    manager?.setViewing([], false)
+  })
+  if (process.env.ELECTRON_RENDERER_URL) {
+    void w.loadURL(process.env.ELECTRON_RENDERER_URL)
+  } else {
+    void w.loadFile(join(import.meta.dirname, '../renderer/index.html'))
+  }
+  if (!app.isPackaged) {
+    w.webContents.once('did-finish-load', () => {
+      void w.webContents.executeJavaScript('typeof window.pitwall').then((t) => console.log(`[pitwall] typeof window.pitwall = ${t}`))
+    })
+  }
+}
+
+function showAndFocus(): void {
+  if (!win) createWindow()
+  if (!win) return
+  if (win.isMinimized()) win.restore()
+  win.show()
+  win.focus()
+}
+
+/** Notification click: bring the window up (creating it if it was closed) and select the session once it can listen. */
+function focusSession(sessionId: string): void {
+  showAndFocus()
+  if (!win) return
+  if (winLoaded) send(IPC.focusSession, sessionId)
+  else pendingFocusId = sessionId
+}
+
+async function bootstrap(): Promise<void> {
+  const home = homedir()
+  const env = await resolveShellEnv()
+  await installResources(paths)
+  const store = await Store.open(paths.stateFile)
+  const git = new GitClient(exec, env)
+  const tmux = new Tmux({ socket: paths.tmuxSocket, confPath: paths.tmuxConf, env, exec })
+  const notifier = electronNotifier(focusSession, paths.notificationsDisabled)
+  const mutex = new KeyedMutex()
+  const mgr = new SessionManager({ store, paths, git, tmux, exec, env, home, mutex, notifier })
+  manager = mgr
+  await mgr.init()
+
+  const projects = new ProjectService({
+    store, git, exec, env, home,
+    onProjectUpdated: (id) => mgr.rewriteProjectSessionFiles(id),
+    pickFolder: async () => {
+      if (paths.testPickFolder) return paths.testPickFolder
+      const opts = { properties: ['openDirectory', 'createDirectory'] as Array<'openDirectory' | 'createDirectory'> }
+      const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+      return r.canceled ? null : (r.filePaths[0] ?? null)
+    }
+  })
+  bridge = new PtyBridge({
+    tmux, env,
+    ensureTarget: (id, kind) => mgr.ensureTerminalTarget(id, kind),
+    onData: (id, kind, data) => send(IPC.termData, id, kind, data),
+    onExit: (id, kind, code) => send(IPC.termExit, id, kind, code),
+    onUserInput: (id, kind, data) => mgr.userInput(id, kind, data)
+  })
+  const changes = new ChangesService({ store, git, manager: mgr })
+  changes.start()
+  disposeChanges = () => changes.stop()
+  const pr = new PrPoller({ store, manager: mgr, git, exec, env, paths, notifier })
+  pr.start()
+  disposePr = () => pr.stop()
+  const usage = new UsageTracker({
+    file: paths.usageFile,
+    sessionDirs: () => store.state.sessions.filter((s) => s.archivedAt === undefined).map((s) => sessionDir(paths, s.id))
+  })
+  await usage.load()
+  usage.start()
+  disposeUsage = () => usage.stop()
+  disposeIpc = registerIpc({
+    manager: mgr, changes, store, git, tmux, projects, bridge, paths, exec, env, home, mutex, usage, send,
+    onViewing: (ids) => {
+      visibleIds = ids
+      mgr.setViewing(ids, win?.isFocused() ?? false)
+    }
+  })
+  Menu.setApplicationMenu(Menu.buildFromTemplate(buildMenuTemplate((c) => send(IPC.menuCommand, c), !app.isPackaged)))
+  createWindow()
+}
+
+function reportFatal(e: unknown): void {
+  const message = e instanceof Error ? e.message : String(e)
+  console.error('[pitwall] startup failed:', e)
+  dialog.showErrorBox('Pitwall could not start', message)
+}
+
+if (!isPrimaryInstance) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (manager) showAndFocus()
+  })
+
+  void app.whenReady().then(async () => {
+    // The packaged app gets its icon from the bundle; a dev run would show Electron's.
+    if (!app.isPackaged) {
+      try { app.dock?.setIcon(join(resourcesDir(), 'icon.png')) } catch { /* cosmetic */ }
+    }
+    try {
+      await bootstrap()
+    } catch (e) {
+      reportFatal(e)
+    }
+    app.on('activate', () => {
+      if (manager && BrowserWindow.getAllWindows().length === 0) createWindow()
+    })
+  })
+
+  app.on('before-quit', () => {
+    bridge?.closeAll() // detaches only; tmux sessions keep running
+    disposeIpc?.()
+    disposeIpc = null
+    disposeChanges?.()
+    disposeChanges = null
+    disposePr?.()
+    disposePr = null
+    disposeUsage?.()
+    disposeUsage = null
+    manager?.dispose()
+  })
+
+  app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') app.quit()
+  })
+}

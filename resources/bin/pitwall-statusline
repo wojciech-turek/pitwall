@@ -1,0 +1,21 @@
+#!/bin/sh
+# Pitwall status line: usage pitwall-statusline <sessionDir>. Claude pipes its status JSON on stdin; it is kept in
+# <sessionDir>/statusline.json for the usage meter. Then the user's own status line ($PITWALL_USER_STATUSLINE), if any,
+# gets the same JSON and its output is passed through. Always exits 0; never writes to stderr.
+exec 2>/dev/null
+dir="$1"
+input=$(cat)
+
+if [ -n "$dir" ] && [ -d "$dir" ]; then
+  tmp="$dir/.statusline.$$.tmp"
+  if printf '%s\n' "$input" > "$tmp"; then
+    mv -f "$tmp" "$dir/statusline.json" || rm -f "$tmp"
+  else
+    rm -f "$tmp"
+  fi
+fi
+
+if [ -n "$PITWALL_USER_STATUSLINE" ]; then
+  printf '%s\n' "$input" | sh -c "$PITWALL_USER_STATUSLINE"
+fi
+exit 0

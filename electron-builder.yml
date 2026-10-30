@@ -1,0 +1,17 @@
+appId: com.wojciechturek.pitwall
+productName: Pitwall
+directories:
+  output: release
+files:
+  - out/**
+  - package.json
+asarUnpack:
+  - '**/node_modules/node-pty/**'
+extraResources:
+  - from: resources
+    to: resources
+mac:
+  target:
+    - target: dir
+      arch: arm64
+  identity: null

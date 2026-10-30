@@ -1,0 +1,70 @@
+#!/bin/sh
+# pitwall Claude window entrypoint: usage pitwall-launch <sessionDir>.
+# Each run of claude happens in a fresh subshell that sources env.sh and fetches the GitHub token into the
+# environment only, so an edited project identity applies from the next relaunch. Setup runs once.
+dir="$1"
+
+load_identity() {
+  . "$dir/env.sh"
+  if [ -n "$PITWALL_GH_ACCOUNT" ]; then
+    GH_TOKEN=$("${PITWALL_GH_BIN:-gh}" auth token --hostname github.com --user "$PITWALL_GH_ACCOUNT" 2>/dev/null)
+    if [ -n "$GH_TOKEN" ]; then
+      export GH_TOKEN
+    else
+      # Fail closed: signed-out gh beats gh silently acting as whichever account is active.
+      unset GH_TOKEN
+      export GH_CONFIG_DIR="$PITWALL_SESSION_DIR/gh-unauthenticated"
+      mkdir -p "$GH_CONFIG_DIR"
+      echo "pitwall: couldn't get a GitHub token for $PITWALL_GH_ACCOUNT — gh commands will run signed out. Check \`gh auth status\`."
+    fi
+  fi
+}
+
+now() { echo $(($(date +%s) * 1000)); }
+log_event() { printf '%s\n' "$1" >> "$PITWALL_EVENTS_FILE"; }
+event_lines() { if [ -f "$PITWALL_EVENTS_FILE" ]; then wc -l < "$PITWALL_EVENTS_FILE" | tr -d ' '; else echo 0; fi; }
+
+launch_new() {
+  log_event "{\"c\":\"$PITWALL_SESSION_ID\",\"t\":$(now),\"e\":\"pitwall:launch\",\"mode\":\"new\"}"
+  "$PITWALL_CLAUDE_BIN" --session-id "$id" --settings "$dir/hooks.json" --name "$PITWALL_TITLE"
+}
+
+# One launch or resume; exits with claude's code. A subshell, so nothing from a previous env.sh lingers.
+run_claude() (
+  load_identity
+
+  if [ -n "$PITWALL_SETUP_COMMAND" ] && [ ! -e "$dir/setup-done" ]; then
+    echo "▸ Running setup: $PITWALL_SETUP_COMMAND"
+    sh -c "$PITWALL_SETUP_COMMAND"
+    rc=$?
+    [ "$rc" -ne 0 ] && echo "▸ Setup command failed (exit $rc). Starting Claude anyway."
+    : > "$dir/setup-done"
+  fi
+
+  id=$(cat "$dir/claude-id")
+  if [ ! -e "$dir/started" ]; then
+    : > "$dir/started"
+    launch_new
+    rc=$?
+  else
+    before=$(event_lines)
+    log_event "{\"c\":\"$PITWALL_SESSION_ID\",\"t\":$(now),\"e\":\"pitwall:launch\",\"mode\":\"resume\"}"
+    "$PITWALL_CLAUDE_BIN" --resume "$id" --settings "$dir/hooks.json"
+    rc=$?
+    if [ "$rc" -ne 0 ] && ! tail -n +"$((before + 1))" "$PITWALL_EVENTS_FILE" 2>/dev/null | grep -q '"e":"SessionStart"'; then
+      log_event "{\"c\":\"$PITWALL_SESSION_ID\",\"t\":$(now),\"e\":\"pitwall:exited\",\"code\":$rc}"
+      echo "Couldn't resume the previous conversation — starting a new one."
+      launch_new
+      rc=$?
+    fi
+  fi
+  log_event "{\"c\":\"$PITWALL_SESSION_ID\",\"t\":$(now),\"e\":\"pitwall:exited\",\"code\":$rc}"
+  exit "$rc"
+)
+
+while :; do
+  run_claude
+  rc=$?
+  echo "Claude exited (code $rc). Press Enter to resume."
+  read -r _ || exit 0
+done

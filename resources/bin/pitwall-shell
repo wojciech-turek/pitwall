@@ -1,0 +1,16 @@
+#!/bin/sh
+# pitwall Shell tab entrypoint: usage pitwall-shell <sessionDir>. Same identity as the Claude window.
+. "$1/env.sh"
+if [ -n "$PITWALL_GH_ACCOUNT" ]; then
+  GH_TOKEN=$("${PITWALL_GH_BIN:-gh}" auth token --hostname github.com --user "$PITWALL_GH_ACCOUNT" 2>/dev/null)
+  if [ -n "$GH_TOKEN" ]; then
+    export GH_TOKEN
+  else
+    # Fail closed: signed-out gh beats gh silently acting as whichever account is active.
+    unset GH_TOKEN
+    export GH_CONFIG_DIR="$PITWALL_SESSION_DIR/gh-unauthenticated"
+    mkdir -p "$GH_CONFIG_DIR"
+    echo "pitwall: couldn't get a GitHub token for $PITWALL_GH_ACCOUNT — gh commands will run signed out. Check \`gh auth status\`."
+  fi
+fi
+exec "${SHELL:-/bin/zsh}" -l
