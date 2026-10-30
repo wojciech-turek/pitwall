@@ -224,7 +224,7 @@ if (!isPrimaryInstance) {
   })
 
   app.on('before-quit', () => {
-    bridge?.closeAll() // detaches only; tmux sessions keep running
+    bridge?.dispose() // detaches only, and no terminal opens after this; tmux sessions keep running
     disposeIpc?.()
     disposeIpc = null
     disposeChanges?.()

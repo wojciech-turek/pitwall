@@ -67,6 +67,60 @@ describe('PtyBridge', () => {
   })
 })
 
+describe('PtyBridge waiting on ensureTarget', () => {
+  // attachCommand runs right before pty.spawn, so recording it shows whether a pty was spawned.
+  function spyBridge(ensureTarget: () => Promise<void>) {
+    const attaches: string[] = []
+    const targets: string[] = []
+    const tmux = Object.assign(Object.create(t.tmux) as Tmux, {
+      attachCommand: (name: string) => { attaches.push(name); return t.tmux.attachCommand(name) }
+    })
+    const b = new PtyBridge({
+      tmux, env: t.env,
+      ensureTarget: async (id) => { targets.push(id); await ensureTarget() },
+      onData: () => {}, onExit: () => {}, onUserInput: () => {}
+    })
+    return { b, attaches, targets }
+  }
+  function gate() {
+    let open!: () => void
+    const wait = new Promise<void>((r) => { open = r })
+    return { wait, open }
+  }
+
+  test('an open() that finishes waiting normally spawns one pty', async () => {
+    const { b, attaches } = spyBridge(async () => {})
+    await b.open('s1', 'claude', 100, 30)
+    expect(attaches).toEqual([claudeTmuxName('s1')])
+    b.dispose()
+  })
+
+  test('an open() whose ensureTarget resolves after dispose() never spawns', async () => {
+    const g = gate()
+    const { b, attaches, targets } = spyBridge(() => g.wait)
+    const opening = b.open('s1', 'claude', 100, 30)
+    b.dispose()
+    g.open()
+    await opening
+    expect(attaches).toEqual([])
+    // And nothing new starts once disposed: not even the tmux target.
+    await b.open('s1', 'shell', 100, 30)
+    expect(targets).toEqual(['s1'])
+    expect(attaches).toEqual([])
+  })
+
+  test('closeAll cancels an open() still waiting on ensureTarget', async () => {
+    const g = gate()
+    const { b, attaches } = spyBridge(() => g.wait)
+    const opening = b.open('s1', 'claude', 100, 30)
+    b.closeAll()
+    g.open()
+    await opening
+    expect(attaches).toEqual([])
+    b.dispose()
+  })
+})
+
 describe('UTF-8 in a Finder-launched app', () => {
   // Claude's TUI glyphs; a non-UTF-8 tmux client prints `A_ _ _ h_llo _` instead.
   const GLYPHS = 'A❯ ⏺ ⎿ héllo ❯'

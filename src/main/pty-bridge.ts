@@ -17,16 +17,20 @@ const keyOf = (id: string, kind: TermKind): string => `${id}:${kind}`
 export class PtyBridge {
   private ptys = new Map<string, pty.IPty>()
   private opening = new Map<string, number>()
+  private disposed = false
 
   constructor(private readonly deps: Deps) {}
 
   async open(id: string, kind: TermKind, cols: number, rows: number): Promise<void> {
+    if (this.disposed) return
     const key = keyOf(id, kind)
     // Latest open() wins if several race through ensureTarget.
     const ticket = (this.opening.get(key) ?? 0) + 1
     this.opening.set(key, ticket)
     await this.deps.ensureTarget(id, kind)
-    if (this.opening.get(key) !== ticket) return
+    // The app may have started quitting while we waited. A pty spawned now can hang the quit for good: its
+    // spawn-helper blocks on a terminal nobody will open, and node-pty's exit handler waits on it forever.
+    if (this.disposed || this.opening.get(key) !== ticket) return
     this.kill(key)
     const name = kind === 'claude' ? claudeTmuxName(id) : shellTmuxName(id)
     const attach = this.deps.tmux.attachCommand(name)
@@ -59,7 +63,14 @@ export class PtyBridge {
   }
 
   closeAll(): void {
+    for (const key of this.opening.keys()) this.opening.set(key, (this.opening.get(key) ?? 0) + 1)
     for (const key of [...this.ptys.keys()]) this.kill(key)
+  }
+
+  /** On quit: close every terminal and never open another (see open). */
+  dispose(): void {
+    this.disposed = true
+    this.closeAll()
   }
 
   private kill(key: string): void {
