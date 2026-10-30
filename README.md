@@ -5,7 +5,7 @@
 <h1 align="center">Pitwall</h1>
 
 <p align="center">
-  <b>A Mac app for running many Claude Code agents at once, across all your projects.</b><br>
+  <b>A Mac app for running many Claude Code agents at once, across all your projects.</b> Now on Windows too, in beta.<br>
   Every session gets its own worktree and the right git identity, and you can see at a glance which agent needs you.
 </p>
 
@@ -59,13 +59,15 @@ Like a pit wall in a race, you watch every car at once and only radio in when on
 
 ## Requirements
 
-- macOS on Apple silicon
+- macOS on Apple silicon (for Windows, see [Windows (beta)](#windows-beta))
 - [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude`), installed and logged in
 - `git` and `tmux` (`brew install tmux`)
 - To build: Node 24 and pnpm
 - Optional: the GitHub CLI `gh`, logged in to the accounts you use (`gh auth login`, once per account)
 
 ## Install
+
+On Windows, see [Windows (beta)](#windows-beta).
 
 1. Download `Pitwall-<version>-arm64.dmg` from [Releases](https://github.com/wojciech-turek/pitwall/releases) and drag Pitwall to Applications.
 2. Pitwall isn't notarized yet, so macOS blocks the first launch. Open **System Settings → Privacy & Security** and click **Open Anyway**. Alternatively, run `xattr -dr com.apple.quarantine /Applications/Pitwall.app`.
@@ -82,7 +84,52 @@ cp -R release/mac-arm64/Pitwall.app /Applications/
 
 ## Updating
 
-When a new release is out, Pitwall shows **Update available** with the changelog. Download the new DMG, quit Pitwall, and replace the app in Applications. Your agents keep running in tmux and reattach when you reopen it. macOS treats each new download as unverified, so the first launch of a new version needs **Open Anyway** again (see Install).
+When a new release is out, Pitwall shows **Update available** with the changelog. Download the new DMG, quit Pitwall, and replace the app in Applications. Your agents keep running in tmux and reattach when you reopen it. macOS treats each new download as unverified, so the first launch of a new version needs **Open Anyway** again (see Install). On Windows, see [Windows (beta)](#windows-beta).
+
+## Windows (beta)
+
+Pitwall runs on Windows 10 and 11, with the same projects, worktrees, identities and live status. Windows has no tmux, so a small background process of Pitwall's own, the **host**, keeps the agents' terminals running while the app is closed. Windows support is new: please [report](https://github.com/wojciech-turek/pitwall/issues) what doesn't work.
+
+### Requirements
+
+- Windows 10 version 1809 or later, or Windows 11, on x64 or ARM
+- [Claude Code](https://docs.claude.com/en/docs/claude-code/setup), installed and logged in. The native installer (`irm https://claude.ai/install.ps1 | iex` in PowerShell) is recommended; WinGet and npm installs work too.
+- [Git for Windows](https://git-scm.com/download/win), recommended: Pitwall needs `git` for repos and their worktrees, and Claude Code uses its Git Bash for its Bash tool.
+- Optional: the GitHub CLI `gh`, logged in to the accounts you use (`gh auth login`, once per account)
+
+### Install
+
+1. From [Releases](https://github.com/wojciech-turek/pitwall/releases), download the installer for your PC: `Pitwall-<version>-x64-setup.exe` for most PCs, `Pitwall-<version>-arm64-setup.exe` for Windows on ARM (Settings → System → About shows which).
+2. Run it. The installer isn't signed yet, so Windows SmartScreen says it "prevented an unrecognized app from starting": click **More info**, then **Run anyway**. Pitwall installs for your user only (no administrator rights) into `%LOCALAPPDATA%\Programs\pitwall`, and adds a Start menu shortcut.
+
+To update, download the new installer, quit Pitwall and run it (SmartScreen asks again). To uninstall, use Settings → Apps; your projects and settings stay in `%APPDATA%\pitwall`.
+
+### What's different on Windows
+
+- **Shortcuts use Ctrl.** In a terminal, use `Ctrl+Shift+<key>` for Pitwall's shortcuts (`Ctrl+Shift+K` opens the palette): plain `Ctrl+<key>` goes to the program running there, as in any terminal. See [Keyboard shortcuts](#keyboard-shortcuts).
+- **Updating stops running agents.** The host runs from the installed Pitwall, which an update replaces. Your sessions stay, and each agent resumes its conversation when you reopen Pitwall.
+- **Status hooks run in PowerShell.** Every hook starts Windows PowerShell, which takes about half a second. Claude waits for the hooks around each tool call, so tools feel a little slower than on a Mac.
+- **If PowerShell scripts are blocked by policy** (a Group Policy that forces an execution policy, common on managed PCs), Claude still works, but the session's status and usage don't update, and its header says so.
+- **Teardown commands run in `cmd.exe`**, so write them for cmd (`docker compose down` works the same).
+- **Notifications and the taskbar:** Windows notifications, a red count on the taskbar button and a flashing button when a session needs you, instead of the Dock badge.
+- **Open in Cursor** runs `cursor` from your PATH (Cursor's installer adds it).
+
+### Where things live on Windows
+
+- **The app:** `%LOCALAPPDATA%\Programs\pitwall`
+- **App data:** `%APPDATA%\pitwall`: state, session logs, helper scripts, and the host's log (`host.log`)
+- **Worktrees:** `%USERPROFILE%\pitwall\worktrees\<folder>\<session>`
+- **The host:** a background `Pitwall.exe` process. It stops by itself 10 minutes after its last session ends.
+- **Dev builds** use `pitwall-dev` for the data and worktrees, and their own host.
+
+### Known limitations on Windows
+
+- **Unsigned:** SmartScreen asks again for every new version (**More info** → **Run anyway**).
+- **A session's screen may be cleared** when Claude starts after the setup command, or restarts (each start gets a new Windows console).
+- **The usage meter doesn't update** if your user folder's path contains both an apostrophe and `$`, `` ` `` or `"`.
+- **Paths longer than 260 characters** need long paths enabled in Windows. Pitwall never changes your git config, so very deep worktrees may need `git config --global core.longpaths true` from you.
+- **SSH keys with a passphrase:** Git for Windows' own `ssh` doesn't use the Windows ssh-agent (or 1Password's), so it can't unlock them for the agents. A key without a passphrase works.
+- **In the command palette,** use the arrow keys (Ctrl+N/P are macOS only).
 
 ## Getting started
 
@@ -109,7 +156,7 @@ Pitwall:
 - never stores your GitHub token;
 - never deletes work without asking.
 
-Everything stays on your Mac. Pitwall has no telemetry and no account. Apart from the `gh` calls behind PR badges, the one network request it makes itself is this: about once a day it asks GitHub for the list of Pitwall releases, to tell you about updates. It sends nothing about you or your work. Turn it off in Settings (**Check for updates on GitHub**).
+Everything stays on your computer. Pitwall has no telemetry and no account. Apart from the `gh` calls behind PR badges, the one network request it makes itself is this: about once a day it asks GitHub for the list of Pitwall releases, to tell you about updates. It sends nothing about you or your work. Turn it off in Settings (**Check for updates on GitHub**).
 
 ## Keyboard shortcuts
 
@@ -132,6 +179,7 @@ On Windows the same shortcuts use Ctrl instead of ⌘ (`Ctrl+K`, `Ctrl+Enter`, �
 - **Worktrees:** `~/pitwall/worktrees/<folder>/<session>`
 - **tmux:** `tmux -L pitwall ls`
 - **Dev builds** (`pnpm dev`) use `pitwall-dev` for all three, so they never share agents with the installed app.
+- **On Windows:** see [Where things live on Windows](#where-things-live-on-windows).
 
 ## Known limitations
 
@@ -155,11 +203,17 @@ pnpm test:e2e:host                # the same, with sessions in the Pitwall host 
 pnpm test:e2e:host-launcher       # as Windows runs them: in the host, started by its launcher, with the Node stubs
 ```
 
+On Windows, `pnpm test` leaves out the suites that need tmux, sh or ps (listed in `vitest.config.ts`), and `pnpm test:e2e` already runs in the host with its launcher and the Node stubs. `pnpm package:win` builds `release\win-unpacked` (or `win-arm64-unpacked` on ARM), `pnpm dist:win --x64` or `--arm64` the installer, and `node scripts/verify-windows.mjs <x64|arm64>` checks one. `scripts\windows-smoke.ps1` checks what a script can on a real Windows machine (installed app, data folder ACL, hook timing, execution policy):
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows-smoke.ps1
+```
+
 Pitwall is built with Electron, React, TypeScript, zustand, node-pty, xterm.js and CodeMirror.
 
 ## Releasing
 
-For maintainers: bump `version` in `package.json`, add a `## [X.Y.Z] - date` section to `CHANGELOG.md`, commit, tag `vX.Y.Z` and push the tag. The release workflow checks the tag against `package.json`, builds and signs the DMG, and publishes it with the changelog section as the release notes.
+For maintainers: bump `version` in `package.json`, add a `## [X.Y.Z] - date` section to `CHANGELOG.md`, commit, tag `vX.Y.Z` and push the tag. The release workflow checks the tag against `package.json`, builds and signs the DMG and builds the Windows installers (x64 and arm64), checks them, and publishes all three with the changelog section as the release notes. A version with a `-` (`0.3.0-beta.1`) is published as a pre-release.
 
 ## License
 

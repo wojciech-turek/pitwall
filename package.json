@@ -1,9 +1,9 @@
 {
   "name": "pitwall",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
-  "description": "A Mac app for running many Claude Code agents in parallel, each in its own worktree with the right git identity",
+  "description": "An app for running many Claude Code agents in parallel (macOS; Windows in beta), each in its own worktree with the right git identity",
   "packageManager": "pnpm@12.16.1",
   "license": "MIT",
   "author": "Wojciech Turek",
