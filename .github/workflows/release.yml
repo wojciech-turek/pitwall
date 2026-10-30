@@ -12,13 +12,7 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: pnpm
-      - run: brew install tmux
-      - run: pnpm install --frozen-lockfile
+      # Fails in seconds, before installing anything, if the tag and the changelog don't line up.
       - name: Check tag matches package.json and CHANGELOG has notes
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
@@ -28,14 +22,25 @@ jobs:
             exit 1
           fi
           node scripts/release-notes.mjs "$VERSION" > notes.md
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: brew install tmux
+      - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm dist
       - run: pnpm verify:sign
+      - name: Check the app inside the DMG
+        run: sh scripts/verify-dmg.sh "release/Pitwall-${GITHUB_REF_NAME#v}-arm64.dmg"
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
+          PRERELEASE=""
+          case "$VERSION" in *-*) PRERELEASE="--prerelease" ;; esac
           gh release create "$GITHUB_REF_NAME" "release/Pitwall-${VERSION}-arm64.dmg" \
-            --title "Pitwall ${VERSION}" --notes-file notes.md
+            --title "Pitwall ${VERSION}" --notes-file notes.md $PRERELEASE
