@@ -7,7 +7,7 @@
   It changes nothing: no setting is written, Claude is never started and no token is ever printed. It writes only to a
   temporary folder, which it removes. Every line says PASS, FAIL, WARN, INFO or SKIP. Exit code 1 if anything failed.
 
-  Installed Pitwall (%LOCALAPPDATA%\Programs\Pitwall) and its data (%APPDATA%\pitwall), plus the repository's
+  Installed Pitwall (%LOCALAPPDATA%\Programs\pitwall) and its data (%APPDATA%\pitwall), plus the repository's
   Windows-only unit suites when run from a checkout whose dependencies are installed (pnpm install):
       powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows-smoke.ps1
 
@@ -18,7 +18,7 @@
 #>
 [CmdletBinding()]
 param(
-  [string]$AppDir = (Join-Path $env:LOCALAPPDATA 'Programs\Pitwall'),
+  [string]$AppDir = (Join-Path $env:LOCALAPPDATA 'Programs\pitwall'),
   [string]$DataDir = (Join-Path $env:APPDATA 'pitwall'),
   [string]$Repo = (Split-Path -Parent $PSScriptRoot),
   [switch]$SkipUnitTests

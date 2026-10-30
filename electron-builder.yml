@@ -35,7 +35,8 @@ win:
   icon: build/icon.ico
 nsis:
   artifactName: Pitwall-${version}-${arch}-setup.${ext}
-  # Per user, into %LOCALAPPDATA%\Programs\Pitwall: no administrator rights, no questions.
+  # Per user, into %LOCALAPPDATA%\Programs\pitwall (one-click installs use the package name): no administrator rights
+  # and no options. A Pitwall already running from there (its host too) is stopped first, after asking.
   oneClick: true
   perMachine: false
   createStartMenuShortcut: true
