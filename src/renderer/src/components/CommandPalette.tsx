@@ -103,8 +103,14 @@ export default function CommandPalette({ snap, mode }: { snap: AppSnapshot; mode
     return () => { live = false }
   }, [activeSessionId])
 
-  // Start reading transcripts now, so the first search is quick.
-  useEffect(() => { void window.pitwall.searchSessions('').catch(() => {}) }, [])
+  // Start reading transcripts once a search for past sessions begins, ahead of its debounced query. Not on open:
+  // indexing every transcript then made terminals stutter for a palette mostly used to switch sessions.
+  const warmed = useRef(false)
+  useEffect(() => {
+    if (warmed.current || mode !== 'commands' || q.length < MIN_HISTORY_QUERY) return
+    warmed.current = true
+    void window.pitwall.searchSessions('').catch(() => {})
+  }, [q, mode])
   useEffect(() => {
     if (mode !== 'commands' || q.length < MIN_HISTORY_QUERY) {
       setHistory(null)

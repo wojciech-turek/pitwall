@@ -1,5 +1,5 @@
-import { rm, stat, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { realpath, rm, stat, writeFile } from 'node:fs/promises'
+import { basename, dirname, join } from 'node:path'
 import type { Session, StartProgress, StartResult } from '@shared/types'
 import { defaultBranchName, slugify } from '@shared/slug'
 import { uniquePath } from '../git'
@@ -8,6 +8,16 @@ import { claudeTmuxName } from '../tmux'
 import { checkIdentity, launchTmuxFor, msg, progressSteps, StepError, writeSessionFiles, type StarterDeps } from './starter'
 
 const isDir = (p: string) => stat(p).then((s) => s.isDirectory(), () => false)
+/** A path as git records it, symlinks resolved, though the folder (and some of its parents) may be gone. */
+async function realPath(p: string): Promise<string> {
+  const rest: string[] = []
+  for (let dir = p; ; dir = dirname(dir)) {
+    const real = await realpath(dir).catch(() => null)
+    if (real !== null) return join(real, ...rest)
+    if (dirname(dir) === dir) return p
+    rest.unshift(basename(dir))
+  }
+}
 
 type Restored = Pick<Session, 'cwd' | 'worktreePath' | 'branch' | 'branchCreatedByPitwall' | 'baseBranch' | 'baseCommit'>
 
@@ -98,15 +108,28 @@ async function doResume(
         if (!(await isDir(root))) throw new Error(`The repo isn't there any more: ${root}`)
         const info = await git.detectFolder(root)
         if (info.kind !== 'repo' || info.repoRoot !== root) throw new Error(`This folder isn't a git repo any more: ${root}`)
-        // A worktree folder deleted by hand keeps its branch and path taken until git forgets it.
-        await git.pruneWorktrees(root)
+        // A worktree folder deleted by hand keeps its branch and path taken until git forgets it. Forget only this
+        // session's: a repo-wide prune would also drop the user's own worktrees on a disk that isn't mounted.
+        const original = s.worktreePath ?? join(paths.worktreesRoot, slugify(sub.name), s.slug)
+        const originalPaths = [original, await realPath(original)]
+        for (const w of await git.listWorktrees(root)) {
+          if (w.prunable && originalPaths.includes(w.path)) await git.removeWorktree(root, w.path, true)
+        }
         let base: string | undefined
         let makeBranch = false // Pitwall makes the local branch now: a new one, or the old one from its pushed copy
         let track = false
         const notes: string[] = []
         const local = !!s.branch && (await git.branchExists(root, s.branch))
-        // A branch archiving deleted is gone for good, even if a branch of that name exists again now.
-        if (s.branch && !s.branchDeleted && local) {
+        // A branch archiving deleted is gone for good, even if a branch of that name exists again now. Before v0.2
+        // archiving didn't record that, so Pitwall's own branch is only taken back if git shows it's older than the
+        // archive; with no reflog to tell, it's left alone.
+        let adopt = local && !s.branchDeleted
+        if (adopt && s.branchCreatedByPitwall) {
+          const made = await git.branchReflogStart(root, s.branch!)
+          // Reflog times are whole seconds: same second as the archive counts as after it.
+          adopt = made !== null && s.archivedAt !== undefined && made < Math.floor(s.archivedAt / 1000) * 1000
+        }
+        if (s.branch && adopt) {
           const other = (await git.listBranches(root)).find((b) => b.name === s.branch)?.checkedOutAt
           if (other) throw new Error(`Branch ${s.branch} is checked out in ${other}. Switch that folder to another branch, then resume.`)
         } else if (s.branch && !local && (await git.remoteBranchExists(root, s.branch))) {
@@ -126,11 +149,11 @@ async function doResume(
           newBranch = true
           makeBranch = true
           const made = `new branch ${r.branch} from ${main ?? 'the current commit'}`
-          notes.push(!s.branch ? `Made a ${made}` : `Branch ${s.branch} ${s.branchDeleted ? 'was deleted' : 'is gone'} — ${made}`)
+          const why = s.branchDeleted ? 'was deleted' : local ? "may not be this session's any more" : 'is gone'
+          notes.push(!s.branch ? `Made a ${made}` : `Branch ${s.branch} ${why} — ${made}`)
         }
         // The original folder when it's free: Claude files the conversation under that folder's name. Otherwise a
         // new one; `claude --resume` finds the conversation in other folders too.
-        const original = s.worktreePath ?? join(paths.worktreesRoot, slugify(sub.name), s.slug)
         const path = await uniquePath(original)
         if (path !== original && s.worktreePath) notes.unshift(`Original folder is in use — resumed in ${path}`)
         // Mark before creating so a partial failure is still cleaned up.

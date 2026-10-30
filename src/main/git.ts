@@ -137,9 +137,23 @@ export class GitClient {
     await this.run(repoRoot, ['worktree', 'remove', ...(force ? ['--force'] : []), path], WORKTREE_TIMEOUT_MS)
   }
 
-  /** Forgets worktrees whose folders were deleted, so their branches and paths are free again. */
-  async pruneWorktrees(repoRoot: string): Promise<void> {
-    await this.run(repoRoot, ['worktree', 'prune'])
+  /** The repo's worktrees; `prunable`: its folder is gone (or unreachable), so `git worktree prune` would drop it. */
+  async listWorktrees(repoRoot: string): Promise<{ path: string; prunable: boolean }[]> {
+    const list: { path: string; prunable: boolean }[] = []
+    for (const line of (await this.run(repoRoot, ['worktree', 'list', '--porcelain'])).split('\n')) {
+      const cur = list.at(-1)
+      if (line.startsWith('worktree ')) list.push({ path: line.slice(9), prunable: false })
+      else if (cur && (line === 'prunable' || line.startsWith('prunable '))) cur.prunable = true
+    }
+    return list
+  }
+
+  /** When the branch's oldest reflog entry was written (ms), or null if git keeps no reflog for it. */
+  async branchReflogStart(repoRoot: string, name: string): Promise<number | null> {
+    const r = await this.raw(repoRoot, ['reflog', 'show', '--date=unix', '--format=%gd', `refs/heads/${name}`]).catch(() => null)
+    if (!r || r.code !== 0) return null
+    const m = /@\{(\d+)\}$/.exec(r.stdout.trim().split('\n').at(-1) ?? '')
+    return m ? Number(m[1]) * 1000 : null
   }
 
   async deleteBranch(repoRoot: string, name: string): Promise<void> {

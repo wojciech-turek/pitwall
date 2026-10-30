@@ -350,6 +350,8 @@ export class SessionHistory {
     this.conversations.delete(id)
     if (!conv) conv = { files: [], text: new CappedText(), plain: '', lower: '' }
     for (let i = from; i < found.length; i++) {
+      // Let terminal output and IPC through between files: indexing many transcripts must not stall the app.
+      await new Promise<void>((resolve) => setImmediate(resolve))
       const prev = conv.files[i]
       const state: FileState = prev?.path === found[i].path
         ? prev

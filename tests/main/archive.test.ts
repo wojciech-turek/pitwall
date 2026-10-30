@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'node:child_process'
-import { access, appendFile, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { access, appendFile, mkdir, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
@@ -322,6 +322,46 @@ describe('archive', () => {
       const t0 = Date.now()
       expect(await archiveSession(s.id, { confirmedDataLoss: false }, deps)).toEqual({ ok: true })
       expect(Date.now() - t0).toBeLessThan(5000)
+    })
+
+    test("gh acts as the project's account: the token is in the teardown's env only, never in argv or on disk", async () => {
+      const { sp, deps } = await addRepo()
+      const s = await startOne(sp)
+      const argv: string[] = []
+      const realExec = deps.exec
+      deps.exec = async (file, args, o) => { argv.push([file, ...args].join(' ')); return realExec(file, args, o) }
+      const out = join(t.tmp, 'gh.txt')
+      // Fails, so the session (and its folder of files) stays to be checked.
+      await setTeardown(`{ echo "\${GH_TOKEN:-none}"; echo "\${GH_CONFIG_DIR:-none}"; ps -o args= -p $$; } > ${out}; exit 1`)
+      expect(await archiveSession(s.id, { confirmedDataLoss: false }, deps)).toMatchObject({ ok: false, teardownFailed: { exitCode: 1 } })
+      const [token, configDir, ownArgv] = (await readFile(out, 'utf8')).split('\n')
+      expect(token).toBe('token-for-dev-work')
+      expect(configDir).toBe('none')
+      expect(ownArgv).toContain('/bin/sh -c')
+      expect(ownArgv).not.toContain('token-for-dev-work')
+      expect(argv.some((a) => a.includes('auth token') && a.includes('--user dev-work'))).toBe(true)
+      expect(argv.join('\n')).not.toContain('token-for-dev-work')
+      const dir = sessionDir(t.paths, s.id)
+      for (const f of await readdir(dir, { recursive: true })) {
+        const content = await readFile(join(dir, f), 'utf8').catch(() => '') // directories read as ''
+        expect(content).not.toContain('token-for-dev-work')
+      }
+    })
+
+    test("an account with no token runs gh signed out, never as the machine's active account", async () => {
+      const { sp, deps } = await addRepo()
+      const s = await startOne(sp)
+      await store.update((d) => { d.projects[0].identity.ghAccount = 'signed-out-account' })
+      deps.env = { ...deps.env, GH_TOKEN: 'from-the-login-shell' }
+      const out = join(t.tmp, 'gh.txt')
+      await setTeardown(
+        `{ echo "\${GH_TOKEN:-none}"; echo "$GH_CONFIG_DIR"; [ -d "$GH_CONFIG_DIR" ] && ls -A "$GH_CONFIG_DIR" | wc -l | tr -d ' '; } > ${out}`
+      )
+      expect(await archiveSession(s.id, { confirmedDataLoss: false }, deps)).toEqual({ ok: true })
+      const [token, configDir, entries] = (await readFile(out, 'utf8')).split('\n')
+      expect(token).toBe('none')
+      expect(configDir).toBe(join(sessionDir(t.paths, s.id), 'gh-unauthenticated'))
+      expect(entries).toBe('0') // an empty gh config: no account at all
     })
 
     test('no teardown command: unchanged', async () => {

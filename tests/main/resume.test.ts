@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
-import { access, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { access, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { exec } from '../../src/main/exec'
@@ -255,16 +255,44 @@ describe('resumeSession', () => {
     expect((await git(r, r.root, 'rev-parse', 'HEAD')).stdout.trim()).toBe(theirs)
   })
 
-  test('an older archived session (no record of a deleted branch) uses a branch of that name if it is free', async () => {
-    const { r, sp } = await addRepo()
-    const s = await startOne(sp)
-    await archive(s)
-    await store.update((d) => { delete d.sessions[0].branchDeleted })
-    await git(r, r.root, 'branch', 'pitwall/fix-tax-rounding')
-    const res = await resume(s.id)
-    expect(res.ok).toBe(true)
-    expect(get(s.id).branch).toBe('pitwall/fix-tax-rounding')
-    expect(get(s.id).branchCreatedByPitwall).toBe(true)
+  describe('a session archived by v0.1.0 (no record of whether its branch was deleted)', () => {
+    async function archivedByV01() {
+      const { r, sp } = await addRepo()
+      const s = await startOne(sp)
+      await archive(s)
+      await store.update((d) => { delete d.sessions[0].branchDeleted })
+      return { r, s, archivedSec: Math.floor(get(s.id).archivedAt! / 1000) }
+    }
+    const branchAt = (r: { root: string; env: Record<string, string> }, sec: number) =>
+      run('git', ['branch', 'pitwall/fix-tax-rounding'], { cwd: r.root, env: { ...r.env, GIT_COMMITTER_DATE: `@${sec} +0000` } })
+
+    test('takes back a branch of its name that is older than the archive', async () => {
+      const { r, s, archivedSec } = await archivedByV01()
+      await branchAt(r, archivedSec - 3600)
+      expect((await resume(s.id)).ok).toBe(true)
+      expect(get(s.id).branch).toBe('pitwall/fix-tax-rounding')
+      expect(get(s.id).branchCreatedByPitwall).toBe(true)
+      expect(progress.find((p) => p.step === 'worktree' && p.state === 'done')?.message).toBeUndefined()
+    })
+
+    test("never takes a branch of its name made after the archive: that one is someone else's", async () => {
+      const { r, s } = await archivedByV01()
+      await git(r, r.root, 'branch', 'pitwall/fix-tax-rounding')
+      const theirs = (await git(r, r.root, 'rev-parse', 'pitwall/fix-tax-rounding')).stdout.trim()
+      expect((await resume(s.id)).ok).toBe(true)
+      expect(get(s.id).branch).toBe('pitwall/fix-tax-rounding-2')
+      expect(progress.find((p) => p.step === 'worktree' && p.state === 'done')?.message)
+        .toBe("Branch pitwall/fix-tax-rounding may not be this session's any more — new branch pitwall/fix-tax-rounding-2 from main")
+      expect((await git(r, r.root, 'rev-parse', 'pitwall/fix-tax-rounding')).stdout.trim()).toBe(theirs)
+    })
+
+    test("with no reflog to tell when the branch was made, makes a new branch", async () => {
+      const { r, s, archivedSec } = await archivedByV01()
+      await branchAt(r, archivedSec - 3600)
+      await rm(join(r.root, '.git', 'logs', 'refs', 'heads', 'pitwall', 'fix-tax-rounding'))
+      expect((await resume(s.id)).ok).toBe(true)
+      expect(get(s.id).branch).toBe('pitwall/fix-tax-rounding-2')
+    })
   })
 
   test("original folder now used by another session: a new folder, and the other session's is left alone", async () => {
@@ -360,15 +388,34 @@ describe('resumeSession', () => {
     expect((await resume(s.id)).ok).toBe(true)
   })
 
-  test('a worktree folder deleted by hand before archiving: resumes at the same path', async () => {
+  test("a worktree folder deleted by hand before archiving: resumes at the same path; the user's other worktrees are kept", async () => {
     const { r, sp } = await addRepo()
+    // The user's own worktree on a disk that isn't mounted right now: git would prune it.
+    const theirs = join(t.tmp, 'external-disk', 'mine')
+    await git(r, r.root, 'worktree', 'add', '-b', 'mine', theirs)
+    await rm(theirs, { recursive: true, force: true })
     const s = await startOne(sp)
     await rm(s.worktreePath!, { recursive: true, force: true })
     await archive(s, true)
     const res = await resume(s.id)
     expect(res.ok).toBe(true)
     expect(get(s.id).worktreePath).toBe(s.worktreePath)
-    expect(await worktrees(r)).toEqual([r.root, s.worktreePath])
+    expect((await worktrees(r)).sort()).toEqual([r.root, s.worktreePath, theirs].sort())
+    expect((await git(r, r.root, 'worktree', 'list', '--porcelain')).stdout).toContain('branch refs/heads/mine')
+  })
+
+  test('a deleted worktree under a symlinked folder is still recognised (git records real paths)', async () => {
+    const { r, sp } = await addRepo()
+    await mkdir(join(t.tmp, 'real-worktrees'))
+    await symlink(join(t.tmp, 'real-worktrees'), join(t.tmp, 'linked-worktrees'))
+    setup(r.env, { paths: { ...t.paths, worktreesRoot: join(t.tmp, 'linked-worktrees') } })
+    const s = await startOne(sp)
+    expect(s.worktreePath!.startsWith(join(t.tmp, 'linked-worktrees'))).toBe(true)
+    await rm(dirname(s.worktreePath!), { recursive: true, force: true }) // its parent folder too
+    await archive(s, true)
+    const res = await resume(s.id)
+    expect(res.ok).toBe(true)
+    expect(get(s.id).worktreePath).toBe(s.worktreePath)
   })
 
   test('only an archived session can be resumed', async () => {

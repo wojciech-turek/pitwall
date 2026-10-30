@@ -1,6 +1,7 @@
-import { access, rm } from 'node:fs/promises'
+import { access, mkdir, rm } from 'node:fs/promises'
+import { join } from 'node:path'
 import type { ArchiveCheck, ArchiveResult, Session, SubProject } from '@shared/types'
-import { buildSessionEnv } from '../identity'
+import { buildSessionEnv, getGhToken } from '../identity'
 import { eventsFile, sessionDir } from '../paths'
 import type { PtyBridge } from '../pty-bridge'
 import { claudeTmuxName, shellTmuxName } from '../tmux'
@@ -29,6 +30,22 @@ function find(id: string, deps: ArchiveDeps): { s: Session; sp?: SubProject } | 
   const s = deps.store.state.sessions.find((x) => x.id === id && x.archivedAt === undefined)
   if (!s) return undefined
   return { s, sp: deps.store.state.subProjects.find((p) => p.id === s.subProjectId) }
+}
+
+/**
+ * Like the launcher: gh acts as the project's account, with the token only in the environment (never argv or disk).
+ * With no token it runs signed out (an empty config dir), never as whichever account is active.
+ */
+async function applyGhAccount(env: Record<string, string>, account: string, dir: string, deps: ArchiveDeps): Promise<void> {
+  if (!account) return
+  const token = await getGhToken(deps.paths.ghBin, account, deps.exec, deps.env).catch(() => null)
+  if (token) {
+    env.GH_TOKEN = token
+    return
+  }
+  delete env.GH_TOKEN
+  env.GH_CONFIG_DIR = join(dir, 'gh-unauthenticated')
+  await mkdir(env.GH_CONFIG_DIR, { recursive: true })
 }
 
 /** Throws when the work can't be inspected; callers decide how to surface that. */
@@ -113,21 +130,20 @@ export async function archiveSession(
     if (sp?.teardownCommand?.trim() && !o.skipTeardown && (await exists(s.cwd))) {
       const project = deps.store.state.projects.find((p) => p.id === sp.projectId)
       if (project) {
-        const r = await runTeardown(sp.teardownCommand, {
-          cwd: s.cwd,
-          env: {
-            ...deps.env,
-            ...buildSessionEnv({
-              project, session: s, rootPath: sp.repoRoot ?? sp.path, sessionDir: sessionDir(deps.paths, s.id),
-              eventsFile: eventsFile(deps.paths, s.id), claudeBin: deps.paths.claudeBin, ghBin: deps.paths.ghBin,
-              home: deps.home
-            }),
-            PITWALL_WORKTREE_PATH: s.worktreePath ?? s.cwd,
-            PITWALL_BRANCH: s.branch ?? '',
-            PITWALL_SESSION_TITLE: s.title
-          },
-          timeoutMs: deps.teardownTimeoutMs
-        })
+        const dir = sessionDir(deps.paths, s.id)
+        const env: Record<string, string> = {
+          ...deps.env,
+          ...buildSessionEnv({
+            project, session: s, rootPath: sp.repoRoot ?? sp.path, sessionDir: dir,
+            eventsFile: eventsFile(deps.paths, s.id), claudeBin: deps.paths.claudeBin, ghBin: deps.paths.ghBin,
+            home: deps.home
+          }),
+          PITWALL_WORKTREE_PATH: s.worktreePath ?? s.cwd,
+          PITWALL_BRANCH: s.branch ?? '',
+          PITWALL_SESSION_TITLE: s.title
+        }
+        await applyGhAccount(env, project.identity.ghAccount, dir, deps)
+        const r = await runTeardown(sp.teardownCommand, { cwd: s.cwd, env, timeoutMs: deps.teardownTimeoutMs })
         if (r.timedOut || r.exitCode !== 0) {
           await stopLeftovers(leftovers)
           reattachable()
