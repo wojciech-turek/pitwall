@@ -91,9 +91,15 @@ class Connection {
         socket.destroy()
         reject(e)
       }
-      const refused = (pid: number, why: string): Error => new HostError(
-        `Something answering as Pitwall's background host at ${o.path} (pid ${pid}) couldn't prove it is one (${why}), ` +
-        `so Pitwall sent it nothing and won't use it. If that process is an old Pitwall host, end it (pid ${pid}) and reopen Pitwall.`
+      // Until the peer proves it knows the host key, nothing it says (pid, version, error) is shown or acted on.
+      const machine = o.platform === 'darwin' ? 'Mac' : o.platform === 'win32' ? 'PC' : 'computer'
+      const refused = (why: string): Error => new HostError(
+        `Something answering as Pitwall's background host at ${o.path} couldn't prove it is one (${why}), ` +
+        `so Pitwall sent it nothing and won't use it. Quit other Pitwall versions, or restart your ${machine}.`
+      )
+      const foreign = (): Error => new HostError(
+        `Another background process is answering at ${o.path} and doesn't speak this version of Pitwall (or isn't Pitwall). ` +
+        `Quit other Pitwall versions, or restart your ${machine}.`
       )
       const timer = setTimeout(() => fail(new HostError(`The Pitwall host isn't answering (${o.path}).`)), o.connectTimeoutMs)
       const onConnect = (): void => { socket.write(encodeJson({ t: 'hello', protocol: PROTOCOL, appVersion: o.appVersion, nonce })) }
@@ -122,23 +128,29 @@ class Connection {
           } catch (e) {
             return unreadable(e)
           }
+          if (m.t === 'bye') return fail(noHost()) // it's leaving: as if nobody were there, so a new host gets started
           if (hostPid === null) {
             if (m.t !== 'hello') return unreadable(new Error(`${m.t} before hello`))
-            if (m.protocol !== PROTOCOL || m.error) {
-              return fail(new HostError(
+            let key: Buffer | null = null
+            let why = ''
+            try {
+              key = readHostKey(o.dataDir, o.platform)
+            } catch (e) {
+              why = e instanceof HostKeyError ? e.message : `couldn't read the host key: ${(e as Error).message}`
+            }
+            const proven = key !== null && checkProof(key, 'host', nonce, m.proof)
+            if (m.protocol !== PROTOCOL) {
+              if (!proven) return fail(foreign())
+              return fail(new HostError( // proven: a Pitwall host of this user's, so its pid and version can be shown
                 `Pitwall's background host (pid ${m.pid}, from Pitwall ${m.appVersion}) speaks protocol ${m.protocol}; ` +
                 `this Pitwall speaks protocol ${PROTOCOL}, so it can't use it. Its agents are still running in it. ` +
                 `To switch, quit Pitwall, end that host (pid ${m.pid}) and reopen Pitwall: each agent restarts and resumes its conversation.`
               ))
             }
+            if (key === null) return fail(refused(why))
+            if (!proven || !m.nonce) return fail(refused("its proof doesn't match the host key"))
+            if (m.error !== undefined) return fail(new HostError(`The Pitwall host refused this app. See ${hostLogFile(o.dataDir)}.`))
             hostPid = m.pid
-            let key: Buffer
-            try {
-              key = readHostKey(o.dataDir, o.platform)
-            } catch (e) {
-              return fail(refused(m.pid, e instanceof HostKeyError ? e.message : `couldn't read the host key: ${(e as Error).message}`))
-            }
-            if (!m.nonce || !checkProof(key, 'host', nonce, m.proof)) return fail(refused(m.pid, "its proof doesn't match the host key"))
             socket.write(encodeJson({ t: 'auth', proof: proofFor(key, 'app', m.nonce) }))
             continue
           }

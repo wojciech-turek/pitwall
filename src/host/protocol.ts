@@ -12,6 +12,8 @@
  *   host → hello { protocol, appVersion, pid, nonce, proof: HMAC(key, host, app's nonce) }   (or `error`: refused)
  *   app checks the proof before sending anything else, then → auth { proof: HMAC(key, app, host's nonce) }
  *   host → ready. Only then requests, notices and data.
+ * A host refusing another protocol still proves itself when it can. The app shows nothing a host says (pid, version,
+ * error) unless its proof checked out, and a `bye` before `ready` means the host is leaving (as if none were there).
  */
 export const PROTOCOL = 1
 export const MAX_FRAME = 16 * 1024 * 1024
@@ -215,8 +217,18 @@ const stringMap = (v: unknown, what: string): Record<string, string> => {
   if (!isObject(v) || !Object.values(v).every((x) => typeof x === 'string')) bad(`${what} must map names to strings`)
   return v as Record<string, string>
 }
-const hex64 = (v: unknown, what: string): string => (typeof v === 'string' && /^[0-9a-f]{64}$/.test(v) ? v : bad(`${what} must be 64 hex digits`))
-const optional = <T>(v: unknown, parse: (x: unknown) => T): T | undefined => (v === undefined ? undefined : parse(v))
+const HEX64 = /^[0-9a-f]{64}$/
+const hex64 = (v: unknown, what: string): string => (typeof v === 'string' && HEX64.test(v) ? v : bad(`${what} must be 64 hex digits`))
+/** In a hello, a nonce or proof that isn't one counts as missing (and the handshake then fails on its own terms). */
+const maybeHex64 = (v: unknown): string | undefined => (typeof v === 'string' && HEX64.test(v) ? v : undefined)
+/** A message type, quoted safely and briefly in an error. */
+const quote = (v: unknown): string => JSON.stringify(String(v).slice(0, 40))
+
+/**
+ * A version another process reports, safe to show anywhere (a log, a message): anything that doesn't look like a
+ * version, escape sequences included, becomes "unknown".
+ */
+export const cleanVersion = (v: unknown): string => (typeof v === 'string' && /^[0-9A-Za-z.+-]{1,40}$/.test(v) ? v : 'unknown')
 const id = (v: Record<string, unknown>): number => int(v.id, 0, Number.MAX_SAFE_INTEGER, 'id')
 const ch = (v: Record<string, unknown>): number => int(v.ch, 1, MAX_CHANNEL, 'ch')
 const size = (v: unknown, what: string): number => int(v, 1, MAX_TERM_SIZE, what)
@@ -226,8 +238,8 @@ export function parseClientMessage(v: unknown): ClientMessage {
   if (!isObject(v)) bad('a message must be an object')
   switch (v.t) {
     case 'hello': {
-      const m: Hello = { t: 'hello', protocol: int(v.protocol, 0, MAX_CHANNEL, 'protocol'), appVersion: str(v.appVersion, 'appVersion', 100) }
-      const nonce = optional(v.nonce, (x) => hex64(x, 'nonce'))
+      const m: Hello = { t: 'hello', protocol: int(v.protocol, 0, MAX_CHANNEL, 'protocol'), appVersion: cleanVersion(v.appVersion) }
+      const nonce = maybeHex64(v.nonce)
       if (nonce !== undefined) m.nonce = nonce
       return m
     }
@@ -249,22 +261,27 @@ export function parseClientMessage(v: unknown): ClientMessage {
     case 'shutdown': return { t: 'shutdown', id: id(v) }
     case 'detach': return { t: 'detach', ch: ch(v) }
     case 'resize': return { t: 'resize', ch: ch(v), cols: size(v.cols, 'cols'), rows: size(v.rows, 'rows') }
-    default: return bad(`unknown message ${JSON.stringify(v.t)}`)
+    default: return bad(`unknown message ${quote(v.t)}`)
   }
 }
 
-/** Validates a message from the host; throws ProtocolError. */
+/**
+ * Validates a message from the host; throws ProtocolError. Nothing in a hello may be shown to the user unless its
+ * proof checks out (see HostBackend): its version is cleaned here regardless.
+ */
 export function parseHostMessage(v: unknown): HostMessage {
   if (!isObject(v)) bad('a message must be an object')
   switch (v.t) {
     case 'hello': {
       const m: HostMessage = {
-        t: 'hello', protocol: int(v.protocol, 0, MAX_CHANNEL, 'protocol'), appVersion: str(v.appVersion, 'appVersion'),
+        t: 'hello', protocol: int(v.protocol, 0, MAX_CHANNEL, 'protocol'), appVersion: cleanVersion(v.appVersion),
         pid: int(v.pid, 0, Number.MAX_SAFE_INTEGER, 'pid')
       }
-      if (v.error !== undefined) m.error = str(v.error, 'error')
-      if (v.nonce !== undefined) m.nonce = hex64(v.nonce, 'nonce')
-      if (v.proof !== undefined) m.proof = hex64(v.proof, 'proof')
+      if (v.error !== undefined) m.error = typeof v.error === 'string' ? v.error.slice(0, 1000) : 'refused'
+      const nonce = maybeHex64(v.nonce)
+      const proof = maybeHex64(v.proof)
+      if (nonce !== undefined) m.nonce = nonce
+      if (proof !== undefined) m.proof = proof
       return m
     }
     case 'ready': return { t: 'ready' }
@@ -273,6 +290,6 @@ export function parseHostMessage(v: unknown): HostMessage {
       return { t: 'res', id: id(v), ok: false, error: str(v.error, 'error'), code: str(v.code, 'code') as ErrorCode }
     case 'exit': return { t: 'exit', ch: ch(v), code: int(v.code, -MAX_CHANNEL, MAX_CHANNEL, 'code') }
     case 'bye': return { t: 'bye', reason: str(v.reason, 'reason') }
-    default: return bad(`unknown message ${JSON.stringify(v.t)}`)
+    default: return bad(`unknown message ${quote(v.t)}`)
   }
 }

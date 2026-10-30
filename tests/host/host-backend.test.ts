@@ -43,7 +43,14 @@ interface Fake {
  */
 async function fakeHost(
   onRequest: (msg: Msg, conn: number, s: net.Socket) => void,
-  o: { proof?: 'right' | 'wrong' | 'none'; hello?: boolean } = {}
+  o: {
+    proof?: 'right' | 'wrong' | 'none'
+    hello?: boolean
+    /** Anything else (or other) in its hello: another protocol, an error, a hostile version… */
+    helloFields?: Record<string, unknown>
+    /** Says goodbye instead of greeting, or instead of `ready`. */
+    byeOn?: 'hello' | 'auth'
+  } = {}
 ): Promise<Fake> {
   let conns = 0
   const received: Msg[][] = []
@@ -61,12 +68,17 @@ async function fakeHost(
         got.push(msg)
         if (msg.t === 'hello') {
           if (o.hello === false) continue
+          if (o.byeOn === 'hello') {
+            s.write(encodeJson({ t: 'bye', reason: 'stopping' }))
+            continue
+          }
           nonce = newNonce()
           const proof = o.proof === 'none' ? undefined
             : proofFor(o.proof === 'wrong' ? randomBytes(32) : key, 'host', msg.nonce as string)
-          s.write(encodeJson({ t: 'hello', protocol: PROTOCOL, appVersion: 'fake', pid: 4242, nonce, proof }))
+          s.write(encodeJson({ t: 'hello', protocol: PROTOCOL, appVersion: 'fake', pid: 4242, nonce, proof, ...o.helloFields }))
         } else if (msg.t === 'auth') {
-          if (checkProof(key, 'app', nonce, msg.proof)) s.write(encodeJson({ t: 'ready' }))
+          if (o.byeOn === 'auth') s.write(encodeJson({ t: 'bye', reason: 'stopping' }))
+          else if (checkProof(key, 'app', nonce, msg.proof)) s.write(encodeJson({ t: 'ready' }))
           else s.destroy()
         } else {
           onRequest(msg, n, s)
@@ -130,25 +142,59 @@ test('an error from the host reaches the caller with its message', async () => {
   b.disconnect()
 })
 
+// What an impostor says about itself: an escape sequence that would set the clipboard and paint the terminal, and a
+// pid it would like the user to kill.
+const HOSTILE = { pid: 31337, appVersion: '\x1b]52;c;ZXZpbA==\x07\x1b[2J evil 1.0' }
+
 test.each([
-  ['a wrong proof', { proof: 'wrong' as const }, () => {}, "its proof doesn't match the host key"],
-  ['no proof', { proof: 'none' as const }, () => {}, "its proof doesn't match the host key"],
-  ['no host key', {}, () => rmSync(hostKeyFile(dataDir)), 'there is no host key at'],
-  ['a host key others can read', {}, () => chmodSync(hostKeyFile(dataDir), 0o644), 'can be read by other users']
-])('an impostor (%s) is refused, and is sent nothing but hello', async (_what, o, arrange, why) => {
+  ['a wrong proof', { proof: 'wrong' as const, helloFields: HOSTILE }, () => {}, "couldn't prove it is one (its proof doesn't match the host key)"],
+  ['no proof', { proof: 'none' as const, helloFields: HOSTILE }, () => {}, "couldn't prove it is one (its proof doesn't match the host key)"],
+  ['no host key', { helloFields: HOSTILE }, () => rmSync(hostKeyFile(dataDir)), "couldn't prove it is one (there is no host key at"],
+  ['a host key others can read', { helloFields: HOSTILE }, () => chmodSync(hostKeyFile(dataDir), 0o644), 'can be read by other users'],
+  ['an error, unproven', { proof: 'none' as const, helloFields: { ...HOSTILE, error: 'kill 31337 \x1b[31mNOW-PLEASE' } }, () => {}, "couldn't prove it is one"],
+  ['another protocol, unproven, with escapes in its version', { proof: 'none' as const, helloFields: { ...HOSTILE, protocol: PROTOCOL + 1, error: 'OUTDATED-HOST' } }, () => {},
+    "doesn't speak this version of Pitwall (or isn't Pitwall). Quit other Pitwall versions, or restart your Mac."],
+  ['another protocol, with a wrong proof', { proof: 'wrong' as const, helloFields: { ...HOSTILE, protocol: PROTOCOL + 1 } }, () => {}, "doesn't speak this version of Pitwall"]
+])('an impostor (%s) is refused without repeating a word it said, and is sent nothing but hello', async (_what, o, arrange, why) => {
   const fake = await fakeHost(() => {}, o)
   arrange()
   const b = backend({ launch: { file: process.execPath, args: ['-e', ''], env: {} } })
-  const refusal = `Something answering as Pitwall's background host at ${hostSocketPath(dataDir)} (pid 4242) couldn't prove it is one (`
   for (const call of [() => b.listSessions(), () => b.newSession({ name: 'pw-secret', cwd: tmp, argv: ['claude'], env: { GH_TOKEN: 'x' } })]) {
     const e = await call().then(() => null, (err: Error) => err)
-    expect(e?.message).toContain(refusal)
+    expect(e?.message).toContain(hostSocketPath(dataDir))
     expect(e?.message).toContain(why)
-    expect(e?.message).toContain('so Pitwall sent it nothing and won\'t use it')
+    expect(e?.message).not.toMatch(/[\x00-\x09\x0b-\x1f\x7f-\x9f]/) // no escape sequences, no BEL
+    for (const said of ['31337', 'evil', 'ZXZpbA', 'NOW-PLEASE', 'OUTDATED-HOST']) expect(e?.message).not.toContain(said)
   }
   await waitFor(async () => fake.received.length >= 1, 2000, 'connection')
   for (const conn of fake.received) expect(conn.map((m) => m.t)).toEqual(['hello'])
   expect(JSON.stringify(fake.received)).not.toContain('pw-secret')
+})
+
+test('a proven host of another version is named, with its version cleaned of anything but a version', async () => {
+  await fakeHost(() => {}, { helloFields: { protocol: PROTOCOL + 1, appVersion: '9.1.0', error: 'old' } })
+  await expect(backend().listSessions()).rejects.toThrow(
+    `Pitwall's background host (pid 4242, from Pitwall 9.1.0) speaks protocol ${PROTOCOL + 1}; this Pitwall speaks protocol ${PROTOCOL}`
+  )
+  server!.close()
+  await fakeHost(() => {}, { helloFields: { protocol: PROTOCOL + 1, appVersion: HOSTILE.appVersion } })
+  const e = await backend().listSessions().then(() => null, (err: Error) => err)
+  expect(e?.message).toContain('(pid 4242, from Pitwall unknown)')
+  expect(e?.message).not.toMatch(/[\x00-\x1f]/)
+})
+
+test("a proven host's refusal is reported plainly, without its words", async () => {
+  await fakeHost(() => {}, { helloFields: { error: 'go away \x1b[31m' } })
+  const e = await backend().listSessions().then(() => null, (err: Error) => err)
+  expect(e?.message).toBe(`The Pitwall host refused this app. See ${hostLogFile(dataDir)}.`)
+})
+
+test.each(['hello', 'auth'] as const)('a host saying goodbye during the handshake (on %s) is no host: nothing cached, a new one may start', async (on) => {
+  const fake = await fakeHost(() => {}, { byeOn: on })
+  const b = backend()
+  expect(await b.listSessions()).toEqual([])
+  expect(await b.hasSession('pw-a')).toBe(false)
+  expect(fake.conns()).toBe(2) // asked again: not a cached failure
 })
 
 test('a character split between two data frames arrives whole', async () => {

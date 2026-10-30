@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import {
-  DATA_CHUNK, encodeData, encodeDataChunks, encodeJson, FrameDecoder, MAX_FRAME, parseClientMessage, parseHostMessage,
+  cleanVersion, DATA_CHUNK, encodeData, encodeDataChunks, encodeJson, FrameDecoder, MAX_FRAME, parseClientMessage, parseHostMessage,
   PROTOCOL, ProtocolError, type Frame
 } from '../../src/host/protocol'
 
@@ -80,6 +80,14 @@ describe('framing', () => {
 })
 
 describe('messages', () => {
+  test("a peer's version is shown only if it looks like one", () => {
+    for (const ok of ['0.3.0', '1.2.3-beta.1+build.7', 'test']) expect(cleanVersion(ok)).toBe(ok)
+    for (const odd of ['\x1b]52;c;ZXZpbA==\x07', '1.0 evil', '', 'x'.repeat(41), 42, undefined]) expect(cleanVersion(odd)).toBe('unknown')
+    expect(parseClientMessage({ t: 'hello', protocol: 2, appVersion: '\x1b[2J', nonce: 'short' })).toEqual({ t: 'hello', protocol: 2, appVersion: 'unknown' })
+    expect(parseHostMessage({ t: 'hello', protocol: 2, appVersion: '\x1b[2J', pid: 1 })).toMatchObject({ appVersion: 'unknown' })
+    expect(() => parseHostMessage({ t: `x${'\x1b'.repeat(100)}` })).toThrow(/^unknown message "x(\\u001b){39}"$/)
+  })
+
   test('valid client messages pass, with defaults', () => {
     const nonce = 'a'.repeat(64)
     expect(parseClientMessage({ t: 'hello', protocol: 1, appVersion: '0.3.0', nonce })).toEqual({ t: 'hello', protocol: 1, appVersion: '0.3.0', nonce })
@@ -107,7 +115,6 @@ describe('messages', () => {
     [{ t: 'attach', id: 1, name: 'a', ch: 1, cols: 0, rows: 24 }, /cols/],
     [{ t: 'resize', ch: 1, cols: 80, rows: 1e9 }, /rows/],
     [{ t: 'kill', id: -1, name: 'a' }, /id/],
-    [{ t: 'hello', protocol: 1, appVersion: 'x', nonce: 'short' }, /nonce/],
     [{ t: 'auth' }, /proof/],
     [{ t: 'auth', proof: 'B'.repeat(64) }, /proof/],
     ['hello', /object/]
@@ -125,7 +132,9 @@ describe('messages', () => {
     const proof = 'c'.repeat(64)
     expect(parseHostMessage({ t: 'hello', protocol: 1, appVersion: 'x', pid: 5, nonce: proof, proof }))
       .toEqual({ t: 'hello', protocol: 1, appVersion: 'x', pid: 5, nonce: proof, proof })
-    expect(() => parseHostMessage({ t: 'hello', protocol: 1, appVersion: 'x', pid: 5, proof: 'nope' })).toThrow(/proof/)
+    // A hello's odd nonce or proof counts as missing (the handshake then refuses it); its version is cleaned.
+    expect(parseHostMessage({ t: 'hello', protocol: 1, appVersion: 'x', pid: 5, proof: 'nope', nonce: 'short', error: 'e'.repeat(5000) }))
+      .toEqual({ t: 'hello', protocol: 1, appVersion: 'x', pid: 5, error: 'e'.repeat(1000) })
     expect(() => parseHostMessage({ t: 'res', id: 1, ok: false })).toThrow(ProtocolError)
     expect(() => parseHostMessage({ t: 'hello', protocol: 1, appVersion: 'x' })).toThrow(/pid/)
   })

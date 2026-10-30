@@ -401,7 +401,7 @@ describe('versions and bad clients', () => {
     expect(await b.hasSession('pw-v')).toBe(true)
   })
 
-  test("the app refuses a host it doesn't understand, and says so", async () => {
+  test("the app refuses a host it doesn't understand, and repeats nothing it says", async () => {
     await mkdir(dataDir, { recursive: true })
     const fake = net.createServer((s) => {
       s.on('data', () => s.write(encodeJson({ t: 'hello', protocol: PROTOCOL + 1, appVersion: '9.0.0', pid: 4242 })))
@@ -409,10 +409,12 @@ describe('versions and bad clients', () => {
     await new Promise<void>((r) => fake.listen(hostSocketPath(dataDir), r))
     try {
       const b = app()
-      await expect(b.listSessions()).rejects.toThrow(
-        `Pitwall's background host (pid 4242, from Pitwall 9.0.0) speaks protocol ${PROTOCOL + 1}; this Pitwall speaks protocol ${PROTOCOL}`
-      )
-      await expect(b.newSession({ name: 'pw-n', cwd, argv: ['true'] })).rejects.toThrow(/end that host \(pid 4242\)/)
+      const generic = `Another background process is answering at ${hostSocketPath(dataDir)} and doesn't speak this version of Pitwall`
+      for (const call of [() => b.listSessions(), () => b.newSession({ name: 'pw-n', cwd, argv: ['true'] })]) {
+        const e = await call().then(() => null, (err: Error) => err)
+        expect(e?.message).toContain(generic)
+        expect(e?.message).not.toContain('4242') // unproven: never "kill <the pid it gave>"
+      }
     } finally {
       await new Promise((r) => fake.close(r))
     }

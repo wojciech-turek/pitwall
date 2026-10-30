@@ -321,9 +321,11 @@ export class Host {
     if (conn.state === 'new' && msg.t === 'hello') {
       if (msg.protocol !== PROTOCOL) {
         this.log(`refused Pitwall ${msg.appVersion}: it speaks protocol ${msg.protocol}`)
+        // With a proof when we can make one: an app of another version may then trust (and show) who refused it.
+        const proof = msg.nonce && this.key ? { nonce: newNonce(), proof: proofFor(this.key, 'host', msg.nonce) } : {}
         this.send(conn, {
           t: 'hello', protocol: PROTOCOL, appVersion: this.o.appVersion, pid: process.pid,
-          error: `this host speaks protocol ${PROTOCOL}, not ${msg.protocol}`
+          error: `this host speaks protocol ${PROTOCOL}, not ${msg.protocol}`, ...proof
         })
         conn.socket.end()
         return
