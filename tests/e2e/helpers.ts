@@ -4,13 +4,18 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
+import { HostBackend } from '../../src/main/host-backend'
 import { tmuxSocketPath } from '../helpers/tmux-socket'
 import { makeRepo } from '../helpers/repo'
+import { waitFor } from '../helpers/wait'
 
 const run = promisify(execFile)
 let envCounter = 0
 export const SCREENS = process.env.PITWALL_E2E_SCREENS || join(process.cwd(), 'test-results/screens')
 const repoRoot = process.cwd()
+
+/** Where the app under test keeps sessions (PITWALL_SESSION_BACKEND=host: the Pitwall host; otherwise tmux). */
+export const SESSION_BACKEND: 'tmux' | 'host' = process.env.PITWALL_SESSION_BACKEND === 'host' ? 'host' : 'tmux'
 
 export interface E2eEnv {
   tmp: string
@@ -56,6 +61,7 @@ export async function makeE2eEnv(): Promise<E2eEnv> {
     cleanup: async () => {
       await tmux(socket, 'kill-server').catch(() => undefined)
       await rm(tmuxSocketPath(socket, env), { force: true })
+      await stopHost(dataDir)
       await repo.cleanup()
       await rm(tmp, { recursive: true, force: true })
     }
@@ -86,16 +92,68 @@ export async function shot(page: Page, name: string): Promise<void> {
   await page.screenshot({ path: join(SCREENS, `${name}.png`) })
 }
 
-/** The xterm WebGL renderer leaves no DOM text, so read the pane from tmux. */
-export async function paneText(socket: string, sessionId: string, window = 'claude'): Promise<string> {
-  const names = await tmux(socket, 'list-windows', '-t', `=pw-${sessionId}`, '-F', '#{window_index}:#{window_name}').catch(() => '')
-  const idx = names.split('\n').find((l) => l.endsWith(`:${window}`))?.split(':')[0] ?? '0'
-  return tmux(socket, 'capture-pane', '-p', '-t', `=pw-${sessionId}:${idx}`).catch(() => '')
+// ---- the sessions' backend, whichever it is --------------------------------------
+
+const hosts = new Map<string, HostBackend>()
+
+/** A client for the app's host that never starts one itself. */
+function host(e: E2eEnv): HostBackend {
+  let h = hosts.get(e.dataDir)
+  if (!h) {
+    h = new HostBackend({ dataDir: e.dataDir, appVersion: 'e2e', launch: null })
+    hosts.set(e.dataDir, h)
+  }
+  return h
 }
 
-export async function sessionIdOf(socket: string): Promise<string> {
-  const out = await tmux(socket, 'list-sessions', '-F', '#{session_name}')
-  const name = out.split('\n').find((l) => l.startsWith('pw-'))
-  if (!name) throw new Error('no pw- tmux session')
+/** The xterm WebGL renderer leaves no DOM text, so read the pane from the backend. */
+export async function paneText(e: E2eEnv, sessionId: string, window = 'claude'): Promise<string> {
+  if (SESSION_BACKEND === 'host') return host(e).capture(`pw-${sessionId}`).catch(() => '')
+  const names = await tmux(e.socket, 'list-windows', '-t', `=pw-${sessionId}`, '-F', '#{window_index}:#{window_name}').catch(() => '')
+  const idx = names.split('\n').find((l) => l.endsWith(`:${window}`))?.split(':')[0] ?? '0'
+  return tmux(e.socket, 'capture-pane', '-p', '-t', `=pw-${sessionId}:${idx}`).catch(() => '')
+}
+
+/** Running session names; none when the backend isn't running. */
+export async function sessionNames(e: E2eEnv): Promise<string[]> {
+  if (SESSION_BACKEND === 'host') return host(e).listSessions()
+  const out = await tmux(e.socket, 'list-sessions', '-F', '#{session_name}').catch(() => '')
+  return out.split('\n').filter(Boolean)
+}
+
+export async function sessionIdOf(e: E2eEnv): Promise<string> {
+  const name = (await sessionNames(e)).find((l) => l.startsWith('pw-'))
+  if (!name) throw new Error(`no pw- session in ${SESSION_BACKEND}`)
   return name.slice(3)
+}
+
+export async function hasSession(e: E2eEnv, sessionId: string): Promise<boolean> {
+  return (await sessionNames(e)).includes(`pw-${sessionId}`)
+}
+
+/** As `tmux send-keys`: key names (`Enter`, `C-u`) or text, typed into the session's Claude. */
+export async function sendKeys(e: E2eEnv, sessionId: string, ...keys: string[]): Promise<void> {
+  if (SESSION_BACKEND === 'host') return host(e).sendKeys(`pw-${sessionId}`, keys)
+  await tmux(e.socket, 'send-keys', '-t', `=pw-${sessionId}:`, ...keys)
+}
+
+/** Host processes serving `dataDir` (dev: Electron running out/host/index.js; packaged: Pitwall running its copy). */
+export async function hostPids(dataDir: string): Promise<number[]> {
+  const { stdout } = await run('/bin/ps', ['-axww', '-o', 'pid=,command='], { maxBuffer: 32 * 1024 * 1024 })
+  const arg = `host/index.js --data ${dataDir}`
+  return stdout.split('\n')
+    .filter((l) => l.endsWith(arg) || l.includes(`${arg} --`))
+    .map((l) => Number(l.trim().split(/\s+/)[0]))
+}
+
+/** Ends the app's host and its agents (a test never leaves one running). */
+async function stopHost(dataDir: string): Promise<void> {
+  const h = hosts.get(dataDir) ?? new HostBackend({ dataDir, appVersion: 'e2e', launch: null })
+  hosts.delete(dataDir)
+  await h.shutdown().catch(() => undefined)
+  h.disconnect()
+  for (const pid of await hostPids(dataDir)) {
+    try { process.kill(pid, 'SIGKILL') } catch { /* gone */ }
+  }
+  await waitFor(async () => (await hostPids(dataDir)).length === 0, 10_000, `no host left for ${dataDir}`)
 }

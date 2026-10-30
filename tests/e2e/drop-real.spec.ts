@@ -34,8 +34,8 @@ test('files dragged from Finder or Cursor onto the Claude terminal paste their p
   await page.getByTestId('session-title-input').fill('Drop test')
   await page.getByTestId('start-session').click()
   await expect(page.getByTestId('new-session-dialog')).toHaveCount(0, { timeout: 30_000 })
-  const sessionId = await waitFor(() => sessionIdOf(e.socket), 15_000, 'tmux session')
-  await waitFor(async () => (await paneText(e.socket, sessionId)).includes('STUB CLAUDE READY'), 15_000, 'STUB CLAUDE READY')
+  const sessionId = await waitFor(() => sessionIdOf(e), 15_000, 'tmux session')
+  await waitFor(async () => (await paneText(e, sessionId)).includes('STUB CLAUDE READY'), 15_000, 'STUB CLAUDE READY')
   await expect(page.getByTestId('terminal-claude')).toBeVisible()
 
   const file = join(e.tmp, 'dropped file.txt')
@@ -49,10 +49,10 @@ test('files dragged from Finder or Cursor onto the Claude terminal paste their p
   await cdp.send('Input.dispatchDragEvent', { type: 'dragOver', x, y, data })
   await cdp.send('Input.dispatchDragEvent', { type: 'drop', x, y, data })
 
-  await waitFor(async () => (await paneText(e.socket, sessionId)).includes('dropped file.txt'), 10_000, 'dropped path in prompt')
+  await waitFor(async () => (await paneText(e, sessionId)).includes('dropped file.txt'), 10_000, 'dropped path in prompt')
 
   // A drag from Cursor's file list carries a file link, not a file.
   const link = { items: [{ mimeType: 'text/uri-list', data: pathToFileURL(join(e.tmp, 'linked file.ts')).href }], dragOperationsMask: 1 | 2 | 16 }
   for (const type of ['dragEnter', 'dragOver', 'drop'] as const) await cdp.send('Input.dispatchDragEvent', { type, x, y, data: link })
-  await waitFor(async () => (await paneText(e.socket, sessionId)).includes('linked file.ts'), 10_000, 'linked path in prompt')
+  await waitFor(async () => (await paneText(e, sessionId)).includes('linked file.ts'), 10_000, 'linked path in prompt')
 })

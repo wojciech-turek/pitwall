@@ -7,5 +7,5 @@ const { version } = JSON.parse(readFileSync('package.json', 'utf8')) as { versio
 export default defineConfig({
   define: { __APP_VERSION__: JSON.stringify(version) },
   resolve: { alias: { '@shared': resolve('src/shared') } },
-  test: { environment: 'node', testTimeout: 20000, include: ['tests/**/*.test.ts'] }
+  test: { environment: 'node', testTimeout: 20000, include: ['tests/**/*.test.ts'], globalSetup: ['tests/helpers/build-host.ts'] }
 })

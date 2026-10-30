@@ -7,6 +7,8 @@
   echo "GIT_AUTHOR_EMAIL=$GIT_AUTHOR_EMAIL"
   echo "GIT_SSH_COMMAND=$GIT_SSH_COMMAND"
 } >> "$STUB_CLAUDE_LOG"
+# The whole environment Claude started with, when a test asks for it.
+[ -n "$STUB_CLAUDE_ENV_FILE" ] && env > "$STUB_CLAUDE_ENV_FILE"
 
 settings="" id="" prev=""
 for a in "$@"; do

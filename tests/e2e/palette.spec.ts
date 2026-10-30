@@ -57,7 +57,7 @@ const focusIn = (): Promise<string> => page.evaluate(`(() => {
 async function typeTo(sessionId: string, text: string): Promise<void> {
   await page.keyboard.type(text)
   await page.keyboard.press('Enter')
-  await waitFor(async () => (await paneText(e.socket, sessionId)).includes(`echo: ${text}`), 15_000, `echo: ${text}`)
+  await waitFor(async () => (await paneText(e, sessionId)).includes(`echo: ${text}`), 15_000, `echo: ${text}`)
 }
 
 async function startSession(title: string): Promise<string> {
@@ -67,7 +67,7 @@ async function startSession(title: string): Promise<string> {
   await page.getByTestId('start-session').click()
   await expect(page.getByTestId('new-session-dialog')).toHaveCount(0, { timeout: 30_000 })
   const id = (await row(title).getAttribute('data-session-id'))!
-  await waitFor(async () => (await paneText(e.socket, id)).includes('STUB CLAUDE READY'), 15_000, `${title} ready`)
+  await waitFor(async () => (await paneText(e, id)).includes('STUB CLAUDE READY'), 15_000, `${title} ready`)
   return id
 }
 
@@ -307,7 +307,7 @@ test('typing a word from an archived session\'s conversation finds it; Enter res
   await expect(page.getByTestId('resume-dialog')).toHaveCount(0, { timeout: 30_000 })
   await expect(row('Tax rounding')).toHaveCount(1)
   await expect(page.locator('[data-testid="pane"][data-active="true"]')).toHaveAttribute('data-session-id', beta)
-  await waitFor(async () => (await paneText(e.socket, beta)).includes('STUB CLAUDE READY'), 15_000, 'ready after resume')
+  await waitFor(async () => (await paneText(e, beta)).includes('STUB CLAUDE READY'), 15_000, 'ready after resume')
 })
 
 // Synthesized keys never reach the native menu (it only sees real OS key events), so the menu items above stand in

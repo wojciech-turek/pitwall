@@ -33,12 +33,12 @@ test('mark as unread stays while visible and clears when opened', async () => {
   await page.getByTestId('start-session').click()
   await expect(page.getByTestId('new-session-dialog')).toHaveCount(0, { timeout: 30_000 })
   id = (await row().getAttribute('data-session-id'))!
-  await waitFor(async () => (await paneText(e.socket, id)).includes('STUB CLAUDE READY'), 15_000, 'ready')
+  await waitFor(async () => (await paneText(e, id)).includes('STUB CLAUDE READY'), 15_000, 'ready')
   await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].emit('focus'))
 
   await page.keyboard.type('hi')
   await page.keyboard.press('Enter')
-  await waitFor(async () => (await paneText(e.socket, id)).includes('echo: hi'), 15_000, 'echo: hi')
+  await waitFor(async () => (await paneText(e, id)).includes('echo: hi'), 15_000, 'echo: hi')
   await expect(row()).toHaveAttribute('data-status', 'read', { timeout: 15_000 })
   await page.waitForTimeout(500) // let the Stop event land
 
@@ -68,7 +68,7 @@ test('a muted project still shows what needs you', async () => {
   await page.getByTestId('terminal-claude').click()
   await page.keyboard.type('ask')
   await page.keyboard.press('Enter')
-  await waitFor(async () => (await paneText(e.socket, id)).includes('STUB ASKS PERMISSION'), 15_000, 'asked')
+  await waitFor(async () => (await paneText(e, id)).includes('STUB ASKS PERMISSION'), 15_000, 'asked')
   await expect(row()).toHaveAttribute('data-status', 'needs_you')
 
   await page.getByTestId('project-row').hover()
