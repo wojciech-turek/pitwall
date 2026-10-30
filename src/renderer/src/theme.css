@@ -387,3 +387,4 @@ input:focus-visible, .terminal-host :focus-visible, .cm-editor :focus-visible { 
 .palette-foot { flex: none; display: flex; gap: 14px; padding: 6px 12px; border-top: 1px solid var(--border); background: var(--bg-sidebar); font-size: 11px; color: var(--text-faint); user-select: none; }
 .palette kbd { display: inline-block; min-width: 16px; margin-right: 3px; padding: 0 4px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-elevated); color: var(--text-muted); font: 10.5px/16px var(--font-ui); text-align: center; }
 .palette-item kbd.palette-kbd { flex: none; margin: 0 0 0 auto; }
+.palette-note { flex: none; padding: 5px 14px; border-bottom: 1px solid var(--border); font-size: 11.5px; color: var(--text-faint); }

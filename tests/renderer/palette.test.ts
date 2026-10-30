@@ -81,7 +81,7 @@ describe('paletteResults', () => {
       query: 'wo', snap, activeSessionId: 'a',
       actions: [...actions, { key: 'x', id: 'settings', label: 'Work settings' }],
       files: [{ path: 'src/wombat.ts' }],
-      history: [hit('old', 'Old wombat')]
+      history: { query: 'wo', hits: [hit('old', 'Old wombat')] }
     }))
     expect(kinds(groups)).toEqual(['session', 'action', 'file', 'history'])
     expect(groups.map((g) => g.title)).toEqual(['Sessions', 'Actions', 'Files', 'Past sessions'])
@@ -114,7 +114,7 @@ describe('paletteResults', () => {
     })
     const actions = paletteActions(ctxOf({ snap, activeSessionId: 'b', paneCount: 2 }))
     const groups = paletteResults(input({
-      snap, activeSessionId: 'b', actions, files: [{ path: 'a.ts' }], history: [hit('z', 'Zed')]
+      snap, activeSessionId: 'b', actions, files: [{ path: 'a.ts' }], history: { query: '', hits: [hit('z', 'Zed')] }
     }))
     expect(kinds(groups)).toEqual(['session', 'action'])
     expect(labels(groups[0])).toEqual(['Gamma', 'Alpha'])
@@ -130,7 +130,7 @@ describe('paletteResults', () => {
     const empty = paletteResults(input({ mode: 'files', snap, activeSessionId: 'a', files, actions: paletteActions(ctxOf({ snap })) }))
     expect(kinds(empty)).toEqual(['file'])
     expect(empty[0].items.map((i) => i.kind === 'file' && i.path)).toEqual(['src/app.ts', 'README.md', 'docs/read.txt'])
-    const typed = paletteResults(input({ mode: 'files', query: 'read', snap, activeSessionId: 'a', files, history: [hit('x', 'read')] }))
+    const typed = paletteResults(input({ mode: 'files', query: 'read', snap, activeSessionId: 'a', files, history: { query: 'read', hits: [hit('x', 'read')] } }))
     expect(kinds(typed)).toEqual(['file'])
     expect(typed[0].items.map((i) => i.kind === 'file' && i.path)).toEqual(['README.md', 'docs/read.txt'])
   })
@@ -144,12 +144,30 @@ describe('paletteResults', () => {
 
   test('past sessions need two characters and skip sessions already listed', () => {
     const snap = snapOf({ sessions: [session('a', 'Wombat totals')] })
-    const history = [hit('a', 'Wombat totals', { archived: false }), hit('z', 'Invoices')]
-    expect(paletteResults(input({ query: 'w', snap, history })).map((g) => g.kind)).toEqual(['session'])
-    const g = paletteResults(input({ query: 'wombat', snap, history }))
+    const hits = [hit('a', 'Wombat totals', { archived: false }), hit('z', 'Invoices')]
+    expect(paletteResults(input({ query: 'w', snap, history: { query: 'w', hits } })).map((g) => g.kind)).toEqual(['session'])
+    const g = paletteResults(input({ query: 'wombat ', snap, history: { query: 'wombat', hits } }))
     expect(kinds(g)).toEqual(['session', 'history'])
     expect(labels(g[1])).toEqual(['Invoices'])
     expect(g[1].items[0]).toMatchObject({ kind: 'history', hit: { sessionId: 'z', snippet: '…wombat…' } })
+  })
+
+  test('past sessions found for an earlier query are never offered', () => {
+    const history = { query: 'wombat', hits: [hit('z', 'Invoices')] }
+    expect(kinds(paletteResults(input({ query: 'wombat', history })))).toEqual(['history'])
+    // typed on: until the new answer arrives there is nothing to pick by mistake
+    expect(paletteResults(input({ query: 'wombatx', history }))).toEqual([])
+    expect(paletteResults(input({ query: 'womba', history }))).toEqual([])
+  })
+
+  test('the same files and query rank the same, without ranking again', () => {
+    const files = Array.from({ length: 300 }, (_, i) => ({ path: `src/f${i}/file${i}.ts` }))
+    const a = paletteResults(input({ mode: 'files', query: 'file1', files }))
+    const b = paletteResults(input({ mode: 'files', query: 'file1', files, snap: snapOf({ sessions: [session('x', 'X')] }) }))
+    expect(b[0].items).toBe(a[0].items) // a snapshot push alone doesn't re-rank
+    const c = paletteResults(input({ mode: 'files', query: 'file1', files: [...files] }))
+    expect(c[0].items).not.toBe(a[0].items)
+    expect(c[0].items).toEqual(a[0].items)
   })
 
   test('actions match their label or keywords', () => {

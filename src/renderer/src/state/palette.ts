@@ -45,8 +45,8 @@ export interface PaletteInput {
   actions: PaletteAction[]
   /** The active session's files; null while loading or with no session. */
   files: FileEntry[] | null
-  /** searchSessions results for the current query. */
-  history: HistoryHit[] | null
+  /** searchSessions results and the query they answer; ignored once the query has changed. */
+  history: { query: string; hits: HistoryHit[] } | null
 }
 
 /** Past sessions are searched from this many characters on. */
@@ -285,9 +285,19 @@ function fileItems(files: FileEntry[], q: string, cap: number): PaletteItem[] {
     })
 }
 
+// Ranking thousands of paths is the slow part, and the same files and query always rank the same.
+let fileCache: { files: FileEntry[]; q: string; cap: number; items: PaletteItem[] } | null = null
+function rankedFiles(files: FileEntry[], q: string, cap: number): PaletteItem[] {
+  if (fileCache && fileCache.files === files && fileCache.q === q && fileCache.cap === cap) return fileCache.items
+  const items = fileItems(files, q, cap)
+  fileCache = { files, q, cap, items }
+  return items
+}
+
 function historyItems(input: PaletteInput, q: string, listed: Set<string>): PaletteItem[] {
-  if (q.length < MIN_HISTORY_QUERY || !input.history) return []
-  return input.history.filter((h) => !listed.has(h.sessionId)).slice(0, CAP.history).map((h) => ({
+  // Hits for an earlier query must never be offered (Enter would open the wrong one).
+  if (q.length < MIN_HISTORY_QUERY || !input.history || input.history.query.trim() !== q) return []
+  return input.history.hits.filter((h) => !listed.has(h.sessionId)).slice(0, CAP.history).map((h) => ({
     kind: 'history', key: `history:${h.sessionId}`, label: h.title,
     detail: [h.projectName, h.subProjectName].filter(Boolean).join(' · '),
     labelHits: h.matchedIn === 'title' ? fuzzyMatch(q, h.title)?.positions ?? [] : [], hit: h
@@ -298,14 +308,14 @@ function historyItems(input: PaletteInput, q: string, listed: Set<string>): Pale
 export function paletteResults(input: PaletteInput): PaletteGroup[] {
   const q = input.query.trim()
   if (input.mode === 'files') {
-    const files = fileItems(input.files ?? [], q, CAP.fileOnly)
+    const files = input.files ? rankedFiles(input.files, q, CAP.fileOnly) : []
     return files.length ? [{ kind: 'file', title: 'Files', items: files }] : []
   }
   const sessions = sessionItems(input, q)
   const groups: PaletteGroup[] = [
     { kind: 'session', title: 'Sessions', items: sessions },
     { kind: 'action', title: 'Actions', items: actionItems(input, q) },
-    { kind: 'file', title: 'Files', items: q && input.files ? fileItems(input.files, q, CAP.file) : [] },
+    { kind: 'file', title: 'Files', items: q && input.files ? rankedFiles(input.files, q, CAP.file) : [] },
     {
       kind: 'history', title: 'Past sessions',
       items: historyItems(input, q, new Set(sessions.map((i) => (i.kind === 'session' ? i.session.id : ''))))

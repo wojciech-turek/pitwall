@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { EditorView } from '@codemirror/view'
 import type { AppSnapshot, FileEntry, HistoryHit } from '@shared/types'
 import {
@@ -17,10 +17,20 @@ import StatusDot from './StatusDot'
 import { ChevronIcon, FileIcon, HistoryIcon } from './Icons'
 
 const SEARCH_DELAY_MS = 150
+const NO_SNAP: AppSnapshot = {
+  projects: [], subProjects: [], sessions: [], archived: [], settings: { monoFont: '', monoFontSize: 13, checkForUpdates: false }
+}
+const NO_ACTIONS: PaletteAction[] = []
+const MAX_FILES_NOTE = 'Showing the first 20,000 files.'
 
-/** Gives the keyboard back to what had it before the palette opened (a terminal, the editor, an input). */
+/**
+ * Gives the keyboard back to what had it before the palette opened (a terminal, the editor, an input), unless
+ * another pane became the active one meanwhile (a notification click): then to the active pane.
+ */
 function restoreFocus(el: Element | null): void {
-  if (!(el instanceof HTMLElement) || !el.isConnected || el === document.body) {
+  const pane = el?.closest('.pane[data-pane-id]')
+  const movedAway = pane && pane.getAttribute('data-pane-id') !== useUi.getState().layout.activePaneId
+  if (!(el instanceof HTMLElement) || !el.isConnected || el === document.body || movedAway) {
     focusActivePane()
     return
   }
@@ -61,8 +71,8 @@ export default function CommandPalette({ snap, mode }: { snap: AppSnapshot; mode
   const info = useAppInfo()
   const [query, setQuery] = useState('')
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
-  const [files, setFiles] = useState<{ sessionId: string; files: FileEntry[] } | null>(null)
-  const [history, setHistory] = useState<HistoryHit[] | null>(null)
+  const [files, setFiles] = useState<{ sessionId: string; files: FileEntry[]; truncated: boolean } | null>(null)
+  const [history, setHistory] = useState<{ query: string; hits: HistoryHit[] } | null>(null)
   const input = useRef<HTMLInputElement>(null)
   const list = useRef<HTMLDivElement>(null)
   const restoreTo = useRef<Element | null>(null)
@@ -87,8 +97,8 @@ export default function CommandPalette({ snap, mode }: { snap: AppSnapshot; mode
     if (!activeSessionId) return
     let live = true
     window.pitwall.listFiles(activeSessionId).then(
-      (r) => { if (live) setFiles({ sessionId: activeSessionId, files: r.files }) },
-      () => { if (live) setFiles({ sessionId: activeSessionId, files: [] }) }
+      (r) => { if (live) setFiles({ sessionId: activeSessionId, files: r.files, truncated: r.truncated }) },
+      () => { if (live) setFiles({ sessionId: activeSessionId, files: [], truncated: false }) }
     )
     return () => { live = false }
   }, [activeSessionId])
@@ -103,8 +113,8 @@ export default function CommandPalette({ snap, mode }: { snap: AppSnapshot; mode
     let live = true
     const timer = setTimeout(() => {
       window.pitwall.searchSessions(q)
-        .then((h) => { if (live) setHistory(h) })
-        .catch(() => { if (live) setHistory([]) })
+        .then((hits) => { if (live) setHistory({ query: q, hits }) })
+        .catch(() => { if (live) setHistory({ query: q, hits: [] }) })
     }, SEARCH_DELAY_MS)
     return () => { live = false; clearTimeout(timer) }
   }, [q, mode])
@@ -112,13 +122,27 @@ export default function CommandPalette({ snap, mode }: { snap: AppSnapshot; mode
   const actions = useMemo(() => paletteActions({
     snap, activeSessionId, paneCount, rightTab, canCheckUpdates: !!info?.updateFeed
   }), [snap, activeSessionId, paneCount, rightTab, info])
-  const sessionFiles = files && files.sessionId === activeSessionId ? files.files : null
+  const mine = files && files.sessionId === activeSessionId ? files : null
+  const sessionFiles = mine?.files ?? null
+  // Ranking a big repo's files takes tens of ms: typing stays smooth while it catches up, and in ⌘P mode
+  // snapshot pushes (status changes) don't re-rank at all.
+  const deferredQuery = useDeferredValue(query)
+  const commands = mode === 'commands'
+  const rankSnap = commands ? snap : NO_SNAP
+  const rankActions = commands ? actions : NO_ACTIONS
+  const rankHistory = commands ? history : null
+  const resultsFor = (text: string): ReturnType<typeof paletteResults> => paletteResults({
+    mode, query: text, snap: rankSnap, activeSessionId, actions: rankActions, files: sessionFiles, history: rankHistory
+  })
   const groups = useMemo(() => paletteResults({
-    mode, query, snap, activeSessionId, actions, files: sessionFiles, history
-  }), [mode, query, snap, activeSessionId, actions, sessionFiles, history])
+    mode, query: deferredQuery, snap: rankSnap, activeSessionId, actions: rankActions, files: sessionFiles, history: rankHistory
+  }), [mode, deferredQuery, rankSnap, activeSessionId, rankActions, sessionFiles, rankHistory])
   const flat = groups.flatMap((g) => g.items)
   const index = Math.max(0, flat.findIndex((i) => i.key === selectedKey))
   const current = flat[index] as PaletteItem | undefined
+  /** What Enter opens: the selection, or, when the list hasn't caught up with the typing yet, the top result now. */
+  const enterTarget = (): PaletteItem | undefined =>
+    deferredQuery === query ? current : resultsFor(query)[0]?.items[0]
 
   useEffect(() => {
     list.current?.querySelector('[data-selected="true"]')?.scrollIntoView({ block: 'nearest' })
@@ -194,7 +218,7 @@ export default function CommandPalette({ snap, mode }: { snap: AppSnapshot; mode
     const ctrl = e.ctrlKey && !e.metaKey && !e.altKey
     if (e.key === 'ArrowDown' || (ctrl && e.key === 'n')) { e.preventDefault(); move(1) }
     else if (e.key === 'ArrowUp' || (ctrl && e.key === 'p')) { e.preventDefault(); move(-1) }
-    else if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); run(current, e.metaKey) }
+    else if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); run(enterTarget(), e.metaKey) }
     else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close() }
     else if (e.key === 'Tab') e.preventDefault()
   }
@@ -204,6 +228,7 @@ export default function CommandPalette({ snap, mode }: { snap: AppSnapshot; mode
   let empty = 'No matches'
   if (mode === 'files' && !activeSession) empty = 'Select a session to search its files.'
   else if (mode === 'files' && !sessionFiles) empty = 'Loading files…'
+  else if (deferredQuery !== query) empty = 'Searching…'
 
   let row = -1
   return (
@@ -212,8 +237,10 @@ export default function CommandPalette({ snap, mode }: { snap: AppSnapshot; mode
       e.preventDefault() // the click mustn't move the keyboard after it's given back
       close()
     }}>
-      <div className="palette" role="dialog" aria-label={mode === 'files' ? 'Go to file' : 'Command palette'}
-        data-testid="command-palette" data-mode={mode} onKeyDown={onKeyDown}>
+      <div className="palette" role="dialog" aria-modal="true" aria-label={mode === 'files' ? 'Go to file' : 'Command palette'}
+        data-testid="command-palette" data-mode={mode} onKeyDown={onKeyDown}
+        // a click on a heading, the footer or a hint must not take the keyboard from the input
+        onMouseDown={(e) => { if (e.target !== input.current) e.preventDefault() }}>
         <input ref={input} className="palette-input" data-testid="palette-input" value={query} spellCheck={false}
           autoComplete="off" role="combobox" aria-expanded="true" aria-controls="palette-list"
           aria-activedescendant={current ? `palette-${index}` : undefined}
@@ -221,6 +248,7 @@ export default function CommandPalette({ snap, mode }: { snap: AppSnapshot; mode
             ? activeSession ? `Go to file in ${activeSession.title}` : 'Go to file'
             : 'Search sessions, files, past conversations and actions'}
           onChange={(e) => { setQuery(e.target.value); setSelectedKey(null) }} />
+        {mode === 'files' && mine?.truncated && <div className="palette-note" data-testid="palette-truncated">{MAX_FILES_NOTE}</div>}
         <div className="palette-list" id="palette-list" role="listbox" ref={list}>
           {groups.map((g) => (
             <div key={g.kind} role="group" aria-label={g.title}>
@@ -235,7 +263,6 @@ export default function CommandPalette({ snap, mode }: { snap: AppSnapshot; mode
                     data-path={item.kind === 'file' ? item.path : undefined}
                     data-action={item.kind === 'action' ? item.action.id : undefined}
                     onMouseMove={() => { if (i !== index) setSelectedKey(item.key) }}
-                    onMouseDown={(e) => e.preventDefault() /* keep the keyboard in the input */}
                     onClick={(e) => run(item, e.metaKey)}>
                     <ItemBody item={item} />
                   </div>

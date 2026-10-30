@@ -141,6 +141,10 @@ test('⌘Enter opens a session split to the right; arrows and the mouse move the
   const tax = page.locator('[data-testid="palette-item"][data-kind="session"]', { hasText: 'Tax rounding' })
   await expect(tax).toBeVisible()
   await expect(page.locator('[data-testid="palette-item"][data-kind="file"]').first()).toBeVisible()
+  // clicking a heading or the footer keeps the keyboard in the box
+  await page.locator('.palette-group').first().click()
+  await page.locator('.palette-foot').click()
+  expect(await focusIn()).toBe('palette')
   // arrows wrap around; the mouse selects what it moves over
   await page.keyboard.press('ArrowUp')
   await expect(selected()).toHaveCount(1)
@@ -158,6 +162,18 @@ test('⌘Enter opens a session split to the right; arrows and the mouse move the
   await expect(panes().nth(1)).toHaveAttribute('data-active', 'true')
   await expect.poll(focusIn).toBe(`terminal:${beta}`)
   await typeTo(beta, 'split')
+
+  // A notification click while the palette is open makes another pane active: Esc gives the keyboard to that pane.
+  await panes().nth(0).getByTestId('terminal-claude').click()
+  await expect.poll(focusIn).toBe(`terminal:${alpha}`)
+  await menu('CmdOrCtrl+K')
+  await expect.poll(focusIn).toBe('palette')
+  await app!.evaluate(({ BrowserWindow }, id) => BrowserWindow.getAllWindows()[0].webContents.send('pitwall:focusSession', id), beta)
+  await expect(panes().nth(1)).toHaveAttribute('data-active', 'true')
+  expect(await focusIn()).toBe('palette')
+  await page.keyboard.press('Escape')
+  await expect.poll(focusIn).toBe(`terminal:${beta}`)
+  await typeTo(beta, 'followed')
 })
 
 test('actions: mute the project, close a pane; no palette over a dialog', async () => {
@@ -173,7 +189,7 @@ test('actions: mute the project, close a pane; no palette over a dialog', async 
 
   await menu('CmdOrCtrl+K')
   await input().fill('unmute')
-  await page.keyboard.press('Enter')
+  await page.keyboard.press('Enter') // at once: Enter acts on what was typed, never on an older list
   await expect(page.getByTestId('project-muted')).toHaveCount(0)
 
   await menu('CmdOrCtrl+K')
