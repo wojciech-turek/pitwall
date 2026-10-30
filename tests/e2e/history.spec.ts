@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test'
 import type { PersistedState } from '../../src/shared/types'
@@ -110,10 +110,13 @@ test('a resume that fails shows the error, and Retry works once the cause is gon
   await page.getByTestId('session-archive').click()
   await page.getByTestId('archive-confirm').click()
   await expect(page.getByTestId('archive-dialog')).toHaveCount(0, { timeout: 30_000 })
-  // Something else takes the branch name: Pitwall's branch went with the archive, a user branch with that name is
-  // checked out in the main folder.
+  expect((await state()).sessions[0].branchDeleted).toBe(true)
+  // A branch of that name is back, checked out in the main folder: resume makes its own instead of taking it.
   const git = (...args: string[]) => execFileSync('git', ['-C', e.repo.root, ...args], { env: e.repo.env })
   git('checkout', '-b', s.branch!)
+  // And the repo is moved away for now.
+  const away = `${e.repo.root}-away`
+  await rename(e.repo.root, away)
 
   // The list stays open, with the last search, while it has nothing to show.
   await expect(page.getByTestId('archived-toggle')).toHaveAttribute('aria-expanded', 'true')
@@ -123,10 +126,14 @@ test('a resume that fails shows the error, and Retry works once the cause is gon
   await page.getByTestId('resume-session').click()
   const dialog = page.getByTestId('resume-dialog')
   await expect(dialog.locator('[data-step="worktree"]')).toHaveAttribute('data-state', 'failed', { timeout: 30_000 })
-  await expect(dialog).toContainText(`Branch ${s.branch} is checked out in`)
+  await expect(dialog).toContainText(`The repo isn't there any more: ${e.repo.root}`)
   await shot(page, '22-resume-failed')
-  git('checkout', 'main')
+  await rename(away, e.repo.root)
   await page.getByTestId('retry-resume').click()
   await expect(dialog).toHaveCount(0, { timeout: 30_000 })
   await expect(page.getByTestId('session-row')).toHaveCount(1)
+  const back = (await state()).sessions[0]
+  expect(back.branch).toBe(`${s.branch}-2`)
+  expect(back.worktreePath).toBe(s.worktreePath)
+  expect(git('rev-parse', '--abbrev-ref', 'HEAD').toString().trim()).toBe(s.branch)
 })

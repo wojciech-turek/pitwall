@@ -20,6 +20,8 @@ export interface Session {
   markedUnread?: boolean
   /** Earlier Claude conversation ids (before a /clear), oldest first; searched with the current one. */
   pastClaudeIds?: string[]
+  /** Archiving deleted the session's branch: resuming makes a new one rather than use another branch of that name. */
+  branchDeleted?: boolean
 }
 export interface AppSettings {
   monoFont: string; monoFontSize: number

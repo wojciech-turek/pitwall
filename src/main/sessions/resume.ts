@@ -16,6 +16,7 @@ function restore(s: Session, r: Restored, newBranch: boolean): Session {
   const x: Session = { ...s, ...r }
   delete x.archivedAt
   delete x.markedUnread
+  delete x.branchDeleted
   if (newBranch) delete x.pr // a new branch has no PR yet
   for (const k of ['worktreePath', 'branch', 'baseBranch', 'baseCommit'] as const) if (x[k] === undefined) delete x[k]
   return x
@@ -99,11 +100,9 @@ async function doResume(
         // A worktree folder deleted by hand keeps its branch and path taken until git forgets it.
         await git.pruneWorktrees(root)
         let base: string | undefined
-        // A session started after this one was archived made a branch of the same name: this one's own is gone.
-        const reused = deps.store.state.sessions.some((o) =>
-          o.id !== s.id && o.branch === s.branch && o.branchCreatedByPitwall && o.createdAt > s.archivedAt! &&
-          deps.store.state.subProjects.find((x) => x.id === o.subProjectId)?.repoRoot === root)
-        if (s.branch && !reused && (await git.branchExists(root, s.branch))) {
+        const notes: string[] = []
+        // A branch archiving deleted is gone for good, even if a branch of that name exists again now.
+        if (s.branch && !s.branchDeleted && (await git.branchExists(root, s.branch))) {
           const other = (await git.listBranches(root)).find((b) => b.name === s.branch)?.checkedOutAt
           if (other) throw new Error(`Branch ${s.branch} is checked out in ${other}. Switch that folder to another branch, then resume.`)
         } else {
@@ -114,17 +113,22 @@ async function doResume(
           r.baseBranch = main ?? undefined
           r.baseCommit = await git.revParse(root, base)
           newBranch = true
+          const made = `new branch ${r.branch} from ${main ?? 'the current commit'}`
+          notes.push(!s.branch ? `Made a ${made}` : `Branch ${s.branch} ${s.branchDeleted ? 'was deleted' : 'is gone'} — ${made}`)
         }
         // The original folder when it's free: Claude files the conversation under that folder's name. Otherwise a
         // new one; `claude --resume` finds the conversation in other folders too.
-        const path = await uniquePath(s.worktreePath ?? join(paths.worktreesRoot, slugify(sub.name), s.slug))
+        const original = s.worktreePath ?? join(paths.worktreesRoot, slugify(sub.name), s.slug)
+        const path = await uniquePath(original)
+        if (path !== original && s.worktreePath) notes.unshift(`Original folder is in use — resumed in ${path}`)
         // Mark before creating so a partial failure is still cleaned up.
         created.worktree = path
         if (newBranch) created.branch = r.branch
         await git.addWorktree({ repoRoot: root, path, branch: r.branch!, mode: newBranch ? 'new' : 'existing', base })
         r.worktreePath = path
         r.cwd = join(path, sub.relPath ?? '')
-      })
+        return notes.join('. ') || undefined
+      }, (note) => note)
     } else {
       await run('worktree', async () => {
         if (!(await isDir(s.cwd))) throw new Error(`Folder not found: ${s.cwd}`)

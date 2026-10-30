@@ -47,12 +47,12 @@ export function progressSteps(requestId: string, onProgress: (p: StartProgress) 
       // a broken listener must not break the start
     }
   }
-  const run = async <T>(s: StartStep, fn: () => Promise<T>, doneMessage?: string): Promise<T> => {
+  const run = async <T>(s: StartStep, fn: () => Promise<T>, doneMessage?: string | ((v: T) => string | undefined)): Promise<T> => {
     current = s
     emit(s, 'running')
     try {
       const v = await fn()
-      emit(s, 'done', doneMessage)
+      emit(s, 'done', typeof doneMessage === 'function' ? doneMessage(v) : doneMessage)
       return v
     } catch (e) {
       emit(s, 'failed', msg(e))

@@ -127,6 +127,7 @@ describe('resumeSession', () => {
     const s = await startOne(sp)
     await archive(s)
     expect(await branchesOf(r)).toEqual(['main']) // Pitwall's branch went with the archive
+    expect(get(s.id).branchDeleted).toBe(true)
     expect(await has(s.worktreePath!)).toBe(false)
 
     const res = await manager.resume(s.id, 'rq', (p) => progress.push(p))
@@ -139,6 +140,9 @@ describe('resumeSession', () => {
     expect(back.branchCreatedByPitwall).toBe(true)
     expect(back.baseBranch).toBe('main')
     expect(back.claudeSessionId).toBe(s.claudeSessionId)
+    expect(back.branchDeleted).toBeUndefined()
+    expect(progress.find((p) => p.step === 'worktree' && p.state === 'done')?.message)
+      .toBe('Branch pitwall/fix-tax-rounding was deleted — new branch pitwall/fix-tax-rounding from main')
     expect((await git(r, s.worktreePath!, 'rev-parse', '--abbrev-ref', 'HEAD')).stdout.trim()).toBe('pitwall/fix-tax-rounding')
     expect(await t.tmux.hasSession(claudeTmuxName(s.id))).toBe(true)
     expect(await has(join(sessionDir(t.paths, s.id), 'started'))).toBe(true)
@@ -168,6 +172,7 @@ describe('resumeSession', () => {
     const head = (await git(r, s.worktreePath!, 'rev-parse', 'HEAD')).stdout.trim()
     await archive(s, true)
     expect(await branchesOf(r)).toContain('feature/x')
+    expect(get(s.id).branchDeleted).toBeUndefined() // not Pitwall's branch: kept
 
     const res = await resume(s.id)
     expect(res.ok).toBe(true)
@@ -178,6 +183,38 @@ describe('resumeSession', () => {
     expect(back.worktreePath).toBe(s.worktreePath)
     expect((await git(r, s.worktreePath!, 'rev-parse', 'HEAD')).stdout.trim()).toBe(head)
     expect(await readFile(join(s.worktreePath!, 'y.txt'), 'utf8')).toBe('y')
+    expect(progress.find((p) => p.step === 'worktree' && p.state === 'done')?.message).toBeUndefined()
+  })
+
+  test("a branch archiving deleted is never swapped for someone else's branch of the same name", async () => {
+    const { r, sp } = await addRepo()
+    const s = await startOne(sp)
+    await archive(s)
+    // The user makes their own branch with that name, and works on it in the main folder.
+    await git(r, r.root, 'checkout', '-b', 'pitwall/fix-tax-rounding')
+    await writeFile(join(r.root, 'mine.txt'), 'mine')
+    await git(r, r.root, 'add', '-A')
+    await git(r, r.root, 'commit', '-m', 'mine')
+    const theirs = (await git(r, r.root, 'rev-parse', 'HEAD')).stdout.trim()
+    const res = await resume(s.id)
+    expect(res.ok).toBe(true)
+    expect(get(s.id).branch).toBe('pitwall/fix-tax-rounding-2')
+    expect(get(s.id).worktreePath).toBe(s.worktreePath)
+    expect((await git(r, s.worktreePath!, 'rev-parse', 'HEAD')).stdout.trim()).not.toBe(theirs) // from main
+    expect((await git(r, r.root, 'rev-parse', '--abbrev-ref', 'HEAD')).stdout.trim()).toBe('pitwall/fix-tax-rounding')
+    expect((await git(r, r.root, 'rev-parse', 'HEAD')).stdout.trim()).toBe(theirs)
+  })
+
+  test('an older archived session (no record of a deleted branch) uses a branch of that name if it is free', async () => {
+    const { r, sp } = await addRepo()
+    const s = await startOne(sp)
+    await archive(s)
+    await store.update((d) => { delete d.sessions[0].branchDeleted })
+    await git(r, r.root, 'branch', 'pitwall/fix-tax-rounding')
+    const res = await resume(s.id)
+    expect(res.ok).toBe(true)
+    expect(get(s.id).branch).toBe('pitwall/fix-tax-rounding')
+    expect(get(s.id).branchCreatedByPitwall).toBe(true)
   })
 
   test("original folder now used by another session: a new folder, and the other session's is left alone", async () => {
@@ -194,6 +231,10 @@ describe('resumeSession', () => {
     expect(back.worktreePath).toBe(`${a.worktreePath}-2`)
     expect(back.cwd).toBe(`${a.worktreePath}-2`)
     expect(back.branch).toBe('pitwall/fix-tax-rounding-2')
+    expect(progress.find((p) => p.step === 'worktree' && p.state === 'done')?.message).toBe(
+      `Original folder is in use — resumed in ${a.worktreePath}-2. ` +
+      'Branch pitwall/fix-tax-rounding was deleted — new branch pitwall/fix-tax-rounding-2 from main'
+    )
     expect(await readFile(join(b.worktreePath!, 'b-work.txt'), 'utf8')).toBe('b')
     expect((await git(r, b.worktreePath!, 'rev-parse', '--abbrev-ref', 'HEAD')).stdout.trim()).toBe(b.branch)
     expect(await t.tmux.hasSession(claudeTmuxName(b.id))).toBe(true)
@@ -212,6 +253,8 @@ describe('resumeSession', () => {
     expect(get(s.id).worktreePath).toBe(`${s.worktreePath}-2`)
     expect(get(s.id).branch).toBe('feature/x')
     expect(await readFile(join(s.worktreePath!, 'mine.txt'), 'utf8')).toBe('keep')
+    expect(progress.find((p) => p.step === 'worktree' && p.state === 'done')?.message)
+      .toBe(`Original folder is in use — resumed in ${s.worktreePath}-2`)
   })
 
   test('the repo is gone: a clear error and nothing is created', async () => {

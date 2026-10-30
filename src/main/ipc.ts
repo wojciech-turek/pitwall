@@ -1,6 +1,6 @@
 import { ipcMain, shell } from 'electron'
 import { IPC } from '@shared/api'
-import type { NewSessionInput, TermKind } from '@shared/types'
+import type { NewSessionInput, StartResult, TermKind } from '@shared/types'
 import type { ChangesService } from './changes'
 import type { Exec } from './exec'
 import { formatAgentReference, listSessionFiles, readForEditor, writeFromEditor } from './files'
@@ -100,9 +100,11 @@ export function registerIpc(d: IpcDeps): () => void {
   handle(IPC.checkArchive, (id: string) => checkArchive(id, archiveDeps()))
   handle(IPC.archiveSession, (id: string, confirmed: boolean, skipTeardown?: boolean) =>
     archiveSession(id, { confirmedDataLoss: confirmed, skipTeardown: !!skipTeardown }, archiveDeps()))
-  handle(IPC.searchSessions, (query: unknown) => (typeof query === 'string' ? d.history.search(query) : []))
-  handle(IPC.resumeSession, (id: string, requestId: string) =>
-    manager.resume(id, requestId, (p) => send(IPC.startProgress, p)))
+  handle(IPC.searchSessions, (query: unknown) => (typeof query === 'string' ? d.history.search(query.slice(0, 256)) : []))
+  handle(IPC.resumeSession, (id: unknown, requestId: unknown): Promise<StartResult> | StartResult =>
+    typeof id === 'string' && typeof requestId === 'string'
+      ? manager.resume(id, requestId, (p) => send(IPC.startProgress, p))
+      : { ok: false, step: 'identity', error: 'Invalid request.' })
   handle(IPC.openExternal, async (url: string) => {
     // Only web links; never let the renderer open file: or custom-scheme URLs.
     if (/^https?:\/\//i.test(url)) await shell.openExternal(url)

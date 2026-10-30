@@ -10,8 +10,10 @@ export type { HistoryHit }
  * (`<config dir>/projects/<folder>/<conversation id>.jsonl`) and never writes there.
  */
 
-/** Text kept per transcript and per session (characters): the start and the most recent part. */
+/** Text kept per session (characters), across all its conversations: the start and the most recent part. */
 export const TEXT_CAP = 300_000
+const MAX_QUERY = 256
+const MAX_TERMS = 16
 const MAX_HITS = 50
 const SNIPPET_CONTEXT = 60
 const CHUNK = 1 << 20
@@ -54,7 +56,7 @@ export function historySources(
 }
 
 export function queryTerms(query: string): string[] {
-  return [...new Set(query.toLowerCase().split(/\s+/).filter(Boolean))]
+  return [...new Set(query.slice(0, MAX_QUERY).toLowerCase().split(/\s+/).filter(Boolean))].slice(0, MAX_TERMS)
 }
 
 // Claude Code wraps slash commands, their output and background notices like this; they aren't the user's words.
@@ -107,83 +109,102 @@ function bufferText(buf: Buffer): string | null {
   return parsedText(buf.toString('utf8'))
 }
 
-/** Appended text up to a cap: the first half is kept, and the most recent text fills the second half. */
+/** Marks where text was dropped between the start of a conversation and its most recent part. */
+const GAP = '\n…\n'
+
+/** A copy that doesn't keep a bigger string alive (V8 lets a slice share its source's memory). */
+function detach(s: string): string {
+  return (' ' + s).slice(1)
+}
+
+/**
+ * Appended text up to a cap: the first half of the cap keeps the start, the second half the most recent text.
+ * Pieces are buffered and folded in at most every `cap` characters, so only one copy of the kept text stays.
+ */
 export class CappedText {
-  private head = ''
-  private headFull = false
-  private tail: string[] = []
-  private tailLen = 0
+  private kept = ''
+  /** Length of the start part of `kept`; it fills to half the cap before anything goes after it. */
+  private headLen = 0
   private gap = false
-  private joined: string | null = null
+  private pending: string[] = []
+  private pendingLen = 0
 
   constructor(private readonly cap = TEXT_CAP) {}
 
+  /** Characters held, including pieces not folded in yet. */
+  get size(): number {
+    return this.kept.length + this.pendingLen
+  }
+
   add(piece: string): void {
     if (!piece) return
-    this.joined = null
     const half = this.cap >> 1
-    if (!this.headFull) {
-      const s = this.head ? '\n' + piece : piece
-      if (this.head.length + s.length <= half) {
-        this.head += s
-        return
-      }
-      const room = half - this.head.length
-      this.head += s.slice(0, room)
-      this.headFull = true
-      piece = s.slice(room)
-    }
-    this.tail.push(piece)
-    this.tailLen += piece.length + 1
-    while (this.tailLen > half && this.tail.length > 1) {
-      this.tailLen -= this.tail.shift()!.length + 1
-      this.gap = true
-    }
+    // One message never takes more than half of what's kept.
+    if (piece.length > half) piece = detach(piece.slice(0, half))
+    this.pending.push(piece)
+    this.pendingLen += piece.length + 1
+    if (this.pendingLen > this.cap) this.fold()
   }
 
   toString(): string {
-    if (this.joined !== null) return this.joined
+    this.fold()
+    return this.kept
+  }
+
+  private fold(): void {
+    if (this.pending.length === 0) return
     const half = this.cap >> 1
-    let t = this.tail.join('\n')
-    let gap = this.gap
-    if (t.length > half) {
-      t = t.slice(t.length - half)
-      gap = true
+    const added = this.pending.join('\n')
+    this.pending = []
+    this.pendingLen = 0
+    let head = this.kept.slice(0, this.headLen)
+    let tail: string
+    if (this.headLen < half) {
+      const all = head ? head + '\n' + added : added
+      if (all.length <= half) {
+        this.kept = detach(all)
+        this.headLen = this.kept.length
+        return
+      }
+      head = all.slice(0, half)
+      tail = all.slice(half)
+    } else {
+      tail = this.kept.slice(this.headLen + (this.gap ? GAP.length : 0)) + '\n' + added
     }
-    this.joined = t ? this.head + (gap ? '\n…\n' : '') + t : this.head
-    return this.joined
+    if (tail.length > half) {
+      tail = tail.slice(tail.length - half)
+      this.gap = true
+    }
+    this.headLen = head.length
+    this.kept = detach(head + (this.gap ? GAP : '') + tail)
   }
 }
 
-function capText(s: string): string {
-  if (s.length <= TEXT_CAP) return s
-  const half = TEXT_CAP >> 1
-  return s.slice(0, half) + '\n…\n' + s.slice(s.length - half)
-}
-
-interface Indexed {
+/** How far one transcript file has been read. */
+interface FileState {
+  path: string
   size: number
   mtimeMs: number
   /** Bytes read so far: up to the end of the last complete line. */
   offset: number
+  /** The bytes just before `offset`, to tell an appended file from a rewritten one. */
   fingerprint: Buffer
-  text: CappedText
-  version: number
 }
 
-interface Conversation { key: string; text: string; lower: string }
+/** A session's conversations (earlier ones first) as one capped text, plus its lowercase copy. */
+interface Conversation { files: FileState[]; text: CappedText; plain: string; lower: string }
+
+const EMPTY: Pick<Conversation, 'plain' | 'lower'> = { plain: '', lower: '' }
 
 interface Listing { mtimeMs: number; files: string[] }
 
 export class SessionHistory {
   /** Bytes read from transcripts so far (lets tests check that unchanged files aren't read again). */
   bytesRead = 0
-  private files = new Map<string, Indexed>()
-  private indexing = new Map<string, Promise<Indexed | null>>()
   private conversations = new Map<string, Conversation>()
+  private indexing = new Map<string, Promise<Conversation | null>>()
   private roots = new Map<string, Listing>()
   private folders = new Map<string, Listing>()
-  private versions = 0
   private warming: Promise<void> | null = null
 
   constructor(private readonly sources: () => HistorySource[]) {}
@@ -192,6 +213,7 @@ export class SessionHistory {
   async search(query: string, limit = MAX_HITS): Promise<HistoryHit[]> {
     const terms = queryTerms(query)
     const sources = this.sources()
+    this.forgetOthers(sources)
     if (terms.length === 0) {
       this.warm(sources)
       return []
@@ -214,6 +236,19 @@ export class SessionHistory {
     return hits.slice(0, limit)
   }
 
+  /** Characters of conversation text held in memory (the text and its lowercase copy). */
+  keptChars(): number {
+    let n = 0
+    for (const c of this.conversations.values()) n += c.text.size + c.lower.length
+    return n
+  }
+
+  /** Drops what's kept for sessions that are gone. */
+  private forgetOthers(sources: HistorySource[]): void {
+    const ids = new Set(sources.map((s) => s.session.id))
+    for (const id of this.conversations.keys()) if (!ids.has(id)) this.conversations.delete(id)
+  }
+
   /** Index every transcript in the background, so the first real search is quick. */
   private warm(sources: HistorySource[]): void {
     if (this.warming) return
@@ -225,18 +260,23 @@ export class SessionHistory {
 
   private async locateAll(sources: HistorySource[]): Promise<Map<string, Map<string, string[]>>> {
     const out = new Map<string, Map<string, string[]>>()
-    for (const dir of new Set(sources.map((s) => s.configDir))) out.set(dir, await this.locate(dir))
+    const seen = new Set<string>()
+    for (const dir of new Set(sources.map((s) => s.configDir))) out.set(dir, await this.locate(dir, seen))
+    // Forget listings of folders that are gone.
+    for (const cache of [this.roots, this.folders]) for (const k of cache.keys()) if (!seen.has(k)) cache.delete(k)
     return out
   }
 
   /** `<id>.jsonl` → its paths under every project folder of a config dir. Listings are re-read only when they change. */
-  private async locate(configDir: string): Promise<Map<string, string[]>> {
+  private async locate(configDir: string, seen: Set<string>): Promise<Map<string, string[]>> {
     const root = join(configDir, 'projects')
+    seen.add(root)
     const folders = await this.listing(this.roots, root, async () =>
       (await readdir(root, { withFileTypes: true })).filter((e) => e.isDirectory()).map((e) => e.name))
     const byName = new Map<string, string[]>()
     for (const f of folders) {
       const dir = join(root, f)
+      seen.add(dir)
       const names = await this.listing(this.folders, dir, async () =>
         (await readdir(dir)).filter((n) => n.endsWith('.jsonl')))
       for (const n of names) {
@@ -261,86 +301,102 @@ export class SessionHistory {
     return files
   }
 
-  /** All of a session's conversations (earlier ones first), as one capped text. */
-  private async conversation(s: Session, located: Map<string, string[]> | undefined): Promise<Conversation> {
+  /** All of a session's conversations, earlier ones first, read up to date. Never throws. */
+  private async conversation(s: Session, located: Map<string, string[]> | undefined): Promise<Pick<Conversation, 'plain' | 'lower'>> {
     const ids = [...(s.pastClaudeIds ?? []), s.claudeSessionId].filter((x, i, a) => x && a.indexOf(x) === i)
-    const files: Indexed[] = []
-    for (const id of ids) {
-      for (const p of located?.get(`${id}.jsonl`) ?? []) {
-        const f = await this.index(p)
-        if (f) files.push(f)
+    const paths = ids.flatMap((id) => [...(located?.get(`${id}.jsonl`) ?? [])].sort())
+    let running = this.indexing.get(s.id)
+    if (!running) {
+      running = this.refresh(s.id, paths)
+        .catch(() => {
+          this.conversations.delete(s.id)
+          return null
+        })
+        .finally(() => { this.indexing.delete(s.id) })
+      this.indexing.set(s.id, running)
+    }
+    return (await running) ?? EMPTY
+  }
+
+  /**
+   * Reads what changed since the last time: new files, and new lines of the last one read. Anything else (a file
+   * rewritten, removed or reordered) reads the session's transcripts again from the start.
+   */
+  private async refresh(id: string, paths: string[]): Promise<Conversation> {
+    const found: { path: string; size: number; mtimeMs: number }[] = []
+    for (const path of paths) {
+      const st = await stat(path).catch(() => null)
+      if (st?.isFile()) found.push({ path, size: st.size, mtimeMs: st.mtimeMs })
+    }
+    const same = (f: FileState, x: (typeof found)[number]) => f.path === x.path && f.size === x.size && f.mtimeMs === x.mtimeMs
+    const cur = this.conversations.get(id)
+    if (cur && cur.files.length === found.length && cur.files.every((f, i) => same(f, found[i]))) return cur
+
+    let conv: Conversation | null = null
+    let from = 0
+    if (cur && cur.files.length <= found.length) {
+      const n = cur.files.length
+      const kept = cur.files.slice(0, -1).every((f, i) => same(f, found[i]))
+      const last = cur.files[n - 1]
+      if (kept && (!last || same(last, found[n - 1]))) {
+        conv = cur
+        from = n
+      } else if (kept && last.path === found[n - 1].path && found[n - 1].size >= last.offset && (await this.sameStart(last))) {
+        conv = cur
+        from = n - 1
       }
     }
-    const key = files.map((f) => f.version).join(',')
-    const cached = this.conversations.get(s.id)
-    if (cached?.key === key) return cached
-    const text = files.length === 1
-      ? files[0].text.toString()
-      : capText(files.map((f) => f.text.toString()).filter(Boolean).join('\n'))
-    const conv = { key, text, lower: text.toLowerCase() }
-    this.conversations.set(s.id, conv)
+    // Drop the entry while it's being updated: a failed read must never leave half-added text behind.
+    this.conversations.delete(id)
+    if (!conv) conv = { files: [], text: new CappedText(), plain: '', lower: '' }
+    for (let i = from; i < found.length; i++) {
+      const prev = conv.files[i]
+      const state: FileState = prev?.path === found[i].path
+        ? prev
+        : { path: found[i].path, size: 0, mtimeMs: 0, offset: 0, fingerprint: Buffer.alloc(0) }
+      const fh = await open(state.path, 'r')
+      try {
+        await this.readLines(fh, state, conv.text, found[i].size)
+      } finally {
+        await fh.close()
+      }
+      state.size = found[i].size
+      state.mtimeMs = found[i].mtimeMs
+      conv.files[i] = state
+    }
+    conv.files.length = found.length
+    const plain = conv.text.toString()
+    if (plain !== conv.plain) {
+      conv.plain = plain
+      conv.lower = plain.toLowerCase()
+    }
+    this.conversations.set(id, conv)
     return conv
   }
 
-  /** One transcript's text, cached by size and mtime; an appended file is read from where the last read stopped. */
-  private index(path: string): Promise<Indexed | null> {
-    const running = this.indexing.get(path)
-    if (running) return running
-    const p = this.refresh(path)
-      .catch(() => {
-        this.files.delete(path)
-        return null
-      })
-      .finally(() => { this.indexing.delete(path) })
-    this.indexing.set(path, p)
-    return p
-  }
-
-  private async refresh(path: string): Promise<Indexed | null> {
-    const st = await stat(path).catch(() => null)
-    if (!st?.isFile()) {
-      this.files.delete(path)
-      return null
-    }
-    const cur = this.files.get(path)
-    if (cur && cur.size === st.size && cur.mtimeMs === st.mtimeMs) return cur
-    const fh = await open(path, 'r')
+  private async sameStart(f: FileState): Promise<boolean> {
+    const n = f.fingerprint.length
+    if (n === 0) return f.offset === 0
+    const fh = await open(f.path, 'r')
     try {
-      const appended = cur && st.size >= cur.offset && (await this.sameStart(fh, cur)) ? cur : null
-      // Drop the entry while it's being updated: a failed read must never leave half-added text behind.
-      this.files.delete(path)
-      const entry: Indexed = appended ?? {
-        size: 0, mtimeMs: 0, offset: 0, fingerprint: Buffer.alloc(0), text: new CappedText(), version: 0
-      }
-      await this.readLines(fh, entry, st.size)
-      entry.size = st.size
-      entry.mtimeMs = st.mtimeMs
-      entry.version = ++this.versions
-      this.files.set(path, entry)
-      return entry
+      const buf = Buffer.alloc(n)
+      const { bytesRead } = await fh.read(buf, 0, n, f.offset - n)
+      this.bytesRead += bytesRead
+      return bytesRead === n && buf.equals(f.fingerprint)
     } finally {
       await fh.close()
     }
   }
 
-  private async sameStart(fh: FileHandle, cur: Indexed): Promise<boolean> {
-    const n = cur.fingerprint.length
-    if (n === 0) return cur.offset === 0
-    const buf = Buffer.alloc(n)
-    const { bytesRead } = await fh.read(buf, 0, n, cur.offset - n)
-    this.bytesRead += bytesRead
-    return bytesRead === n && buf.equals(cur.fingerprint)
-  }
-
-  /** Streams complete lines from entry.offset to size; a trailing partial line is left for the next read. */
-  private async readLines(fh: FileHandle, entry: Indexed, size: number): Promise<void> {
-    let pos = entry.offset
+  /** Streams complete lines from state.offset to size; a trailing partial line is left for the next read. */
+  private async readLines(fh: FileHandle, state: FileState, text: CappedText, size: number): Promise<void> {
+    let pos = state.offset
     let pending: Buffer[] = []
     let pendingLen = 0
     let skipping = false
-    let lastLineEnd = entry.offset
-    let before = entry.fingerprint // the bytes just before `pos`
-    let fingerprint = entry.fingerprint // the bytes just before `lastLineEnd`
+    let lastLineEnd = state.offset
+    let before = state.fingerprint // the bytes just before `pos`
+    let fingerprint = state.fingerprint // the bytes just before `lastLineEnd`
     while (pos < size) {
       const chunk = Buffer.allocUnsafe(Math.min(CHUNK, size - pos))
       const { bytesRead } = await fh.read(chunk, 0, chunk.length, pos)
@@ -353,7 +409,7 @@ export class SessionHistory {
           const piece = data.subarray(from, nl)
           const line = pendingLen ? Buffer.concat([...pending, piece]) : piece
           const t = bufferText(line)
-          if (t) entry.text.add(t)
+          if (t) text.add(t)
         }
         pending = []
         pendingLen = 0
@@ -379,13 +435,13 @@ export class SessionHistory {
       const line = Buffer.concat(pending)
       if (isJson(line)) {
         const t = bufferText(line)
-        if (t) entry.text.add(t)
+        if (t) text.add(t)
         lastLineEnd = pos
         fingerprint = before
       }
     }
-    entry.offset = lastLineEnd
-    entry.fingerprint = fingerprint
+    state.offset = lastLineEnd
+    state.fingerprint = fingerprint
   }
 }
 
@@ -405,7 +461,7 @@ function isJson(buf: Buffer): boolean {
   }
 }
 
-function snippet(conv: Conversation, terms: string[]): string {
+function snippet(conv: Pick<Conversation, 'plain' | 'lower'>, terms: string[]): string {
   let at = -1
   let len = 0
   for (const t of terms) {
@@ -416,7 +472,7 @@ function snippet(conv: Conversation, terms: string[]): string {
     }
   }
   if (at < 0) return ''
-  const { text } = conv
+  const text = conv.plain
   // Lowercasing can change the length of a few characters; find the match in the original text then.
   if (conv.lower.length !== text.length) {
     const term = conv.lower.slice(at, at + len)

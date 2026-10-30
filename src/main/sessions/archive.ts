@@ -142,9 +142,11 @@ export async function archiveSession(
         return { ok: false, error: `Couldn't remove the worktree: ${msg(e)}` }
       }
     }
+    let branchDeleted = false
     if (check.willDeleteBranch && repoRoot && s.branch) {
       try {
         await deps.git.deleteBranch(repoRoot, s.branch)
+        branchDeleted = true
       } catch {
         // The worktree is gone already; a branch left behind loses nothing.
       }
@@ -155,6 +157,7 @@ export async function archiveSession(
     await deps.store.update((d) => {
       const x = d.sessions.find((y) => y.id === s.id)
       if (x) x.archivedAt = Date.now()
+      if (x && branchDeleted) x.branchDeleted = true
     })
     return { ok: true }
   } catch (e) {

@@ -81,6 +81,27 @@ describe('CappedText', () => {
     expect(c.toString()).toBe('alpha\nbeta')
   })
 
+  test('a piece longer than half the cap is cut to half', () => {
+    const c = new CappedText(1000)
+    c.add('s' + 'x'.repeat(5000) + 'e')
+    expect(c.toString()).toBe('s' + 'x'.repeat(499))
+    expect(c.size).toBe(500)
+  })
+
+  test('adding in many small steps keeps the same result as one pass', () => {
+    const c = new CappedText(1000)
+    const all: string[] = []
+    for (let i = 0; i < 3000; i++) {
+      c.add(`m${i}`)
+      all.push(`m${i}`)
+      if (i % 7 === 0) c.toString() // a search between reads
+    }
+    const s = c.toString()
+    expect(s.startsWith(all.join('\n').slice(0, 500))).toBe(true)
+    expect(s.endsWith(all.join('\n').slice(-500))).toBe(true)
+    expect(s.length).toBeLessThanOrEqual(1003)
+  })
+
   test('over the cap keeps the start and the most recent text', () => {
     const c = new CappedText(1000)
     c.add('FIRSTWORD')
@@ -98,6 +119,11 @@ describe('queryTerms', () => {
   test('lowercase, whitespace-separated, no duplicates', () => {
     expect(queryTerms('  Tax  ROUNDING\ttax ')).toEqual(['tax', 'rounding'])
     expect(queryTerms('   ')).toEqual([])
+  })
+
+  test('at most 256 characters and 16 terms', () => {
+    expect(queryTerms(Array.from({ length: 40 }, (_, i) => `t${i}`).join(' '))).toHaveLength(16)
+    expect(queryTerms('x'.repeat(1000))).toEqual(['x'.repeat(256)])
   })
 })
 
@@ -271,6 +297,44 @@ describe('SessionHistory', () => {
     expect(await h.search('zebra')).toHaveLength(1)
     expect(await h.search('filler 1000 ')).toEqual([])
     expect(TEXT_CAP).toBeGreaterThanOrEqual(250_000)
+  })
+
+  test('memory stays within the cap: several big conversations and one huge message', async () => {
+    const cfg = join(tmp, '.claude')
+    const big = (tag: string) => Array.from({ length: 400 }, (_, i) => user(`${tag} ${i} ${'w'.repeat(2000)}`))
+    await transcript(cfg, '-x', 'old-1', [user('earliest ibis'), ...big('first')])
+    await transcript(cfg, '-x', 'old-2', big('second'))
+    await transcript(cfg, '-x', 'c-a', [...big('third'), user('huge ' + 'h'.repeat(5_000_000)), user('latest stork')])
+    let sources = [source(session('a', { pastClaudeIds: ['old-1', 'old-2'] }), cfg)]
+    const h = new SessionHistory(() => sources)
+    expect(await h.search('ibis')).toHaveLength(1) // the start of the first conversation
+    expect(await h.search('stork')).toHaveLength(1) // the end of the current one
+    // One copy of the text and one lowercase copy, each within the cap.
+    expect(h.keptChars()).toBeLessThanOrEqual(2 * (TEXT_CAP + 10))
+    expect(h.keptChars()).toBeGreaterThan(TEXT_CAP)
+    // More conversation arrives: still within the cap.
+    await appendFile(join(cfg, 'projects', '-x', 'c-a.jsonl'), big('fourth').join('\n') + '\n' + user('newest heron') + '\n')
+    expect(await h.search('heron')).toHaveLength(1)
+    expect(await h.search('ibis')).toHaveLength(1)
+    expect(h.keptChars()).toBeLessThanOrEqual(2 * (TEXT_CAP + 10))
+    // A session that's gone is forgotten.
+    sources = []
+    expect(await h.search('heron')).toEqual([])
+    expect(h.keptChars()).toBe(0)
+  })
+
+  test('a new conversation after /clear is read without reading the earlier one again', async () => {
+    const cfg = join(tmp, '.claude')
+    await transcript(cfg, '-x', 'c-a', [user('before clear, puffin')])
+    let s = session('a')
+    const h = new SessionHistory(() => [source(s, cfg)])
+    expect(await h.search('puffin')).toHaveLength(1)
+    const before = h.bytesRead
+    const next = user('after clear, gannet') + '\n'
+    await transcript(cfg, '-x', 'c-b', [user('after clear, gannet')])
+    s = session('a', { claudeSessionId: 'c-b', pastClaudeIds: ['c-a'] })
+    expect(await h.search('puffin gannet')).toHaveLength(1)
+    expect(h.bytesRead - before).toBeLessThan(Buffer.byteLength(next) + 100)
   })
 
   test('a 20 MB transcript: indexed in the background, then searched in well under a second', async () => {
