@@ -1,8 +1,10 @@
-// Checks what Windows users download, before it's released: node scripts/verify-windows.mjs <version> <x64|arm64>
-// The installer is there, and the app it was made from has Pitwall.exe for that architecture, the main process and
-// the host inside app.asar, node-pty's binaries for that architecture beside it (with its ConPTY worker and console
-// helper), and the PowerShell hook and status line scripts. Runs anywhere (it reads files, it starts nothing).
-import { existsSync, openSync, readSync, closeSync, statSync } from 'node:fs'
+// Checks what Windows users download, before it's released:
+//   node scripts/verify-windows.mjs <x64|arm64> [version (default: package.json's)] [--no-installer]
+// The installer is there (not checked with --no-installer, after `pnpm package:win`), and the app it was made from
+// (release/win-unpacked, or win-arm64-unpacked) has Pitwall.exe for that architecture, the main process and the host
+// inside app.asar, node-pty's binaries for that architecture beside it (with its ConPTY worker and console helper),
+// and the PowerShell hook and status line scripts. Runs anywhere: it reads files and starts nothing.
+import { existsSync, openSync, readFileSync, readSync, closeSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -46,12 +48,12 @@ export function asarFiles(file) {
   }
 }
 
-export function verifyWindows(version, arch, releaseDir = 'release') {
+export function verifyWindows(version, arch, releaseDir = 'release', o = { installer: true }) {
   const problems = []
   const need = (ok, what) => { if (!ok) problems.push(what) }
   const installer = join(releaseDir, `Pitwall-${version}-${arch}-setup.exe`)
-  need(existsSync(installer) && statSync(installer).size > 20 * 1024 * 1024, `installer ${installer} (over 20 MB)`)
-  if (existsSync(installer)) {
+  if (o.installer) need(existsSync(installer) && statSync(installer).size > 20 * 1024 * 1024, `installer ${installer} (over 20 MB)`)
+  if (o.installer && existsSync(installer)) {
     let program = true
     try { peMachine(installer) } catch { program = false }
     need(program, `${installer} to be a Windows program`)
@@ -87,15 +89,18 @@ export function verifyWindows(version, arch, releaseDir = 'release') {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const [version, arch] = process.argv.slice(2)
-  if (!version || !['x64', 'arm64'].includes(arch)) {
-    console.error('usage: node scripts/verify-windows.mjs <version> <x64|arm64>')
+  const args = process.argv.slice(2)
+  const installer = !args.includes('--no-installer')
+  const [arch, version = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version] =
+    args.filter((a) => a !== '--no-installer')
+  if (!['x64', 'arm64'].includes(arch)) {
+    console.error('usage: node scripts/verify-windows.mjs <x64|arm64> [version] [--no-installer]')
     process.exit(2)
   }
-  const problems = verifyWindows(version, arch)
+  const problems = verifyWindows(version, arch, 'release', { installer })
   if (problems.length) {
-    console.error(`Windows ${arch} build is missing:\n${problems.map((p) => `  - ${p}`).join('\n')}`)
+    console.error(`Windows ${arch} build ${version} is missing:\n${problems.map((p) => `  - ${p}`).join('\n')}`)
     process.exit(1)
   }
-  console.log(`Windows ${arch} build ok: release/Pitwall-${version}-${arch}-setup.exe`)
+  console.log(`Windows ${arch} build ${version} ok${installer ? `: release/Pitwall-${version}-${arch}-setup.exe` : ' (app only)'}`)
 }
