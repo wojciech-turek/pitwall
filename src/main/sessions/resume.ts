@@ -23,8 +23,9 @@ function restore(s: Session, r: Restored, newBranch: boolean): Session {
 }
 
 /**
- * Brings an archived session back: its worktree (in the original folder when that's free), its branch (or a new one
- * from the repo's main branch if it's gone) and the same Claude conversation. On failure nothing is left behind.
+ * Brings an archived session back: its worktree (in the original folder when that's free), its branch (made again from
+ * its pushed copy if only that's left, or a new one from the repo's main branch) and the same Claude conversation.
+ * On failure nothing is left behind.
  */
 export function resumeSession(
   sessionId: string,
@@ -89,7 +90,7 @@ async function doResume(
       cwd: s.cwd, worktreePath: s.worktreePath, branch: s.branch, branchCreatedByPitwall: s.branchCreatedByPitwall,
       baseBranch: s.baseBranch, baseCommit: s.baseCommit
     }
-    let newBranch = false
+    let newBranch = false // a new branch from main: the old PR doesn't apply
     if (sub.kind === 'repo' && sub.repoRoot) {
       const root = sub.repoRoot
       created.repoRoot = root
@@ -100,11 +101,21 @@ async function doResume(
         // A worktree folder deleted by hand keeps its branch and path taken until git forgets it.
         await git.pruneWorktrees(root)
         let base: string | undefined
+        let makeBranch = false // Pitwall makes the local branch now: a new one, or the old one from its pushed copy
+        let track = false
         const notes: string[] = []
+        const local = !!s.branch && (await git.branchExists(root, s.branch))
         // A branch archiving deleted is gone for good, even if a branch of that name exists again now.
-        if (s.branch && !s.branchDeleted && (await git.branchExists(root, s.branch))) {
+        if (s.branch && !s.branchDeleted && local) {
           const other = (await git.listBranches(root)).find((b) => b.name === s.branch)?.checkedOutAt
           if (other) throw new Error(`Branch ${s.branch} is checked out in ${other}. Switch that folder to another branch, then resume.`)
+        } else if (s.branch && !local && (await git.remoteBranchExists(root, s.branch))) {
+          // Archiving deleted the local branch, but its pushed copy still has the agent's commits: start from that.
+          base = `origin/${s.branch}`
+          r.branchCreatedByPitwall = true
+          makeBranch = true
+          track = true
+          notes.push(`Branch ${s.branch} ${s.branchDeleted ? 'was deleted' : 'is gone'} — recreated it from its pushed copy, origin/${s.branch}`)
         } else {
           const main = await git.defaultBranch(root)
           base = main ?? 'HEAD'
@@ -113,6 +124,7 @@ async function doResume(
           r.baseBranch = main ?? undefined
           r.baseCommit = await git.revParse(root, base)
           newBranch = true
+          makeBranch = true
           const made = `new branch ${r.branch} from ${main ?? 'the current commit'}`
           notes.push(!s.branch ? `Made a ${made}` : `Branch ${s.branch} ${s.branchDeleted ? 'was deleted' : 'is gone'} — ${made}`)
         }
@@ -123,8 +135,8 @@ async function doResume(
         if (path !== original && s.worktreePath) notes.unshift(`Original folder is in use — resumed in ${path}`)
         // Mark before creating so a partial failure is still cleaned up.
         created.worktree = path
-        if (newBranch) created.branch = r.branch
-        await git.addWorktree({ repoRoot: root, path, branch: r.branch!, mode: newBranch ? 'new' : 'existing', base })
+        if (makeBranch) created.branch = r.branch
+        await git.addWorktree({ repoRoot: root, path, branch: r.branch!, mode: makeBranch ? 'new' : 'existing', base, track })
         r.worktreePath = path
         r.cwd = join(path, sub.relPath ?? '')
         return notes.join('. ') || undefined

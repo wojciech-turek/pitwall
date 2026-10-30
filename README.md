@@ -54,7 +54,7 @@ Like a pit wall in a race, you watch every car at once and only radio in when on
 - **Drop files onto a terminal** from Finder or Cursor to paste their paths, as in Terminal.app.
 - **PR badges** (when `gh` is set up for the project): open, merged or closed, with checks status. When a PR is merged, Pitwall offers to archive the session.
 - **Claude usage meter**: your 5-hour and weekly subscription limits and when they reset.
-- **Search and resume past sessions.** Find a session by its title or anything said in its Claude conversation, including archived ones, and bring an archived session back in its folder and branch to continue the same conversation. Pitwall only reads the conversation files Claude already keeps.
+- **Search and resume past sessions.** Find a session by its title or anything said in its Claude conversation, including archived ones, and bring an archived session back in its folder to continue the same conversation: on its branch if it still exists (or from its pushed copy), otherwise on a new branch from main. Pitwall only reads the conversation files Claude already keeps.
 - **Setup and teardown commands per folder.** Setup (for example `pnpm install`) runs once in each new worktree; teardown (for example `docker compose down`) runs when you archive a session, before its folder is deleted. Archiving also stops processes the session left running, so nothing is left behind. **Open in Cursor** opens a session's worktree in Cursor.
 
 ## Requirements

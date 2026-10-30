@@ -7,7 +7,7 @@ All notable changes to Pitwall are listed here, newest first. Pitwall shows thes
 ### Added
 
 - **Command palette (⌘K).** Type to jump to any session, file, past session or action. **⌘Enter** opens a session split to the right, and **⌘P** opens a file in the current session.
-- **Search and resume past sessions.** Find sessions by title or by anything said in their Claude conversation, archived ones included. **Resume** brings an archived session back in its folder and branch and continues the same conversation.
+- **Search and resume past sessions.** Find sessions by title or by anything said in their Claude conversation, archived ones included. **Resume** brings an archived session back in its folder and continues the same conversation: on its branch if it still exists (or from its pushed copy), otherwise on a new branch from main.
 - **Mute a project** from its ⋯ menu: no notifications and no Dock badge from its sessions, while the sidebar still shows their status.
 - **Mark as unread** from a session's ⋯ menu, so it waits for you like a fresh reply.
 - **Teardown command** per folder, next to the setup command, for example `docker compose down`. It runs when you archive a session, before the worktree is deleted. If it fails, you can cancel or archive anyway.

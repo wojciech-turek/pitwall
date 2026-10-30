@@ -110,17 +110,25 @@ export class GitClient {
     return this.ok(repoRoot, ['show-ref', '--verify', '--quiet', `refs/heads/${name}`])
   }
 
+  /** Whether the repo knows origin's copy of a branch (as of its last fetch or push; never asks the network). */
+  remoteBranchExists(repoRoot: string, name: string): Promise<boolean> {
+    return this.ok(repoRoot, ['show-ref', '--verify', '--quiet', `refs/remotes/origin/${name}`])
+  }
+
   async uniqueBranchName(repoRoot: string, desired: string): Promise<string> {
     let candidate = desired
     for (let n = 2; await this.branchExists(repoRoot, candidate); n++) candidate = `${desired}-${n}`
     return candidate
   }
 
-  async addWorktree(o: { repoRoot: string; path: string; branch: string; mode: 'new' | 'existing'; base?: string }): Promise<void> {
+  /** `track`: a new branch made from a remote-tracking branch pushes and pulls there. */
+  async addWorktree(o: {
+    repoRoot: string; path: string; branch: string; mode: 'new' | 'existing'; base?: string; track?: boolean
+  }): Promise<void> {
     await mkdir(dirname(o.path), { recursive: true })
     const args =
       o.mode === 'new'
-        ? ['worktree', 'add', '--no-track', '-b', o.branch, o.path, ...(o.base ? [o.base] : [])]
+        ? ['worktree', 'add', o.track ? '--track' : '--no-track', '-b', o.branch, o.path, ...(o.base ? [o.base] : [])]
         : ['worktree', 'add', o.path, o.branch]
     await this.run(o.repoRoot, args, WORKTREE_TIMEOUT_MS)
   }

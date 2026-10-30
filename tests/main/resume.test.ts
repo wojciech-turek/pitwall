@@ -65,8 +65,8 @@ function setup(gitEnv: Record<string, string>, over: Partial<ArchiveDeps> = {}):
   return deps
 }
 
-async function addRepo() {
-  const r = await makeRepo({ dirName: 'tax-service' })
+async function addRepo(o: { remote?: boolean } = {}) {
+  const r = await makeRepo({ dirName: 'tax-service', remote: o.remote })
   repos.push(r)
   const sp: SubProject = {
     id: 'sp_1', projectId: 'p_1', name: 'tax-service', kind: 'repo', path: r.root, repoRoot: r.root, relPath: '', createdAt: 0
@@ -184,6 +184,56 @@ describe('resumeSession', () => {
     expect((await git(r, s.worktreePath!, 'rev-parse', 'HEAD')).stdout.trim()).toBe(head)
     expect(await readFile(join(s.worktreePath!, 'y.txt'), 'utf8')).toBe('y')
     expect(progress.find((p) => p.step === 'worktree' && p.state === 'done')?.message).toBeUndefined()
+  })
+
+  test("a deleted branch that was pushed comes back from its pushed copy, with the agent's commits", async () => {
+    const { r, sp } = await addRepo({ remote: true })
+    const s = await startOne(sp)
+    await writeFile(join(s.worktreePath!, 'agent.txt'), 'work')
+    await git(r, s.worktreePath!, 'add', '-A')
+    await git(r, s.worktreePath!, 'commit', '-m', 'agent work')
+    await git(r, s.worktreePath!, 'push', 'origin', s.branch!)
+    const head = (await git(r, s.worktreePath!, 'rev-parse', 'HEAD')).stdout.trim()
+    const pr = { number: 7, url: 'u', title: 'Fix', state: 'OPEN' as const, checks: 'none' as const, updatedAt: 1 }
+    await store.update((d) => { d.sessions[0].pr = pr })
+    await archive(s)
+    expect(await branchesOf(r)).toEqual(['main'])
+    expect(get(s.id).branchDeleted).toBe(true)
+
+    // A failed resume removes the branch it recreated (and never the pushed copy).
+    const broken = Object.assign(Object.create(t.tmux) as Tmux, { newSession: async () => { throw new Error('tmux broke') } })
+    expect(await resume(s.id, { ...deps, tmux: broken })).toMatchObject({ ok: false, step: 'tmux' })
+    expect(await branchesOf(r)).toEqual(['main'])
+    expect((await git(r, r.root, 'rev-parse', `refs/remotes/origin/${s.branch}`)).stdout.trim()).toBe(head)
+
+    progress = []
+    const res = await resume(s.id)
+    expect(res).toEqual({ ok: true, sessionId: s.id })
+    const back = get(s.id)
+    expect(back.branch).toBe(s.branch)
+    expect(back.branchCreatedByPitwall).toBe(true)
+    expect(back.baseBranch).toBe('main')
+    expect(back.baseCommit).toBe(s.baseCommit)
+    expect(back.pr).toEqual(pr) // same branch on the remote: its PR still applies
+    expect(back.worktreePath).toBe(s.worktreePath)
+    expect((await git(r, s.worktreePath!, 'rev-parse', 'HEAD')).stdout.trim()).toBe(head)
+    expect(await readFile(join(s.worktreePath!, 'agent.txt'), 'utf8')).toBe('work')
+    expect((await git(r, s.worktreePath!, 'rev-parse', '--abbrev-ref', '@{upstream}')).stdout.trim()).toBe(`origin/${s.branch}`)
+    expect(progress.find((p) => p.step === 'worktree' && p.state === 'done')?.message)
+      .toBe(`Branch ${s.branch} was deleted — recreated it from its pushed copy, origin/${s.branch}`)
+  })
+
+  test('with no pushed copy, a deleted branch is made again from main', async () => {
+    const { r, sp } = await addRepo({ remote: true })
+    const s = await startOne(sp)
+    await archive(s)
+    const res = await resume(s.id)
+    expect(res.ok).toBe(true)
+    expect(get(s.id).branch).toBe(s.branch)
+    expect((await git(r, s.worktreePath!, 'rev-parse', 'HEAD')).stdout.trim())
+      .toBe((await git(r, r.root, 'rev-parse', 'main')).stdout.trim())
+    expect(progress.find((p) => p.step === 'worktree' && p.state === 'done')?.message)
+      .toBe(`Branch ${s.branch} was deleted — new branch ${s.branch} from main`)
   })
 
   test("a branch archiving deleted is never swapped for someone else's branch of the same name", async () => {
