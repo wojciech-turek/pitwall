@@ -1,2 +1,5 @@
+# LF in every checkout, Windows included (whatever core.autocrlf says): the sh scripts, and the tests that read
+# files byte for byte, expect it. PowerShell reads LF scripts fine.
+* text=auto eol=lf
 # cmd.exe reads batch files most reliably with CRLF line endings.
 *.cmd text eol=crlf

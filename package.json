@@ -23,8 +23,10 @@
     "test:e2e:host-launcher": "PITWALL_SESSION_BACKEND=host PITWALL_LAUNCHER=host PITWALL_E2E_NODE_STUBS=1 playwright test",
     "package": "electron-vite build && electron-builder --mac dir --arm64",
     "dist": "electron-vite build && electron-builder --mac dmg --arm64 --publish never",
+    "package:win": "electron-vite build && electron-builder --win dir -c.npmRebuild=false",
+    "dist:win": "electron-vite build && electron-builder --win nsis --publish never -c.npmRebuild=false",
     "verify:sign": "codesign --verify --deep --strict --verbose=2 release/mac-arm64/Pitwall.app",
-    "postinstall": "chmod +x node_modules/node-pty/prebuilds/darwin-*/spawn-helper 2>/dev/null || true"
+    "postinstall": "node scripts/postinstall.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.1",

@@ -23,3 +23,23 @@ mac:
   hardenedRuntime: false
 dmg:
   title: "Pitwall ${version}"
+# Windows (beta): an unsigned NSIS installer per architecture, built one arch per run (`pnpm dist:win --x64`, or
+# `--arm64`; both in one run would make a single installer holding both). The Windows scripts pass
+# -c.npmRebuild=false: node-pty ships N-API prebuilds for win32-x64 and win32-arm64 that Electron loads as they are,
+# so nothing is compiled (and arm64 builds on an x64 machine). node-pty is unpacked from app.asar (above); its ConPTY
+# worker thread and console-list helper run from there. The .ps1 hook and status line scripts travel in
+# extraResources, outside app.asar, and the app copies them to its data dir, as on macOS.
+# build/icon.ico comes from scripts/make-icon-ico.sh; scripts/verify-windows.mjs checks a build.
+win:
+  target: nsis
+  icon: build/icon.ico
+nsis:
+  artifactName: Pitwall-${version}-${arch}-setup.${ext}
+  # Per user, into %LOCALAPPDATA%\Programs\Pitwall: no administrator rights, no questions.
+  oneClick: true
+  perMachine: false
+  createStartMenuShortcut: true
+  createDesktopShortcut: false
+  shortcutName: Pitwall
+  # Projects, sessions and their logs stay in %APPDATA%\pitwall across updates and reinstalls.
+  deleteAppDataOnUninstall: false
