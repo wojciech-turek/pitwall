@@ -347,10 +347,10 @@ test('Windows: Ctrl+Shift+K/P over a terminal and Ctrl+K/P elsewhere open the pa
   test.skip(!WINDOWS, 'Windows only')
   await page.getByTestId('terminal-claude').click()
   expect(await focusIn()).toBe(`terminal:${beta}`)
-  await page.keyboard.press('Control+k') // the program's (readline: kill to the end of the line)
+  await page.keyboard.press('Control+k') // the program's, as in any terminal
   await page.waitForTimeout(300)
   await expect(palette()).toHaveCount(0)
-  await typeTo(beta, 'after')
+  await page.keyboard.press('Enter') // (the stub reads lines: hand it the one holding the Ctrl+K)
   await page.keyboard.press('Control+Shift+K')
   await expect(palette()).toHaveAttribute('data-mode', 'commands')
   await page.keyboard.press('Escape')

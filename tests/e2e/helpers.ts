@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -47,7 +47,8 @@ export interface E2eEnv {
 }
 
 export async function makeE2eEnv(): Promise<E2eEnv> {
-  const tmp = await mkdtemp(join(tmpdir(), 'pitwall-e2e-'))
+  // Windows: the long names (a CI runner's %TEMP% is C:\Users\RUNNER~1\…), as git and the app's own paths spell them.
+  const tmp = WINDOWS ? await realpath(await mkdtemp(join(tmpdir(), 'pitwall-e2e-'))) : await mkdtemp(join(tmpdir(), 'pitwall-e2e-'))
   const dataDir = join(tmp, 'data dir')
   const sshDir = join(tmp, 'ssh')
   await mkdir(sshDir, { recursive: true })
