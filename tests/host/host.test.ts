@@ -555,6 +555,13 @@ describe('output bursts', () => {
   })
 })
 
+/** A start that must fail with the host's own exit code 3; on a mismatch the failure shows host.log, to say why. */
+async function expectStartFailure(b: HostBackend): Promise<void> {
+  const e = await b.newSession({ name: 'pw-x', cwd, argv: ['true'] }).then(() => null, (err: Error) => err)
+  const log = await readFile(hostLogFile(dataDir), 'utf8').catch(() => '(no host.log)')
+  expect(e?.message ?? 'it started', `host.log:\n${log}`).toMatch(/exited with code 3.*host\.log/)
+}
+
 describe('the launch the app uses', () => {
   test('sessions get the environment the host was started with, without ELECTRON_RUN_AS_NODE', async () => {
     const b = new HostBackend({
@@ -587,7 +594,7 @@ describe('the launch the app uses', () => {
     const b = new HostBackend({
       dataDir, appVersion: 'test', launch: { file: process.execPath, args: ['-e', 'process.exit(3)'], env: {} }
     })
-    await expect(b.newSession({ name: 'pw-x', cwd, argv: ['true'] })).rejects.toThrow(/exited with code 3.*host\.log/)
+    await expectStartFailure(b)
   })
 
   test('a host that dies while starting is reported with its exit code however long it took, not as a timeout', async () => {
@@ -595,7 +602,7 @@ describe('the launch the app uses', () => {
     const b = new HostBackend({
       dataDir, appVersion: 'test', launch: { file: process.execPath, args: ['-e', 'setTimeout(() => process.exit(3), 3000)'], env: {} }
     })
-    await expect(b.newSession({ name: 'pw-x', cwd, argv: ['true'] })).rejects.toThrow(/exited with code 3.*host\.log/)
+    await expectStartFailure(b)
   })
 
   test.runIf(WINDOWS)('Windows: the PowerShell that started the host is stopped once the app is connected', async () => {

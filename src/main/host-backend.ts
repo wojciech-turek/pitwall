@@ -511,6 +511,8 @@ export class HostBackend implements SessionBackend {
         if (c) return c
         if (state.failure) throw new HostError(`Couldn't start the Pitwall host: ${state.failure}. See ${hostLogFile(this.o.dataDir)}.`)
         if (Date.now() > deadline) {
+          const starter = child.exitCode !== null ? `its starter had exited with code ${child.exitCode}` : 'its starter was still running'
+          try { appendFileSync(hostLogFile(this.o.dataDir), `${new Date().toISOString()} [app] no answer from the host within ${duration(this.startTimeoutMs)}; ${starter}\n`) } catch { /* no log */ }
           throw new HostError(`The Pitwall host didn't start within ${duration(this.startTimeoutMs)}. See ${hostLogFile(this.o.dataDir)}.`)
         }
         await sleep(50)
@@ -546,14 +548,21 @@ function startViaShell(launch: HostLaunch, cwd: string, waitS: number): ChildPro
     'Remove-Item Env:PITWALL_HOST_FILE, Env:PITWALL_HOST_ARGS, Env:PITWALL_HOST_CWD, Env:PITWALL_HOST_PSMP, Env:PITWALL_HOST_PSMP_SET -ErrorAction SilentlyContinue',
     '$p = Start-Process -FilePath $file -ArgumentList $argLine -WorkingDirectory $dir -WindowStyle Hidden -PassThru',
     `Wait-Process -Id $p.Id -Timeout ${Math.max(1, Math.min(32767, Math.ceil(waitS)))} -ErrorAction SilentlyContinue`,
-    'if ($p.HasExited) { exit $p.ExitCode }',
+    'if ($p.HasExited) {',
+    // A host that ended is never reported as exit 0 (which means "another host is serving"): when Windows can't give
+    // its code, PowerShell says so and fails.
+    '  $code = $p.ExitCode',
+    "  if ($code -eq $null) { Write-Error 'the host ended, but Windows could not say with which exit code' }",
+    '  exit $code',
+    '}',
     'exit 0'
   ].join('\n')
   const args = ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')]
-  return spawn(windowsPowerShell(launch.env), args, {
+  const env = withWindowsBasics(launch.env)
+  return spawn(windowsPowerShell(env), args, {
     stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true,
     env: {
-      ...launch.env,
+      ...env,
       PITWALL_HOST_FILE: launch.file,
       PITWALL_HOST_ARGS: launch.args.map(quoteWindowsArg).join(' '),
       PITWALL_HOST_CWD: cwd,
@@ -561,6 +570,22 @@ function startViaShell(launch: HostLaunch, cwd: string, waitS: number): ChildPro
       PITWALL_HOST_PSMP_SET: psModulePath === undefined ? '0' : '1'
     }
   })
+}
+
+/** What Windows itself expects in every process's environment (PowerShell and .NET misbehave without them). */
+const WINDOWS_BASICS = ['SystemRoot', 'windir', 'SystemDrive', 'ComSpec', 'PATHEXT', 'TEMP', 'TMP', 'USERPROFILE', 'LOCALAPPDATA', 'APPDATA', 'ProgramData', 'ProgramFiles']
+
+/**
+ * The launch env, with any of WINDOWS_BASICS it lacks taken from the app's own. The app always passes its whole env, so
+ * this only matters for a trimmed one; the host inherits PowerShell's env, so it gets them too.
+ */
+export function withWindowsBasics(env: Record<string, string>, own: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const out = { ...env }
+  for (const k of WINDOWS_BASICS) {
+    const v = envValue(own as Record<string, string>, k)
+    if (envValue(out, k) === undefined && v !== undefined) out[k] = v
+  }
+  return out
 }
 
 /**

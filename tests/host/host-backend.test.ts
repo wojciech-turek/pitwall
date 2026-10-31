@@ -7,7 +7,7 @@ import { checkProof, newNonce, proofFor, writeHostKey } from '../../src/host/aut
 import { hostKeyFile, hostLogFile, hostSocketPath } from '../../src/host/paths'
 import { DATA_CHUNK, encodeData, encodeJson, FrameDecoder, PROTOCOL } from '../../src/host/protocol'
 import { sessionBackendKind } from '../../src/main/backend'
-import { HostBackend, powershellText } from '../../src/main/host-backend'
+import { HostBackend, powershellText, withWindowsBasics } from '../../src/main/host-backend'
 import { makeHostDirs } from '../helpers/host'
 import { WINDOWS } from '../helpers/processes'
 import { waitFor } from '../helpers/wait'
@@ -289,4 +289,11 @@ test('a CLIXML blob with no complete error record is kept as it came, so host.lo
   expect(powershellText(cut)).toBe(cut)
   const noErrors = '#< CLIXML\r\n<Objs Version="1.1.0.1"><Obj S="progress" RefId="0"></Obj></Objs>'
   expect(powershellText(noErrors)).toBe(noErrors)
+})
+
+test("Windows: PowerShell and the host get Windows' own variables even from a trimmed launch env", () => {
+  const own = { SystemRoot: 'C:\\Windows', TEMP: 'C:\\T', PATH: 'C:\\app-path', OTHER: 'x' }
+  expect(withWindowsBasics({}, own)).toEqual({ SystemRoot: 'C:\\Windows', TEMP: 'C:\\T' })
+  // What the launch env has stays, whatever its case; nothing else of the app's is added.
+  expect(withWindowsBasics({ systemroot: 'D:\\Win', Keep: '1' }, own)).toEqual({ systemroot: 'D:\\Win', Keep: '1', TEMP: 'C:\\T' })
 })
