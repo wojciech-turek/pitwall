@@ -43,11 +43,15 @@ async function installFile(src: string, dest: string, mode?: number): Promise<vo
   }
 }
 
-export async function installResources(paths: AppPaths, fromDir: string = resourcesDir()): Promise<void> {
+/** The scripts into the data dir's bin, and the tmux config beside them (not on Windows, which has no tmux). */
+export async function installResources(
+  paths: AppPaths, fromDir: string = resourcesDir(), platform: NodeJS.Platform = process.platform
+): Promise<void> {
   await mkdir(paths.binDir, { recursive: true })
-  await mkdir(dirname(paths.tmuxConf), { recursive: true })
   for (const name of await readdir(join(fromDir, 'bin'))) {
     await installFile(join(fromDir, 'bin', name), join(paths.binDir, name), 0o755)
   }
+  if (platform === 'win32') return
+  await mkdir(dirname(paths.tmuxConf), { recursive: true })
   await installFile(join(fromDir, 'tmux.conf'), paths.tmuxConf)
 }

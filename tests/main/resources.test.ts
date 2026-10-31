@@ -16,12 +16,26 @@ afterEach(async () => { await rm(tmp, { recursive: true, force: true }) })
 
 const launch = () => join(paths.binDir, 'pitwall-launch')
 
+const exists = (p: string) => stat(p).then(() => true, () => false)
+
 describe('installResources', () => {
   test('installs scripts executable and the tmux config', async () => {
-    await installResources(paths)
+    await installResources(paths, resourcesDir(), 'darwin')
     if (!WINDOWS) expect((await stat(launch())).mode & 0o777).toBe(0o755) // (no POSIX modes on Windows)
     expect(await readFile(launch(), 'utf8')).toBe(await readFile(join(resourcesDir(), 'bin', 'pitwall-launch'), 'utf8'))
     expect(await readFile(paths.tmuxConf, 'utf8')).toContain('prefix None')
+  })
+
+  test('Windows has no tmux: the scripts, but no tmux config', async () => {
+    await installResources(paths, resourcesDir(), 'win32')
+    expect(await readFile(join(paths.binDir, 'pitwall-hook.ps1'), 'utf8'))
+      .toBe(await readFile(join(resourcesDir(), 'bin', 'pitwall-hook.ps1'), 'utf8'))
+    expect(await exists(paths.tmuxConf)).toBe(false)
+  })
+
+  test("this platform's default: a tmux config except on Windows", async () => {
+    await installResources(paths)
+    expect(await exists(paths.tmuxConf)).toBe(!WINDOWS)
   })
 
   test('identical files are not rewritten', async () => {
