@@ -45,6 +45,7 @@ nsis:
   # Per user, into %LOCALAPPDATA%\Programs\pitwall (one-click installs use the package name): no administrator rights
   # and no options. A Pitwall already running from there (its host too, also when it runs alone) is stopped first,
   # after asking: build/installer.nsh replaces electron-builder's check, in the installer and the uninstaller.
+  # Uninstalling also deletes the installer copy electron-builder keeps in %LOCALAPPDATA%\pitwall-updater.
   include: build/installer.nsh
   oneClick: true
   perMachine: false

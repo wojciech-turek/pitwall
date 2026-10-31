@@ -47,3 +47,25 @@
   Pop $0
 !macroend
 
+; Uninstall (not the old version's removal during an update): electron-builder keeps a copy of the installer in
+; %LOCALAPPDATA%\pitwall-updater for electron-updater, which Pitwall doesn't use (about 125 MB). Delete that copy,
+; then its folder if nothing else is in it.
+!macro customUnInstall
+  ${IfNot} ${isUpdated}
+    !ifdef APP_INSTALLER_STORE_FILE
+      Push $R0
+      ${If} $installMode == "all"
+        SetShellVarContext current
+      ${EndIf}
+      Delete "$LOCALAPPDATA\${APP_INSTALLER_STORE_FILE}"
+      ${StdUtils.GetParentPath} $R0 "$LOCALAPPDATA\${APP_INSTALLER_STORE_FILE}"
+      ${If} $R0 != ""
+        RMDir "$R0"
+      ${EndIf}
+      ${If} $installMode == "all"
+        SetShellVarContext all
+      ${EndIf}
+      Pop $R0
+    !endif
+  ${EndIf}
+!macroend
