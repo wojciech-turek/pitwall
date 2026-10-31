@@ -160,6 +160,16 @@ export async function hasSession(e: E2eEnv, sessionId: string): Promise<boolean>
   return (await sessionNames(e)).includes(`pw-${sessionId}`)
 }
 
+/**
+ * Empties the prompt line of a program reading lines: Ctrl+U in a Unix terminal; Esc in a Windows console's own
+ * line editing (sent on its own: Esc and a letter close behind would read as Alt+letter).
+ */
+export async function clearLine(e: E2eEnv, sessionId: string): Promise<void> {
+  if (!WINDOWS) return sendKeys(e, sessionId, 'C-u')
+  await sendKeys(e, sessionId, 'Escape')
+  await new Promise((r) => setTimeout(r, 200))
+}
+
 /** As `tmux send-keys`: key names (`Enter`, `C-u`) or text, typed into the session's Claude. */
 export async function sendKeys(e: E2eEnv, sessionId: string, ...keys: string[]): Promise<void> {
   if (SESSION_BACKEND === 'host') return host(e).sendKeys(`pw-${sessionId}`, keys)

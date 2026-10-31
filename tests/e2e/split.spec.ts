@@ -2,7 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import { waitFor } from '../helpers/wait'
-import { launchApp, makeE2eEnv, paneText, sendKeys, type E2eEnv } from './helpers'
+import { clearLine, launchApp, makeE2eEnv, paneText, type E2eEnv } from './helpers'
 
 const PACKAGED = process.env.PACKAGED === '1'
 const SHOTS = process.env.PITWALL_E2E_SCREENS || join(process.cwd(), 'test-results/screens')
@@ -175,11 +175,12 @@ test.describe('split view', () => {
     await expect(preview()).toHaveCount(0)
     await expect(page.getByTestId('drop-layer')).toHaveCount(0) // layers exist only during a session drag
     await cdp.send('Input.dispatchDragEvent', { type: 'drop', x, y, data })
-    await waitFor(async () => (await paneText(e, beta)).includes('dropped file.txt'), 10_000, 'dropped path in prompt')
+    // (Lines joined: the host's screen breaks a long line at the pane's width, as a narrow pane shows it.)
+    await waitFor(async () => (await paneText(e, beta)).replace(/\n/g, '').includes('dropped file.txt'), 10_000, 'dropped path in prompt')
     // dropping on a pane's terminal makes that pane active
     await expect(panes().nth(0)).toHaveAttribute('data-active', 'true')
     await cdp.detach()
-    await sendKeys(e, beta, 'C-u') // leave an empty prompt
+    await clearLine(e, beta) // leave an empty prompt
   })
 
   test('⌘W on a Claude tab closes the active pane', async () => {

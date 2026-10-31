@@ -491,7 +491,9 @@ describe('output bursts', () => {
     await b.sendKeys('pw-flood', ['stop', 'Enter']) // its input is served during the flood too
     const done = await waitFor(async () => /FLOOD DONE (\d+) MB/.exec(await b.capture('pw-flood')), 15_000, 'flood stops')
     console.log(`flood: ${done[1]} MB, host peak RSS ${Math.round(peakKb / 1024)} MB`)
-    expect(Number(done[1])).toBeGreaterThan(50)
+    // A flood many times the ring (1 MB) and the high-water mark (4 MB). ConPTY carries a few times less than a Unix
+    // pty in the same time (45-80 MB on a Windows ARM VM).
+    expect(Number(done[1])).toBeGreaterThan(WINDOWS ? 20 : 50)
     expect(peakKb).toBeLessThan(200 * 1024) // the host holds ~1 MB of output per terminal, not what went through
 
     const before = got().length

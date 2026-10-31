@@ -5,10 +5,11 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test'
 import { waitFor } from '../helpers/wait'
+import { fromGit } from '../../src/main/git'
 import { WINDOWS } from '../helpers/processes'
 import {
-  hasSession, hostPids, launchApp, makeE2eEnv, MOD, PACKAGED_EXE, paneText, sendKeys, SESSION_BACKEND, sessionIdOf, sessionNames, shot, tmux,
-  type E2eEnv
+  clearLine, hasSession, hostPids, launchApp, makeE2eEnv, MOD, PACKAGED_EXE, paneText, sendKeys, SESSION_BACKEND, sessionIdOf, sessionNames,
+  shot, tmux, type E2eEnv
 } from './helpers'
 
 const run = promisify(execFile)
@@ -218,7 +219,8 @@ test.describe('dev build window', () => {
     await expect.poll(() => app!.windows().length).toBe(0)
 
     // Claude finishes while the window is closed: nothing is being viewed, so it's Unread.
-    await sendKeys(e, sessionId, 'C-u', 'closed', 'Enter')
+    await clearLine(e, sessionId)
+    await sendKeys(e, sessionId, 'closed', 'Enter')
     await waitFor(async () => (await paneText(e, sessionId)).includes('echo: closed'), 15_000, 'echo: closed')
 
     // Reopen (Dock click) and let the OS focus it: the old selection must not mark the session read.
@@ -266,7 +268,8 @@ test.describe('dev build window', () => {
     const { stdout } = await run('git', ['-C', e.repo.root, 'config', '--local', 'user.email'], { env: e.repo.env })
     expect(stdout.trim()).toBe('jane@new.test')
 
-    await sendKeys(e, sessionId, 'C-u', 'exit', 'Enter')
+    await clearLine(e, sessionId)
+    await sendKeys(e, sessionId, 'exit', 'Enter')
     await waitFor(async () => (await paneText(e, sessionId)).includes('Press Enter to resume'), 15_000, 'claude exited')
     await sendKeys(e, sessionId, 'Enter')
     await waitFor(async () => (await readFile(e.env.STUB_CLAUDE_LOG, 'utf8')).includes('GIT_AUTHOR_EMAIL=jane@new.test'), 15_000, 'new identity after relaunch')
@@ -278,7 +281,7 @@ test.describe('dev build changes', () => {
 
   test('changes tab lists work, opens a diff, sidebar shows line counts', async () => {
     const { stdout } = await run('git', ['-C', e.repo.root, 'worktree', 'list', '--porcelain'], { env: e.repo.env })
-    const wt = stdout.split('\n').filter((l) => l.startsWith('worktree ')).map((l) => l.slice(9)).find((p) => p !== e.repo.root)!
+    const wt = stdout.split('\n').filter((l) => l.startsWith('worktree ')).map((l) => fromGit(l.slice(9))).find((p) => p !== e.repo.root)!
     await writeFile(join(wt, 'changed-by-test.txt'), 'one\ntwo\nthree\n')
     await page.getByTestId('session-row').click()
     await page.getByTestId('tab-claude').click()
@@ -374,7 +377,7 @@ test.describe('dev build changes', () => {
 
   test('archive warns about uncommitted work, then removes the worktree and lists the session as archived', async () => {
     const { stdout } = await run('git', ['-C', e.repo.root, 'worktree', 'list', '--porcelain'], { env: e.repo.env })
-    const wt = stdout.split('\n').filter((l) => l.startsWith('worktree ')).map((l) => l.slice(9)).find((p) => p !== e.repo.root)!
+    const wt = stdout.split('\n').filter((l) => l.startsWith('worktree ')).map((l) => fromGit(l.slice(9))).find((p) => p !== e.repo.root)!
     expect(existsSync(wt)).toBe(true)
     await page.getByTestId('session-row').hover()
     await page.getByTestId('session-menu').click()
@@ -404,7 +407,7 @@ test.describe('dev build changes', () => {
   test('teardown: failure offers Cancel and Archive anyway, success archives', async () => {
     const wtDirs = async (): Promise<string[]> => {
       const { stdout } = await run('git', ['-C', e.repo.root, 'worktree', 'list', '--porcelain'], { env: e.repo.env })
-      return stdout.split('\n').filter((l) => l.startsWith('worktree ')).map((l) => l.slice(9)).filter((p) => p !== e.repo.root)
+      return stdout.split('\n').filter((l) => l.startsWith('worktree ')).map((l) => fromGit(l.slice(9))).filter((p) => p !== e.repo.root)
     }
     const setTeardown = async (cmd: string): Promise<void> => {
       await page.getByTestId('subproject-row').hover()

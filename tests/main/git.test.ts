@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdir, realpath, writeFile } from 'node:fs/promises'
+import { mkdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, test } from 'vitest'
@@ -131,7 +131,7 @@ describe('GitClient', () => {
     await writeFile(join(wt, 'a.txt'), '1\nTWO\nTHREE\n') // +2 -1? replace lines 2,3 -> 2/2
     await writeFile(join(wt, 'a.txt'), '1\n2x\n3\n4\n') // line 2 changed, line 4 added -> +2 -1
     await writeFile(join(wt, 'c.txt'), 'c1\nc2\nc3\n')
-    await run('rm', [join(wt, 'd.txt')])
+    await rm(join(wt, 'd.txt'))
     const changes = Object.fromEntries((await git.listChanges(wt, base)).map((c) => [c.path, c]))
     expect(changes['a.txt']).toMatchObject({ status: 'M', additions: 2, deletions: 1, binary: false })
     expect(changes['b.txt']).toMatchObject({ status: 'A', additions: 3, deletions: 0 })
