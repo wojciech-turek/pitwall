@@ -43,7 +43,9 @@ win:
 nsis:
   artifactName: Pitwall-${version}-${arch}-setup.${ext}
   # Per user, into %LOCALAPPDATA%\Programs\pitwall (one-click installs use the package name): no administrator rights
-  # and no options. A Pitwall already running from there (its host too) is stopped first, after asking.
+  # and no options. A Pitwall already running from there (its host too, also when it runs alone) is stopped first,
+  # after asking: build/installer.nsh replaces electron-builder's check, in the installer and the uninstaller.
+  include: build/installer.nsh
   oneClick: true
   perMachine: false
   createStartMenuShortcut: true
