@@ -1,8 +1,8 @@
 import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, appendFileSync, statSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
-import { Launcher, MESSAGES, WARNINGS, type FetchToken, type LauncherOptions, type PtyLike, type RunProbe } from '../../src/host/launcher'
+import { Launcher, MESSAGES, SCRIPT_TROUBLE, WARNINGS, type FetchToken, type LauncherOptions, type ProbeRun, type PtyLike, type RunProbe } from '../../src/host/launcher'
 
 class FakePty implements PtyLike {
   static next = 1000
@@ -391,9 +391,11 @@ describe('the PowerShell scripts are tried before each start of Claude (exec-for
   const PS = 'C:/WINDOWS/System32/WindowsPowerShell/v1.0/powershell.exe'
   const FLAGS = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File']
   let probes: Array<{ file: string; args: string[]; input: string; env: Record<string, string> }>
+  let bin: string
+  const ran = (rc: number): ProbeRun => ({ rc })
 
-  function writeHooks(o: { statusLine?: boolean } = {}): void {
-    const hook = { type: 'command', command: PS, args: [...FLAGS, '/bin/dir/pitwall-hook.ps1', events, 's_1'], timeout: 10 }
+  function writeHooks(o: { statusLine?: boolean; hookScript?: string } = {}): void {
+    const hook = { type: 'command', command: PS, args: [...FLAGS, o.hookScript ?? join(bin, 'pitwall-hook.ps1'), events, 's_1'], timeout: 10 }
     writeFileSync(join(sd, 'hooks.json'), JSON.stringify({
       hooks: { SessionStart: [{ hooks: [hook] }], Stop: [{ hooks: [hook] }] },
       ...(o.statusLine === false ? {} : { statusLine: { type: 'command', command: 'powershell -File x', padding: 0 } })
@@ -404,17 +406,22 @@ describe('the PowerShell scripts are tried before each start of Claude (exec-for
     probes.push({ file, args, input, env })
     const script = args[FLAGS.length]
     if (script.endsWith('pitwall-hook.ps1')) {
-      if (blocked.hook === true) return 1
+      if (blocked.hook === true) return ran(1)
       if (blocked.hook !== 'silent') appendFileSync(args[FLAGS.length + 1], `{"c":"probe","t":1,"e":"${JSON.parse(input).hook_event_name}"}\n`)
-      return 0
+      return ran(0)
     }
-    if (blocked.statusLine) return 1
+    if (blocked.statusLine) return ran(1)
     writeFileSync(join(args[FLAGS.length + 1], 'statusline.json'), input)
-    return 0
+    return ran(0)
   }
   const settingsArg = () => { const a = lastPty().args as string[]; return a[a.indexOf('--settings') + 1] }
 
-  beforeEach(() => { probes = [] })
+  beforeEach(() => {
+    probes = []
+    bin = join(dir, 'bin')
+    mkdirSync(bin)
+    for (const f of ['pitwall-hook.ps1', 'pitwall-statusline.ps1']) writeFileSync(join(bin, f), '')
+  })
 
   test('both run: Claude gets hooks.json; each script was tried with the same flags, outside the real files', async () => {
     writeHooks()
@@ -423,7 +430,7 @@ describe('the PowerShell scripts are tried before each start of Claude (exec-for
     await until(() => spawned.length === 1, 'claude')
     expect(settingsArg()).toBe(join(sd, 'hooks.json'))
     expect(probes.map((p) => [p.file, p.args.slice(0, FLAGS.length + 1)])).toEqual([
-      [PS, [...FLAGS, '/bin/dir/pitwall-hook.ps1']], [PS, [...FLAGS, join('/bin/dir', 'pitwall-statusline.ps1')]]
+      [PS, [...FLAGS, join(bin, 'pitwall-hook.ps1')]], [PS, [...FLAGS, join(bin, 'pitwall-statusline.ps1')]]
     ])
     const scratch = dirname(probes[0].args[FLAGS.length + 1])
     expect(dirname(scratch)).toBe(sd)
@@ -487,12 +494,12 @@ describe('the PowerShell scripts are tried before each start of Claude (exec-for
       const run = probe(blocked ? { hook: true, statusLine: true } : {})
       // Leave something in the scratch folder and take away the right to delete it, as a scanner's lock would.
       launcher({ runProbe: async (file, args, input, env) => {
-        const rc = await run(file, args, input, env)
+        const r = await run(file, args, input, env)
         if (args[FLAGS.length].endsWith('pitwall-statusline.ps1')) {
           writeFileSync(join(args[FLAGS.length + 1], 'locked'), '')
           chmodSync(args[FLAGS.length + 1], 0o500)
         }
-        return rc
+        return r
       } }).start()
       await until(() => spawned.length === 1, 'claude')
       expect(settingsArg()).toBe(join(sd, blocked ? 'hooks-without-scripts.json' : 'hooks.json'))
@@ -512,16 +519,134 @@ describe('the PowerShell scripts are tried before each start of Claude (exec-for
         probes.push({ file, args, input, env })
         if (args[FLAGS.length].endsWith('pitwall-hook.ps1')) {
           appendFileSync(env.PITWALL_SCRIPT_ERRORS, 'Cannot find an overload for "Contains"')
-          return 0 // as a hook that swallowed its error does
+          return ran(0) // as a hook that swallowed its error does
         }
         writeFileSync(join(args[FLAGS.length + 1], 'statusline.json'), input)
-        return 0
+        return ran(0)
       }
     }).start()
     await until(() => spawned.length === 1, 'claude')
     expect(logged).toEqual(['PowerShell scripts blocked (hook exit 0, status line ok): Cannot find an overload for "Contains"'])
     expect(probes.every((p) => dirname(p.env.PITWALL_SCRIPT_ERRORS) === dirname(probes[0].args[FLAGS.length + 1]))).toBe(true)
     expect(lastPty().env.PITWALL_SCRIPT_ERRORS).toBeUndefined() // never in Claude's (or the real hooks') environment
+    expect(eventList().find((e) => e.e === 'pitwall:warning')?.msg).toBe(WARNINGS.scripts()) // no known reason: see host.log
+  })
+
+  describe('the banner says why, when that is known', () => {
+    const POLICY_ERROR = [
+      'File C:\\pw\\pitwall-hook.ps1 cannot be loaded because running scripts is disabled on this system. For more information, see',
+      'about_Execution_Policies at https:/go.microsoft.com/fwlink/?LinkID=135170.',
+      '    + CategoryInfo          : SecurityError: (:) [], ParentContainsErrorRecordException',
+      '    + FullyQualifiedErrorId : UnauthorizedAccess'
+    ].join('\r\n')
+    const banner = () => eventList().filter((e) => e.e === 'pitwall:warning').map((e) => e.msg)
+
+    test('an execution policy (from what PowerShell said, which also goes to the log)', async () => {
+      writeHooks()
+      const logged: string[] = []
+      launcher({ log: (m) => { logged.push(m) }, runProbe: async (...a) => { probes.push({ file: a[0], args: a[1], input: a[2], env: a[3] }); return { rc: 1, stderr: POLICY_ERROR } } }).start()
+      await until(() => spawned.length === 1, 'claude')
+      expect(banner()).toEqual([WARNINGS.scripts(SCRIPT_TROUBLE.policy)])
+      expect(screen).toContain(`pitwall: ${WARNINGS.scripts(SCRIPT_TROUBLE.policy)}`)
+      expect(WARNINGS.scripts(SCRIPT_TROUBLE.policy)).toContain('execution policy')
+      expect(logged).toHaveLength(1)
+      expect(logged[0]).toContain('FullyQualifiedErrorId : UnauthorizedAccess')
+      expect(settingsArg()).toBe(join(sd, 'hooks-without-scripts.json'))
+    })
+
+    test('the same, translated: the error id is not', async () => {
+      writeHooks()
+      launcher({ runProbe: async () => ({ rc: 1, stderr: 'Die Datei kann nicht geladen werden.\r\n    + FullyQualifiedErrorId : UnauthorizedAccess' }) }).start()
+      await until(() => spawned.length === 1, 'claude')
+      expect(banner()).toEqual([WARNINGS.scripts(SCRIPT_TROUBLE.policy)])
+    })
+
+    test('a try that times out is made once more; one that works then keeps the scripts', async () => {
+      writeHooks()
+      const run = probe()
+      let first = true
+      launcher({ runProbe: async (...a) => {
+        if (first) { first = false; probes.push({ file: a[0], args: a[1], input: a[2], env: a[3] }); return { rc: 1, timedOut: true } }
+        return run(...a)
+      } }).start()
+      await until(() => spawned.length === 1, 'claude')
+      expect(settingsArg()).toBe(join(sd, 'hooks.json'))
+      expect(probes.map((p) => basename(p.args[FLAGS.length]))).toEqual(['pitwall-hook.ps1', 'pitwall-hook.ps1', 'pitwall-statusline.ps1'])
+      expect(banner()).toEqual([])
+    })
+
+    test('timing out twice: both go, the status line is not tried too, and the banner says so', async () => {
+      writeHooks()
+      const logged: string[] = []
+      launcher({ log: (m) => { logged.push(m) }, runProbe: async (...a) => { probes.push({ file: a[0], args: a[1], input: a[2], env: a[3] }); return { rc: 1, timedOut: true } } }).start()
+      await until(() => spawned.length === 1, 'claude')
+      expect(probes).toHaveLength(2)
+      expect(JSON.parse(readFileSync(settingsArg(), 'utf8'))).toEqual({})
+      expect(banner()).toEqual([WARNINGS.scripts(SCRIPT_TROUBLE.slow)])
+      expect(logged).toEqual(['PowerShell scripts blocked (hook timed out twice, status line not tried)'])
+    })
+
+    test("PowerShell that can't be started", async () => {
+      writeHooks()
+      launcher({ runProbe: async () => ({ rc: 127, stderr: 'spawn powershell.exe ENOENT' }) }).start()
+      await until(() => spawned.length === 1, 'claude')
+      expect(banner()).toEqual([WARNINGS.scripts(SCRIPT_TROUBLE.noPowerShell)])
+    })
+
+    test('a script file that is missing', async () => {
+      writeHooks({ hookScript: join(bin, 'gone', 'pitwall-hook.ps1') })
+      launcher({ runProbe: async () => ({ rc: -196608, stderr: "The argument '...' to the -File parameter does not exist." }) }).start()
+      await until(() => spawned.length === 1, 'claude')
+      expect(banner()).toEqual([WARNINGS.scripts(SCRIPT_TROUBLE.missing)])
+    })
+
+    test('only the status line, timed out twice: its own banner says so', async () => {
+      writeHooks()
+      const run = probe()
+      launcher({ runProbe: async (...a) => (a[1][FLAGS.length].endsWith('pitwall-statusline.ps1') ? { rc: 1, timedOut: true } : run(...a)) }).start()
+      await until(() => spawned.length === 1, 'claude')
+      expect(banner()).toEqual([WARNINGS.statusLine(SCRIPT_TROUBLE.slow)])
+    })
+  })
+
+  describe('with the hooks off, a failed resume is told apart by whether Claude has a transcript (no SessionStart comes)', () => {
+    const blockedResume = async (vars: Record<string, string> = {}): Promise<void> => {
+      writeHooks()
+      writeEnv({ ...baseVars(), ...vars })
+      writeFileSync(join(sd, 'started'), '')
+      launcher({ runProbe: probe({ hook: true, statusLine: true }) }).start()
+      await until(() => spawned.length === 1, 'resume')
+      expect(lastPty().args.slice(0, 2)).toEqual(['--resume', ID])
+      lastPty().exit(1)
+    }
+    const transcript = (configDir: string) => {
+      mkdirSync(join(configDir, 'projects', '-work-repo'), { recursive: true })
+      writeFileSync(join(configDir, 'projects', '-work-repo', `${ID}.jsonl`), '{}\n')
+    }
+
+    test('no transcript: the conversation never started, so a new one does', async () => {
+      mkdirSync(join(dir, '.claude', 'projects', '-work-repo'), { recursive: true }) // others' transcripts, not this one
+      writeFileSync(join(dir, '.claude', 'projects', '-work-repo', 'other-id.jsonl'), '{}\n')
+      await blockedResume()
+      await until(() => spawned.length === 2, 'fresh launch')
+      expect(lastPty().args.slice(0, 2)).toEqual(['--session-id', ID])
+      expect(screen).toContain(MESSAGES.resumeFailed())
+    })
+
+    test("a transcript (in HOME's .claude): Claude's error stands, no new conversation over the same id", async () => {
+      transcript(join(dir, '.claude'))
+      await blockedResume()
+      await until(() => screen.includes(MESSAGES.exited(1)), 'prompt')
+      expect(spawned).toHaveLength(1)
+      expect(screen).not.toContain(MESSAGES.resumeFailed())
+    })
+
+    test("the project's CLAUDE_CONFIG_DIR is where the transcript is looked for", async () => {
+      transcript(join(dir, 'work-claude'))
+      await blockedResume({ CLAUDE_CONFIG_DIR: join(dir, 'work-claude') })
+      await until(() => screen.includes(MESSAGES.exited(1)), 'prompt')
+      expect(spawned).toHaveLength(1)
+    })
   })
 
   test('a hook that exits 0 but writes nothing counts as blocked', async () => {

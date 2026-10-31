@@ -7,18 +7,21 @@
  *   Claude's environment (never argv or disk). No token: fail closed with an empty GH_CONFIG_DIR;
  * - the setup command runs once (`setup-done`), in sh (cmd.exe on Windows);
  * - Claude starts with `--session-id` the first time (`started`), then `--resume`; a resume that fails before Claude
- *   reported SessionStart falls back to a new conversation;
+ *   reported SessionStart falls back to a new conversation (with the hooks off, one that has no transcript does);
  * - when Claude exits: "Press Enter to resume.", and Enter relaunches it. End of input (Ctrl+D) or Ctrl+C at that
  *   prompt ends the terminal, as they end the script's `read`.
  * Beyond the script: what it prints that matters (signed out of GitHub, setup failed, couldn't resume) is also logged
  * as a pitwall:warning event, which the app shows as a banner (a ConPTY repaint can wipe the printed line). And on
- * Windows the PowerShell hook and status line are tried before each start of Claude: if Windows won't run them
- * (an execution policy), Claude gets settings without them, so they can never get in its way, and a warning says so.
+ * Windows the PowerShell hook and status line are tried before each start of Claude: if they don't run (an execution
+ * policy, a scanner that makes them time out, a missing file), Claude gets settings without them, so they can never get
+ * in its way, and a warning says so, and why when that's known.
  * The Shell tab (`kind: 'shell'`) gets the same identity, then its shell, once.
  * Everything that touches the outside world (the pty, gh, the file system for PATH lookups) is injected.
  */
 import { execFile } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { readdir } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { deleteEnv, envValue, mergeEnv, windowsCommand, windowsShellCommand, type IsFile } from './win-command'
 
@@ -42,7 +45,9 @@ export type KillPty = (p: PtyLike, sig: 'SIGHUP' | 'SIGKILL') => void
 /** The account's token, or null. Never throws. */
 export type FetchToken = (ghBin: string, account: string, env: Record<string, string>) => Promise<string | null>
 /** Runs a program with no shell, `input` on its stdin; its exit code (non-zero if it couldn't start). Never throws. */
-export type RunProbe = (file: string, args: string[], input: string, env: Record<string, string>) => Promise<number>
+/** One run of a script, tried as Claude would run it: its exit code, whether it ran out of time, what it said on stderr. */
+export interface ProbeRun { rc: number; timedOut?: boolean; stderr?: string }
+export type RunProbe = (file: string, args: string[], input: string, env: Record<string, string>) => Promise<ProbeRun>
 
 export interface LauncherOptions {
   spec: LauncherSpec
@@ -65,6 +70,9 @@ export interface LauncherOptions {
   log?: (msg: string) => void
 }
 
+/** How long one try of a script may take (Claude's own hook timeout is longer; this only decides whether to keep it). */
+const PROBE_SECONDS = 20
+
 /** Token variables gh reads before its own store; inherited ones must never stand in for a project's account. */
 const TOKENS = ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN']
 
@@ -83,23 +91,35 @@ export const WARNINGS = {
   gh: (account: string) => `Couldn't get a GitHub token for ${account}: gh commands run signed out. Check \`gh auth status\`.`,
   setup: (rc: number) => `The setup command failed (exit ${rc}); Claude started anyway.`,
   resume: () => "Couldn't resume the previous conversation, so a new one started.",
-  scripts: () => "Windows blocked Pitwall's status scripts (PowerShell execution policy) — status won't update for this session.",
-  statusLine: () => "Windows blocked Pitwall's status line script (PowerShell execution policy) — the usage meter won't update for this session."
+  scripts: (why?: string) => `Pitwall's status scripts didn't run (${why ?? 'see host.log'}) — status won't update for this session.`,
+  statusLine: (why?: string) =>
+    `Pitwall's status line script didn't run (${why ?? 'see host.log'}) — the usage meter won't update for this session.`
+}
+
+/** Why the scripts didn't run, in the banner's words, when that's known (anything else: host.log has what they said). */
+export const SCRIPT_TROUBLE = {
+  policy: 'a PowerShell execution policy blocks them',
+  slow: `PowerShell took over ${PROBE_SECONDS} s, twice`,
+  noPowerShell: "PowerShell couldn't be started",
+  missing: "a script file is missing; reinstall Pitwall"
 }
 
 const PROBE_EVENT = 'PitwallProbe'
 
 const execProbe: RunProbe = (file, args, input, env) => new Promise((resolve) => {
   try {
-    const child = execFile(file, args, { env, timeout: 20_000, windowsHide: true }, (err) => {
-      if (!err) return resolve(0)
-      const code = (err as { code?: unknown }).code
-      resolve(typeof code === 'number' && code !== 0 ? code : 1)
+    const child = execFile(file, args, { env, timeout: PROBE_SECONDS * 1000, windowsHide: true, encoding: 'utf8' }, (err, _out, stderr) => {
+      const said = String(stderr ?? '').slice(0, 4000)
+      if (!err) return resolve({ rc: 0, stderr: said })
+      const { code, killed } = err as { code?: unknown; killed?: boolean }
+      if (code === 'ENOENT') return resolve({ rc: 127, stderr: said || err.message })
+      // Killed with no exit code of its own: execFile's timeout (too much output has a code: ERR_CHILD_PROCESS_…).
+      resolve({ rc: typeof code === 'number' && code !== 0 ? code : 1, timedOut: killed === true && code == null, stderr: said })
     })
     child.stdin?.on('error', () => {})
     child.stdin?.end(input)
-  } catch {
-    resolve(127)
+  } catch (e) {
+    resolve({ rc: 127, stderr: msg(e) })
   }
 })
 
@@ -249,7 +269,7 @@ export class Launcher {
       writeFileSync(done, '')
     }
     if (this.stopping) return 129
-    const settings = await this.settingsFile(env)
+    const { file: settings, hooks } = await this.settingsFile(env)
     if (this.stopping) return 129
     const id = readFileSync(this.file('claude-id'), 'utf8').trim()
     let rc: number
@@ -260,7 +280,10 @@ export class Launcher {
       const before = this.eventLines(env).length
       this.logLaunch(env, 'resume')
       rc = await this.run(this.claudeBin(env), ['--resume', id, '--settings', settings], env)
-      if (rc !== 0 && !this.stopping && !this.eventLines(env).slice(before).some(isSessionStart)) {
+      // Did that conversation start? SessionStart says so; with the hooks off there's none, so its transcript does.
+      const started = async (): Promise<boolean> =>
+        hooks ? this.eventLines(env).slice(before).some(isSessionStart) : this.hasTranscript(env, id)
+      if (rc !== 0 && !this.stopping && !(await started())) {
         this.logEvent(env, { e: 'pitwall:exited', code: rc })
         this.print(MESSAGES.resumeFailed())
         this.warn(env, 'resume', WARNINGS.resume())
@@ -297,16 +320,19 @@ export class Launcher {
    * them, so an execution policy can never get in the way of Claude's tool calls. Tried at every start, so a policy
    * that changed between runs is noticed. Anything unexpected while trying counts as blocked (fail closed).
    */
-  private async settingsFile(env: Record<string, string>): Promise<string> {
+  private async settingsFile(env: Record<string, string>): Promise<{ file: string; hooks: boolean }> {
     const file = this.file('hooks.json')
-    const ok = await this.tryScripts(env).catch(() => ({ hooks: false, statusLine: false }))
-    if (ok.hooks && ok.statusLine) return file
+    const ok: Tried = await this.tryScripts(env).catch((e: unknown) => {
+      this.o.log?.(`PowerShell scripts couldn't be tried: ${msg(e)}`)
+      return { hooks: false, statusLine: false }
+    })
+    if (ok.hooks && ok.statusLine) return { file, hooks: true }
     if (!ok.hooks) {
-      this.print(`pitwall: ${WARNINGS.scripts()}`)
-      this.warn(env, 'scripts', WARNINGS.scripts())
+      this.print(`pitwall: ${WARNINGS.scripts(ok.why)}`)
+      this.warn(env, 'scripts', WARNINGS.scripts(ok.why))
     } else {
-      this.print(`pitwall: ${WARNINGS.statusLine()}`)
-      this.warn(env, 'statusline', WARNINGS.statusLine())
+      this.print(`pitwall: ${WARNINGS.statusLine(ok.why)}`)
+      this.warn(env, 'statusline', WARNINGS.statusLine(ok.why))
     }
     let settings: Record<string, unknown> = {}
     try {
@@ -318,14 +344,15 @@ export class Launcher {
     if (!ok.statusLine) delete settings.statusLine
     const fallback = this.file('hooks-without-scripts.json')
     writeFileSync(fallback, JSON.stringify(settings, null, 2) + '\n')
-    return fallback
+    return { file: fallback, hooks: ok.hooks }
   }
 
   /**
    * Runs the PowerShell hook and status line once, as Claude would (exec form, the same flags), on a probe payload
-   * into a scratch folder. Only for exec-form hooks (Windows): sh scripts elsewhere need no such check.
+   * into a scratch folder. Only for exec-form hooks (Windows): sh scripts elsewhere need no such check. A try that
+   * times out is made once more (the first PowerShell after a restart, or under a busy scanner, can be slow).
    */
-  private async tryScripts(env: Record<string, string>): Promise<{ hooks: boolean; statusLine: boolean }> {
+  private async tryScripts(env: Record<string, string>): Promise<Tried> {
     const settings = JSON.parse(readFileSync(this.file('hooks.json'), 'utf8')) as {
       hooks?: { SessionStart?: Array<{ hooks?: Array<{ command?: unknown; args?: unknown }> }> }; statusLine?: unknown
     }
@@ -333,9 +360,14 @@ export class Launcher {
     const args = hook?.args
     const at = Array.isArray(args) ? args.indexOf('-File') : -1
     if (typeof hook?.command !== 'string' || !Array.isArray(args) || at < 0 || at + 1 >= args.length) return { hooks: true, statusLine: true }
-    const run = this.o.runProbe ?? execProbe
+    const powershell = hook.command
     const probeEnv = { ...env }
     deleteEnv(probeEnv, 'PITWALL_USER_STATUSLINE', this.o.platform) // the user's own line isn't ours to try
+    const runOnce = this.o.runProbe ?? execProbe
+    const run = async (a: string[], input: string): Promise<ProbeRun> => {
+      const r = await runOnce(powershell, a, input, probeEnv)
+      return r.timedOut && !this.stopping ? runOnce(powershell, a, input, probeEnv) : r
+    }
     // A new folder each time: a leftover one (a scanner holding it) never needs removing first.
     const dir = this.file(`probe-${process.pid}-${++this.probes}`)
     mkdirSync(dir, { recursive: true })
@@ -343,20 +375,24 @@ export class Launcher {
     probeEnv.PITWALL_SCRIPT_ERRORS = errors
     try {
       const events = join(dir, 'events.jsonl')
-      const hookRc = await run(hook.command, [...args.slice(0, at + 2), events, 'probe'],
-        JSON.stringify({ hook_event_name: PROBE_EVENT, session_id: 'probe' }), probeEnv)
-      const hooks = hookRc === 0 && readIfAny(events).includes(`"e":"${PROBE_EVENT}"`)
+      const hookRun = await run([...args.slice(0, at + 2), events, 'probe'], JSON.stringify({ hook_event_name: PROBE_EVENT, session_id: 'probe' }))
+      const hooks = hookRun.rc === 0 && readIfAny(events).includes(`"e":"${PROBE_EVENT}"`)
       let statusLine = true
-      if (settings.statusLine) {
-        const script = join(dirname(args[at + 1]), 'pitwall-statusline.ps1')
-        const rc = await run(hook.command, [...args.slice(0, at + 1), script, dir], JSON.stringify({ session_id: 'probe' }), probeEnv)
-        statusLine = rc === 0 && existsSync(join(dir, 'statusline.json'))
+      let lineRun: ProbeRun | null = null
+      const script = join(dirname(args[at + 1]), 'pitwall-statusline.ps1')
+      if (settings.statusLine && hookRun.timedOut) {
+        statusLine = false // the same PowerShell, just as slow: not another 40 s before Claude starts
+      } else if (settings.statusLine) {
+        lineRun = await run([...args.slice(0, at + 1), script, dir], JSON.stringify({ session_id: 'probe' }))
+        statusLine = lineRun.rc === 0 && existsSync(join(dir, 'statusline.json'))
       }
-      if (!hooks || !statusLine) {
-        const why = readIfAny(errors).trim().slice(0, 2000)
-        this.o.log?.(`PowerShell scripts blocked (hook ${hooks ? 'ok' : `exit ${hookRc}`}, status line ${statusLine ? 'ok' : 'failed'})${why ? `: ${why}` : ''}`)
-      }
-      return { hooks, statusLine }
+      if (hooks && statusLine) return { hooks, statusLine }
+      const [failed, failedScript] = hooks && lineRun ? [lineRun, script] : [hookRun, String(args[at + 1])]
+      const said = [readIfAny(errors).trim(), failed.stderr?.trim() ?? ''].filter(Boolean).join('\n').slice(0, 2000)
+      const why = scriptTrouble(failed, said, !existsSync(failedScript))
+      const result = (r: ProbeRun | null, ok: boolean) => (ok ? 'ok' : r ? (r.timedOut ? 'timed out twice' : `exit ${r.rc}`) : 'not tried')
+      this.o.log?.(`PowerShell scripts blocked (hook ${result(hookRun, hooks)}, status line ${result(lineRun, statusLine)})${said ? `: ${said}` : ''}`)
+      return { hooks, statusLine, why }
     } finally {
       // Best effort: tidying up never changes what was found.
       try { rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }) } catch { /* left for later */ }
@@ -404,6 +440,18 @@ export class Launcher {
 
   private file(name: string): string {
     return join(this.o.spec.sessionDir, name)
+  }
+
+  /**
+   * Whether Claude has a transcript of this conversation (`<config dir>/projects/<any folder>/<id>.jsonl`), looked up
+   * read-only as the app's history does. Only asked when the hooks are off: then no SessionStart says it started.
+   */
+  private async hasTranscript(env: Record<string, string>, id: string): Promise<boolean> {
+    const { platform } = this.o
+    const home = envValue(env, platform === 'win32' ? 'USERPROFILE' : 'HOME', platform) || homedir()
+    const root = join(envValue(env, 'CLAUDE_CONFIG_DIR', platform) || join(home, '.claude'), 'projects')
+    const folders = await readdir(root, { withFileTypes: true }).catch(() => [])
+    return folders.some((f) => f.isDirectory() && existsSync(join(root, f.name, `${id}.jsonl`)))
   }
 
   // ---- programs ----------------------------------------------------------------------
@@ -517,6 +565,19 @@ function isSessionStart(line: string): boolean {
   } catch {
     return false
   }
+}
+
+/** What trying the scripts found; `why` is the banner's reason, when it's known. */
+interface Tried { hooks: boolean; statusLine: boolean; why?: string }
+
+/** The reason for the banner, from how the script failed and what it (or PowerShell) said; undefined: see host.log. */
+function scriptTrouble(r: ProbeRun, said: string, missing: boolean): string | undefined {
+  if (missing) return SCRIPT_TROUBLE.missing
+  if (r.timedOut) return SCRIPT_TROUBLE.slow
+  if (r.rc === 127) return SCRIPT_TROUBLE.noPowerShell
+  // PowerShell's words are translated, but not the help topic's name or the error id it prints with them.
+  if (/about_Execution_Policies|UnauthorizedAccess|PSSecurityException/i.test(said)) return SCRIPT_TROUBLE.policy
+  return undefined
 }
 
 function readIfAny(file: string): string {
