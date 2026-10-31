@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, readFile, stat } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, test } from 'vitest'
@@ -14,6 +14,7 @@ test('concurrent writers never collide and leave no temp files', async () => {
   await writeFileAtomic(join(dir, 'env.sh'), 'x', 0o600)
   // (Windows has no POSIX modes: the user's profile ACL protects the data dir.)
   if (!WINDOWS) expect((await stat(join(dir, 'env.sh'))).mode & 0o777).toBe(0o600)
+  await rm(dir, { recursive: true, force: true })
 })
 
 test('Windows: replacing a file someone has open is retried, backing off, for a while; then it fails', async () => {

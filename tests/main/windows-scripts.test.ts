@@ -4,10 +4,10 @@
  * for the sh versions. Windows only (Task 4's runner); skipped elsewhere.
  */
 import { spawn } from 'node:child_process'
-import { mkdir, mkdtemp, readdir, readFile, realpath } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, test } from 'vitest'
+import { afterAll, describe, expect, test } from 'vitest'
 import { parseEventLine } from '../../src/main/hooks/events'
 import { windowsHookCommand, windowsStatusLineCommand } from '../../src/main/hooks/settings'
 import { findGitBash, windowsPowerShell } from '../../src/main/platform'
@@ -34,8 +34,11 @@ function run(file: string, args: string[], input: string, o: { env?: Record<stri
 }
 
 /** A folder like Pitwall's on Windows: spaces and a non-ASCII letter in the path. */
+const made: string[] = []
+afterAll(async () => { for (const d of made) await rm(d, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }) })
 async function folder(): Promise<string> {
   const base = await realpath(await mkdtemp(join(tmpdir(), 'pitwall wïn-')))
+  made.push(base)
   const dir = join(base, 'App Data', 'sessions', 's_1')
   await mkdir(dir, { recursive: true })
   return dir

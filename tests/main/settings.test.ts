@@ -1,7 +1,7 @@
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, test } from 'vitest'
+import { afterAll, describe, expect, test } from 'vitest'
 import {
   buildHookSettings, findUserStatusLine, forwardSlashes, hookCommandFor, HOOK_EVENTS, quoteForBashAndPowerShell,
   statusLineCommandFor, windowsHookCommand, windowsStatusLineCommand
@@ -28,8 +28,11 @@ test('buildHookSettings adds the status line command', () => {
 })
 
 describe('findUserStatusLine', () => {
+  const made: string[] = []
+  afterAll(async () => { for (const d of made) await rm(d, { recursive: true, force: true }) })
   async function dirs() {
     const base = await mkdtemp(join(tmpdir(), 'pitwall-sl-settings-'))
+    made.push(base)
     const cwd = join(base, 'work tree')
     const configDir = join(base, '.claude')
     await mkdir(join(cwd, '.claude'), { recursive: true })
