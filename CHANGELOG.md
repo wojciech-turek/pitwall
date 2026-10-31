@@ -2,7 +2,7 @@
 
 All notable changes to Pitwall are listed here, newest first. Pitwall shows these notes when an update is available, before you download it.
 
-## [0.3.0] - Unreleased
+## [0.3.0] - 2026-10-31
 
 ### Added
 
