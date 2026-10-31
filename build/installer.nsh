@@ -2,7 +2,8 @@
 
 ; Is Pitwall running from the install folder: the app, or only its host (the same Pitwall.exe, run as Node), which
 ; keeps running after the app quits? With STOP 1, those processes are stopped first. RESULT: 0 when none is left, 2
-; when some still run, anything else when PowerShell couldn't tell.
+; when some still run, anything else when PowerShell couldn't tell: "timeout" after a minute (a PowerShell that never
+; exits was seen once, stuck in its own exit after the script had finished, so no run may hold the installer up).
 ;
 ; Every process whose executable is inside the install folder, matched by full path, case-insensitively, never by
 ; name: a Pitwall elsewhere (a dev build, another install) is never touched, nor is this installer itself (its
@@ -11,18 +12,20 @@
 ; are; and nothing is done unless Pitwall.exe is in it. `@(...)` counts one process as 1: electron-builder's own check
 ; reads `.Count` of a single process, which is empty on Windows PowerShell 5.1, so it missed a host running alone.
 !macro PITWALL_PROCESSES STOP RESULT
-  nsExec::Exec `"$PowerShellPath" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$$ErrorActionPreference = 'Stop'; if (-not $$env:PITWALL_INSTDIR) { exit 3 }; $$d = $$env:PITWALL_INSTDIR.TrimEnd('\') + '\'; if (-not (Test-Path -LiteralPath ($$d + '${APP_EXECUTABLE_FILENAME}'))) { exit 0 }; $$me = (Get-CimInstance -ClassName Win32_Process -Filter ('ProcessId=' + $$PID)).ParentProcessId; $$f = { @(Get-CimInstance -ClassName Win32_Process | Where-Object { $$_.ProcessId -ne $$me -and $$_.ExecutablePath -and $$_.ExecutablePath.StartsWith($$d, 'OrdinalIgnoreCase') }) }; if (${STOP}) { & $$f | ForEach-Object { Stop-Process -Id $$_.ProcessId -Force -ErrorAction SilentlyContinue }; for ($$i = 0; $$i -lt 10; $$i++) { if (@(& $$f).Count -eq 0) { exit 0 }; Start-Sleep -Milliseconds 500 } }; if (@(& $$f).Count -gt 0) { exit 2 }; exit 0"`
+  nsExec::Exec /TIMEOUT=60000 `"$PowerShellPath" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$$ErrorActionPreference = 'Stop'; if (-not $$env:PITWALL_INSTDIR) { exit 3 }; $$d = $$env:PITWALL_INSTDIR.TrimEnd('\') + '\'; if (-not (Test-Path -LiteralPath ($$d + '${APP_EXECUTABLE_FILENAME}'))) { exit 0 }; $$me = (Get-CimInstance -ClassName Win32_Process -Filter ('ProcessId=' + $$PID)).ParentProcessId; $$f = { @(Get-CimInstance -ClassName Win32_Process | Where-Object { $$_.ProcessId -ne $$me -and $$_.ExecutablePath -and $$_.ExecutablePath.StartsWith($$d, 'OrdinalIgnoreCase') }) }; if (${STOP}) { & $$f | ForEach-Object { Stop-Process -Id $$_.ProcessId -Force -ErrorAction SilentlyContinue }; for ($$i = 0; $$i -lt 10; $$i++) { if (@(& $$f).Count -eq 0) { exit 0 }; Start-Sleep -Milliseconds 500 } }; if (@(& $$f).Count -gt 0) { exit 2 }; exit 0"`
   Pop ${RESULT}
 !macroend
 
 ; Replaces electron-builder's running-app check, in the installer (a new install or an update over one) and in the
 ; uninstaller. Asks once (a silent run, /S, closes them without asking, so an update can go ahead); OK stops them,
-; Cancel quits. If some can't be stopped: "close it manually", Retry or Cancel, as electron-builder does.
+; Cancel quits. Unless the stop then confirms that none is left: "close it manually", Retry or Cancel, as
+; electron-builder does. A check that can't tell carries on, as electron-builder does when PowerShell can't run.
 !macro customCheckAppRunning
   Push $0
   Push $R0
-  ; The installer is 32-bit, so $SYSDIR's PowerShell is the 32-bit one: emulated on ARM, it took 5-8 s where the
-  ; native one (Sysnative, seen only by 32-bit programs on 64-bit Windows) takes half a second. Both see every process.
+  ; The installer is 32-bit, so $SYSDIR's PowerShell is the 32-bit one. Emulated on ARM it took 5 to 45 s (and once
+  ; never exited); the native one (Sysnative, seen only by 32-bit programs on 64-bit Windows) takes half a second.
+  ; Both see every process.
   ${If} ${FileExists} "$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe"
     StrCpy $PowerShellPath "$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe"
   ${EndIf}
@@ -39,7 +42,7 @@
   pitwall_stop:
     DetailPrint "$(appClosing)"
     !insertmacro PITWALL_PROCESSES 1 $R0
-    StrCmp $R0 2 0 pitwall_done
+    StrCmp $R0 0 pitwall_done
     MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "$(appCannotBeClosed)" /SD IDCANCEL IDRETRY pitwall_stop
     Quit
   pitwall_done:
