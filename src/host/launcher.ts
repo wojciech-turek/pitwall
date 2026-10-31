@@ -363,6 +363,7 @@ export class Launcher {
     const powershell = hook.command
     const probeEnv = { ...env }
     deleteEnv(probeEnv, 'PITWALL_USER_STATUSLINE', this.o.platform) // the user's own line isn't ours to try
+    for (const k of TOKENS) deleteEnv(probeEnv, k, this.o.platform) // the scripts need none, and the probe's stderr is logged
     const runOnce = this.o.runProbe ?? execProbe
     const run = async (a: string[], input: string): Promise<ProbeRun> => {
       const r = await runOnce(powershell, a, input, probeEnv)
@@ -576,7 +577,7 @@ function scriptTrouble(r: ProbeRun, said: string, missing: boolean): string | un
   if (r.timedOut) return SCRIPT_TROUBLE.slow
   if (r.rc === 127) return SCRIPT_TROUBLE.noPowerShell
   // PowerShell's words are translated, but not the help topic's name or the error id it prints with them.
-  if (/about_Execution_Policies|UnauthorizedAccess|PSSecurityException/i.test(said)) return SCRIPT_TROUBLE.policy
+  if (/about_Execution_Policies|\bUnauthorizedAccess\b|PSSecurityException/i.test(said)) return SCRIPT_TROUBLE.policy
   return undefined
 }
 

@@ -561,6 +561,28 @@ describe('the PowerShell scripts are tried before each start of Claude (exec-for
       expect(banner()).toEqual([WARNINGS.scripts(SCRIPT_TROUBLE.policy)])
     })
 
+    test('the probe never gets a token, so its logged stderr cannot hold one', async () => {
+      writeHooks()
+      launcher({ env: { PATH: '/usr/bin', HOME: dir, GH_TOKEN: 'secret1', GITHUB_TOKEN: 'secret2', GH_ENTERPRISE_TOKEN: 'secret3', GITHUB_ENTERPRISE_TOKEN: 'secret4' }, runProbe: probe() }).start()
+      await until(() => spawned.length === 1, 'claude')
+      expect(probes.length).toBeGreaterThan(0)
+      for (const p of probes) {
+        for (const k of ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN']) expect(p.env[k]).toBeUndefined()
+        expect(JSON.stringify(p.env)).not.toContain('secret')
+      }
+    })
+
+    test.each([
+      ['UnauthorizedAccessException: Access to the path is denied.', undefined],
+      ['    + FullyQualifiedErrorId : UnauthorizedAccessException', undefined],
+      ['    + FullyQualifiedErrorId : UnauthorizedAccess', SCRIPT_TROUBLE.policy]
+    ])('the error id %j: banner reason %j', async (stderr, why) => {
+      writeHooks()
+      launcher({ runProbe: async () => ({ rc: 1, stderr }) }).start()
+      await until(() => spawned.length === 1, 'claude')
+      expect(banner()).toEqual([WARNINGS.scripts(why)])
+    })
+
     test('a try that times out is made once more; one that works then keeps the scripts', async () => {
       writeHooks()
       const run = probe()
