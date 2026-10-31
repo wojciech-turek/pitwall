@@ -327,12 +327,21 @@ describe('SessionManager', () => {
   })
 
   test('no warning when Claude reports in before the timeout', async () => {
-    const m = await ready(1500)
+    // Claude's first event is written here as soon as start returns, so it is in before the timeout on any machine.
+    // (The stub's own comes after the whole launch: on Windows gh, the two PowerShell script checks, then Claude and
+    // its PowerShell hook. That took longer than a 1.5 s timeout on a busy ARM CI runner.)
+    t.env.STUB_CLAUDE_SILENT = '1'
+    const timeoutMs = 3000
+    const m = await ready(timeoutMs)
     const res = await m.start(
       { requestId: 'r', subProjectId: 'sp_1', title: 'Loud', branchMode: 'new', branch: '' }, () => {}
     )
     if (!res.ok) throw new Error(res.error)
-    await new Promise((r) => setTimeout(r, 2500))
+    const t0 = Date.now() // the timeout runs from here
+    await ev(res.sessionId, { e: 'SessionStart', sid: 'x' })
+    expect(await m.waitForFirstEvent(res.sessionId, timeoutMs)).toBe(true)
+    expect(Date.now() - t0).toBeLessThan(timeoutMs) // seen before the timeout, or this test proves nothing
+    await new Promise((r) => setTimeout(r, Math.max(0, t0 + timeoutMs + 1000 - Date.now()))) // past it
     expect(m.snapshot().sessions[0].startWarning).toBeUndefined()
   })
 
