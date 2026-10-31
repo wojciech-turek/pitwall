@@ -347,7 +347,7 @@ describe('writeSessionFiles', () => {
         command: 'C:/WINDOWS/System32/WindowsPowerShell/v1.0/powershell.exe',
         args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', forwardSlashes(join(t.paths.binDir, 'pitwall-hook.ps1')),
           forwardSlashes(join(dir, 'events.jsonl')), s.id],
-        timeout: 10
+        timeout: 30
       }] }])
     }
     expect(settings.statusLine).toEqual({

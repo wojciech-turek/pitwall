@@ -89,10 +89,16 @@ describe('Windows hooks and status line', () => {
     })
     const s = buildHookSettings(h, 'sl')
     expect(Object.keys(s.hooks)).toEqual([...HOOK_EVENTS])
-    for (const e of HOOK_EVENTS) expect(s.hooks[e]).toEqual([{ hooks: [{ type: 'command', ...h, timeout: 10 }] }])
+    for (const e of HOOK_EVENTS) expect(s.hooks[e]).toEqual([{ hooks: [{ type: 'command', ...h, timeout: 30 }] }])
     expect(s.statusLine).toEqual({ type: 'command', command: 'sl', padding: 0 })
     // The macOS form is unchanged: a shell command, no args.
     expect(buildHookSettings('cmd').hooks.Stop[0].hooks[0]).toEqual({ type: 'command', command: 'cmd', timeout: 10 })
+  })
+
+  test('hooks get 30 s on Windows (PowerShell 5.1 can take over 10 s on a busy PC), 10 s for the sh hooks', () => {
+    const h = windowsHookCommand(ps, `${bin}\\pitwall-hook.ps1`, `${sd}/events.jsonl`, 's_1')
+    for (const e of HOOK_EVENTS) expect(buildHookSettings(h).hooks[e][0].hooks[0].timeout).toBe(30)
+    for (const e of HOOK_EVENTS) expect(buildHookSettings('cmd').hooks[e][0].hooks[0].timeout).toBe(10)
   })
 
   test('the status line: a command Git Bash and PowerShell both read the same way', () => {

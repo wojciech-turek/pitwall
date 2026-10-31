@@ -55,14 +55,22 @@ export interface ExecCommand { command: string; args: string[] }
 type HookHandler = { type: 'command'; command: string; args?: string[]; timeout: number }
 type HookList = { hooks: HookHandler[] }[]
 
+/**
+ * Seconds Claude Code gives a hook. The sh hook (macOS) is quick. The Windows one starts Windows PowerShell 5.1: half a
+ * second when the PC is idle, but over 10 s was seen on a busy one, and a hook that times out loses its event and
+ * prints an error in the user's terminal. It always ends with exit 0, so a longer limit only waits longer at worst.
+ */
+export const HOOK_TIMEOUT_SH = 10
+export const HOOK_TIMEOUT_WINDOWS = 30
+
 /** `command`: a shell command line (macOS), or exec form (Windows). */
 export function buildHookSettings(command: string | ExecCommand, statusLineCommand?: string): {
   hooks: Record<string, HookList>
   statusLine?: { type: 'command'; command: string; padding: number }
 } {
   const handler = (): HookHandler => typeof command === 'string'
-    ? { type: 'command', command, timeout: 10 }
-    : { type: 'command', command: command.command, args: [...command.args], timeout: 10 }
+    ? { type: 'command', command, timeout: HOOK_TIMEOUT_SH }
+    : { type: 'command', command: command.command, args: [...command.args], timeout: HOOK_TIMEOUT_WINDOWS }
   const hooks: Record<string, HookList> = {}
   for (const e of HOOK_EVENTS) hooks[e] = [{ hooks: [handler()] }]
   if (!statusLineCommand) return { hooks }
