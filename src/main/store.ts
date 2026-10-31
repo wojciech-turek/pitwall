@@ -1,6 +1,7 @@
 import { randomInt } from 'node:crypto'
-import { copyFile, mkdir, open, readFile, rename } from 'node:fs/promises'
+import { copyFile, mkdir, open, readFile, rename, rm } from 'node:fs/promises'
 import { dirname } from 'node:path'
+import { renameOver, retryWhileBusy } from './atomic'
 import { DEFAULT_SETTINGS, type AppSettings, type PersistedState } from '@shared/types'
 
 function emptyState(): PersistedState {
@@ -49,26 +50,34 @@ async function tryLoad(file: string): Promise<PersistedState | 'missing' | 'corr
   }
 }
 
+/** How the store writes its file (a test seam: the platform, and the copy and rename it uses). */
+export interface StoreIo {
+  platform?: NodeJS.Platform
+  rename?: (from: string, to: string) => Promise<void>
+  copyFile?: (from: string, to: string) => Promise<void>
+  retryForMs?: number
+}
+
 export class Store {
   private _state: PersistedState
   private chain: Promise<unknown> = Promise.resolve()
   private listeners = new Set<() => void>()
 
-  private constructor(private readonly file: string, state: PersistedState) {
+  private constructor(private readonly file: string, state: PersistedState, private readonly io: StoreIo) {
     this._state = state
   }
 
-  static async open(file: string): Promise<Store> {
+  static async open(file: string, io: StoreIo = {}): Promise<Store> {
     await mkdir(dirname(file), { recursive: true })
     const main = await tryLoad(file)
-    if (typeof main === 'object') return new Store(file, main)
+    if (typeof main === 'object') return new Store(file, main, io)
     if (main === 'corrupt') {
       const bak = await tryLoad(file + '.bak')
       // Move the bad main file aside so the next write cannot clobber a good .bak with it.
       await rename(file, `${file}.corrupt-${Date.now()}`)
-      if (typeof bak === 'object') return new Store(file, bak)
+      if (typeof bak === 'object') return new Store(file, bak, io)
     }
-    return new Store(file, emptyState())
+    return new Store(file, emptyState(), io)
   }
 
   get state(): Readonly<PersistedState> {
@@ -95,21 +104,35 @@ export class Store {
     return () => { this.listeners.delete(cb) }
   }
 
+  /**
+   * Writes are serialized (update's chain). On Windows the .bak copy and the rename over state.json are retried while
+   * another process has either file open for a moment (a scanner, a backup, a reader: see retryWhileBusy). A write
+   * that still fails leaves the state as it was (update applies the change only once written), is logged, and the
+   * error reaches the caller.
+   */
   private async write(state: PersistedState): Promise<void> {
     const tmp = this.file + '.tmp'
-    const fh = await open(tmp, 'w')
+    const { platform = process.platform, retryForMs } = this.io
+    const doCopy = this.io.copyFile ?? copyFile
     try {
-      await fh.writeFile(JSON.stringify(state, null, 2))
-      await fh.sync()
-    } finally {
-      await fh.close()
-    }
-    try {
-      await copyFile(this.file, this.file + '.bak')
+      const fh = await open(tmp, 'w')
+      try {
+        await fh.writeFile(JSON.stringify(state, null, 2))
+        await fh.sync()
+      } finally {
+        await fh.close()
+      }
+      try {
+        await retryWhileBusy(() => doCopy(this.file, this.file + '.bak'), platform, { retryForMs })
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e
+      }
+      await renameOver(tmp, this.file, platform, { rename: this.io.rename, retryForMs })
     } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e
+      await rm(tmp, { force: true }).catch(() => undefined)
+      console.error(`[pitwall] couldn't save ${this.file}:`, e)
+      throw e
     }
-    await rename(tmp, this.file)
   }
 }
 
