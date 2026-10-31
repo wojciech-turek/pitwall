@@ -12,11 +12,11 @@ All notable changes to Pitwall are listed here, newest first. Pitwall shows thes
 
 ### Windows notes
 
-- Updating Pitwall on Windows stops running agents. Each resumes its conversation when you reopen Pitwall.
+- Updating Pitwall on Windows stops running agents: the installer offers to close Pitwall's background host. Each agent resumes its conversation when you reopen Pitwall.
 - Status hooks run in Windows PowerShell, about half a second each, so tool calls feel a little slower than on a Mac.
-- If a Group Policy blocks PowerShell scripts, Claude still works, but the session's status doesn't update, and its header says so.
+- If PowerShell scripts can't run (a Group Policy that blocks them, say), Claude still works, but the session's status doesn't update, and its header says so and why.
 - Teardown commands run in `cmd.exe`.
-- The README's **Windows (beta)** section has the requirements (Claude Code, Git for Windows recommended), where things live and the known limitations.
+- The README's **Windows (beta)** section has the requirements (Claude Code, Git for Windows), where things live and the known limitations.
 
 ### Changed
 

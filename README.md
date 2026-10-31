@@ -93,8 +93,8 @@ Pitwall runs on Windows 10 and 11, with the same projects, worktrees, identities
 ### Requirements
 
 - Windows 10 version 1809 or later, or Windows 11, on x64 or ARM
-- [Claude Code](https://docs.claude.com/en/docs/claude-code/setup), installed and logged in. The native installer (`irm https://claude.ai/install.ps1 | iex` in PowerShell) is recommended; WinGet and npm installs work too.
-- [Git for Windows](https://git-scm.com/download/win), recommended: Pitwall needs `git` for repos and their worktrees, and Claude Code uses its Git Bash for its Bash tool.
+- [Claude Code](https://docs.claude.com/en/docs/claude-code/setup), installed and logged in. The native installer (`irm https://claude.ai/install.ps1 | iex` in PowerShell) is recommended; an npm install works too. Other installs (WinGet) should work but haven't been tried yet: please report if one doesn't.
+- [Git for Windows](https://git-scm.com/download/win): Pitwall needs `git` for repos and their worktrees, and Claude Code uses its Git Bash for its Bash tool.
 - Optional: the GitHub CLI `gh`, logged in to the accounts you use (`gh auth login`, once per account)
 
 ### Install
@@ -102,14 +102,14 @@ Pitwall runs on Windows 10 and 11, with the same projects, worktrees, identities
 1. From [Releases](https://github.com/wojciech-turek/pitwall/releases), download the installer for your PC: `Pitwall-<version>-x64-setup.exe` for most PCs, `Pitwall-<version>-arm64-setup.exe` for Windows on ARM (Settings → System → About shows which).
 2. Run it. The installer isn't signed yet, so Windows SmartScreen says it "prevented an unrecognized app from starting": click **More info**, then **Run anyway**. Pitwall installs for your user only (no administrator rights) into `%LOCALAPPDATA%\Programs\pitwall`, and adds a Start menu shortcut.
 
-To update, download the new installer, quit Pitwall and run it (SmartScreen asks again). To uninstall, use Settings → Apps; your projects and settings stay in `%APPDATA%\pitwall`.
+To update, download the new installer, quit Pitwall and run it (SmartScreen asks again). The installer then says Pitwall is still running and offers to close it: that's the background host, and closing it stops your running agents. Your sessions stay, and each agent resumes its conversation when you reopen Pitwall. To uninstall, use Settings → Apps; your projects and settings stay in `%APPDATA%\pitwall`.
 
 ### What's different on Windows
 
 - **Shortcuts use Ctrl.** In a terminal, use `Ctrl+Shift+<key>` for Pitwall's shortcuts (`Ctrl+Shift+K` opens the palette): plain `Ctrl+<key>` goes to the program running there, as in any terminal. See [Keyboard shortcuts](#keyboard-shortcuts).
 - **Updating stops running agents.** The host runs from the installed Pitwall, which an update replaces. Your sessions stay, and each agent resumes its conversation when you reopen Pitwall.
 - **Status hooks run in PowerShell.** Every hook starts Windows PowerShell, which takes about half a second. Claude waits for the hooks around each tool call, so tools feel a little slower than on a Mac.
-- **If PowerShell scripts are blocked by policy** (a Group Policy that forces an execution policy, common on managed PCs), Claude still works, but the session's status and usage don't update, and its header says so.
+- **If PowerShell scripts can't run** (most often a Group Policy that forces an execution policy, common on managed PCs; also a scanner that makes them time out), Claude still works, but the session's status and usage don't update, and its header says so and why. `%APPDATA%\pitwall\host.log` has what PowerShell said.
 - **Teardown commands run in `cmd.exe`**, so write them for cmd (`docker compose down` works the same).
 - **A file in use in a worktree** (an editor's terminal there, an Explorer window) can keep Windows from deleting the folder when you archive. Archiving still finishes and tells you which folder to delete later.
 - **Notifications and the taskbar:** Windows notifications, a red count on the taskbar button and a flashing button when a session needs you, instead of the Dock badge.
@@ -220,7 +220,7 @@ Pitwall is built with Electron, React, TypeScript, zustand, node-pty, xterm.js a
 
 ## Releasing
 
-For maintainers: bump `version` in `package.json`, add a `## [X.Y.Z] - date` section to `CHANGELOG.md`, commit, tag `vX.Y.Z` and push the tag. The release workflow checks the tag against `package.json`, builds and signs the DMG and builds the Windows installers (x64 and arm64), checks them, and publishes all three with the changelog section as the release notes. A version with a `-` (`0.3.0-beta.1`) is published as a pre-release.
+For maintainers: bump `version` in `package.json`, add a `## [X.Y.Z] - date` section to `CHANGELOG.md` (dated, not "Unreleased"), commit, push, and wait for CI to be green on that commit, **including the `windows-arm` job**: it may fail without failing CI, and it is the only place an arm64 build actually runs. For a release with Windows changes, also try the installer on a real Windows PC. Then tag `vX.Y.Z` and push the tag. The release workflow checks the tag against `package.json`, builds and signs the DMG and builds the Windows installers (x64 and arm64, both on x64 Windows, the arm64 one checked but not run), checks them, and publishes all three with the changelog section as the release notes. A version with a `-` (`0.3.0-beta.1`) is published as a pre-release.
 
 ## License
 

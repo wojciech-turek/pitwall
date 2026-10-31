@@ -56,8 +56,9 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # Both installers build on x64 Windows: node-pty's arm64 binaries come prebuilt, so nothing is compiled. CI also
-  # builds and runs the arm64 one on Windows on ARM. No secrets here.
+  # Both installers build on x64 Windows: node-pty's arm64 binaries come prebuilt, so nothing is compiled. The arm64
+  # one is only checked here (verify-windows.mjs: the binaries' machine type, the files), never run: CI's windows-arm
+  # job is what runs an arm64 build, so it must be green on the tagged commit (README, Releasing). No secrets here.
   windows:
     needs: check
     runs-on: windows-latest
