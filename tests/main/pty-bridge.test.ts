@@ -176,7 +176,9 @@ describe('PtyBridge with a backend that attaches asynchronously', () => {
     try {
       b.write('s1', 'claude', 'x'.repeat(MAX_TYPED - 1))
       b.write('s1', 'claude', 'yz') // one fits, one doesn't
-      expect(warn).toHaveBeenCalledWith(expect.stringContaining('dropped 1 characters'))
+      expect(warn).toHaveBeenCalledTimes(1)
+      b.write('s1', 'claude', 'clack')
+      expect(warn).toHaveBeenCalledTimes(1)
     } finally {
       warn.mockRestore()
     }
@@ -184,6 +186,23 @@ describe('PtyBridge with a backend that attaches asynchronously', () => {
     await opening
     expect(calls).toHaveLength(1)
     expect(calls[0]).toBe(`write ${'x'.repeat(MAX_TYPED - 1)}y`)
+    b.dispose()
+  })
+
+  test('the typed-input cap does not split a surrogate pair', async () => {
+    let arrive!: () => void
+    const { b, calls, handlers } = slow(new Promise((r) => { arrive = r }))
+    const opening = b.open('s1', 'claude', 100, 30)
+    await handlers()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      b.write('s1', 'claude', 'x'.repeat(MAX_TYPED - 1) + '\u{1F600}') // the emoji's high half would be the last kept unit
+    } finally {
+      warn.mockRestore()
+    }
+    arrive()
+    await opening
+    expect(calls).toEqual([`write ${'x'.repeat(MAX_TYPED - 1)}`])
     b.dispose()
   })
 

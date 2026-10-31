@@ -17,7 +17,7 @@ interface Deps {
  * An open terminal; `a` is missing while the backend is still attaching. Meanwhile `typed` and `size` keep what the
  * renderer sent (as a `tmux attach` pty would), for when it arrives.
  */
-interface Term { a?: Attachment; typed?: string; size?: { cols: number; rows: number } }
+interface Term { a?: Attachment; typed?: string; overflowed?: boolean; size?: { cols: number; rows: number } }
 
 const keyOf = (id: string, kind: TermKind): string => `${id}:${kind}`
 
@@ -79,8 +79,14 @@ export class PtyBridge {
       // Kept until the attachment arrives (a host can take seconds to start), up to MAX_TYPED: a paste beyond that
       // is dropped (and logged) rather than held without bound.
       const typed = (t.typed ?? '') + data
-      if (typed.length > MAX_TYPED) console.warn(`[pitwall] dropped ${typed.length - MAX_TYPED} characters typed into ${keyOf(id, kind)} while it was attaching`)
-      t.typed = typed.slice(0, MAX_TYPED)
+      if (typed.length > MAX_TYPED && !t.overflowed) {
+        t.overflowed = true // once per attach, not per keystroke
+        console.warn(`[pitwall] input typed into ${keyOf(id, kind)} while it was attaching passed ${MAX_TYPED} characters: the rest is dropped`)
+      }
+      let end = Math.min(typed.length, MAX_TYPED)
+      const last = typed.charCodeAt(end - 1)
+      if (end < typed.length && last >= 0xd800 && last <= 0xdbff) end-- // don't cut a surrogate pair in two
+      t.typed = typed.slice(0, end)
     }
     this.deps.onUserInput(id, kind, data)
   }
