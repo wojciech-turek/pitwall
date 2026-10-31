@@ -102,7 +102,7 @@ Pitwall runs on Windows 10 and 11, with the same projects, worktrees, identities
 1. From [Releases](https://github.com/wojciech-turek/pitwall/releases), download the installer for your PC: `Pitwall-<version>-x64-setup.exe` for most PCs, `Pitwall-<version>-arm64-setup.exe` for Windows on ARM (Settings → System → About shows which).
 2. Run it. The installer isn't signed yet, so Windows SmartScreen says it "prevented an unrecognized app from starting": click **More info**, then **Run anyway**. Pitwall installs for your user only (no administrator rights) into `%LOCALAPPDATA%\Programs\pitwall`, and adds a Start menu shortcut.
 
-To update, download the new installer, quit Pitwall and run it (SmartScreen asks again). The installer then says Pitwall is still running and offers to close it: that's the background host, and closing it stops your running agents. Your sessions stay, and each agent resumes its conversation when you reopen Pitwall. To uninstall, use Settings → Apps; your projects and settings stay in `%APPDATA%\pitwall`.
+To update, download the new installer, quit Pitwall and run it (SmartScreen asks again). If Pitwall's background host is still running (it keeps your agents going after you quit, and stays up to 10 minutes after the last one ends), the installer says "Pitwall or its background agents are running" and offers to close them. Closing them stops your running agents; your sessions stay, and each agent resumes its conversation when you reopen Pitwall. To uninstall, use Settings → Apps. It asks the same way before closing anything, and your projects and settings stay in `%APPDATA%\pitwall`.
 
 ### What's different on Windows
 

@@ -12,7 +12,7 @@ All notable changes to Pitwall are listed here, newest first. Pitwall shows thes
 
 ### Windows notes
 
-- Updating Pitwall on Windows stops running agents: the installer offers to close Pitwall's background host. Each agent resumes its conversation when you reopen Pitwall.
+- Updating Pitwall on Windows stops running agents: the installer (and the uninstaller) asks first, then closes Pitwall and its background host, also when the host is all that's left running after you quit. Each agent resumes its conversation when you reopen Pitwall.
 - Status hooks run in Windows PowerShell, about half a second each, so tool calls feel a little slower than on a Mac.
 - If PowerShell scripts can't run (a Group Policy that blocks them, say), Claude still works, but the session's status doesn't update, and its header says so and why.
 - Teardown commands run in `cmd.exe`.
@@ -21,6 +21,7 @@ All notable changes to Pitwall are listed here, newest first. Pitwall shows thes
 ### Changed
 
 - **Archiving retries when a file is briefly in use** (a virus scan, the indexer, an editor) on every platform, and, if git has already let go of the worktree but a file in it stays in use, it finishes and tells you which folder to delete later.
+- **Archiving a folder's last session removes its now-empty folder** in `~/pitwall/worktrees` (only when nothing else is in it).
 
 ## [0.2.0] - 2026-10-30
 
