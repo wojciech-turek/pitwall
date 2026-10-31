@@ -5,7 +5,9 @@ import { hostKeyFile } from './paths'
 /**
  * Proving knowledge of the host key (see protocol.ts). Each host writes a fresh key when it starts; the app reads it
  * when the host greets it, so a host and the apps it serves always share one, and an impostor (something else holding
- * the socket or pipe name) can't answer, because only this user can read the key.
+ * the socket or pipe name) can't answer, because only this user can read the key. This is the boundary between users:
+ * on Windows the pipe itself may be opened by other local users (its default DACL) or squatted while no host runs,
+ * so the key file's protection (the user's AppData ACL there; 0600 elsewhere) and this proof are what keep them out.
  */
 
 export type Role = 'host' | 'app'

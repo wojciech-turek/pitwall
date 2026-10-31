@@ -319,6 +319,31 @@ describe('the handshake', () => {
     expect(await b.listSessions()).toEqual(['pw-k']) // and it carries on
   })
 
+  test('a connection that says nothing is dropped after 2 s', async () => {
+    const b = app()
+    await startAgent(b, 'pw-q')
+    const silent = await rawClient(dataDir, { handshake: false })
+    const t0 = Date.now()
+    await waitFor(async () => silent.closed(), 5000, 'silent connection dropped')
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(1500)
+    expect(silent.frames).toEqual([])
+    expect(await readFile(hostLogFile(dataDir), 'utf8')).toMatch(/no handshake within 2 s/)
+    expect(await readFile(hostLogFile(dataDir), 'utf8')).toMatch(/an app connected \(handshake \d+ ms\)/)
+  })
+
+  test('at most 8 connections may be in their handshake: more are refused at once; the app gets in once they time out', async () => {
+    const b = app()
+    await startAgent(b, 'pw-q')
+    const held = await Promise.all(Array.from({ length: 8 }, () => rawClient(dataDir, { handshake: false })))
+    await new Promise((r) => setTimeout(r, 200))
+    const ninth = await rawClient(dataDir, { handshake: false })
+    await waitFor(async () => ninth.closed(), 1000, 'the ninth refused at once')
+    expect(ninth.frames).toEqual([])
+    expect(await readFile(hostLogFile(dataDir), 'utf8')).toContain('refused a connection: 8 others are still in their handshake')
+    await waitFor(async () => held.every((c) => c.closed()), 5000, 'the eight timed out')
+    expect(await app().listSessions()).toEqual(['pw-q'])
+  })
+
   test('a host started afresh writes a new key; apps follow it', async () => {
     const b = app()
     await startAgent(b, 'pw-1')

@@ -38,7 +38,16 @@ export interface HostOptions {
 const DEFAULT_IDLE_MS = 10 * 60 * 1000
 const DEFAULT_RING_BYTES = 1024 * 1024
 const DEFAULT_HIGH_WATER = 4 * 1024 * 1024
-const HELLO_TIMEOUT_MS = 10_000
+/**
+ * A connection must finish the handshake this soon, and at most MAX_UNPROVEN may be in it at once. On Windows the
+ * pipe is not a boundary (its default ACL lets other local users open it): they can't prove they know the key, so
+ * they get nothing, and these limits keep them from holding the host's connections either. The app's own handshake
+ * takes milliseconds (it writes hello on connect, then answers with the key it reads).
+ */
+const HELLO_TIMEOUT_MS = 2_000
+const MAX_UNPROVEN = 8
+/** At most one "refused a connection" line per this long in host.log. */
+const REFUSED_LOG_MS = 10_000
 /** How long a program sees the one-row-smaller size when nudged to redraw (see nudge). */
 const NUDGE_MS = 60
 const KILL_GRACE_MS = 3000
@@ -85,6 +94,8 @@ interface Conn {
   nonce: string
   viewers: Map<number, Viewer>
   closed: boolean
+  /** When it connected (the handshake's time goes in host.log). */
+  openedAt: number
 }
 
 class RequestError extends Error {
@@ -106,6 +117,7 @@ export class Host {
   private resolveStopped!: (reason: string) => void
   private terms = new Map<string, Term>()
   private conns = new Set<Conn>()
+  private refusedLoggedAt = 0
   private dying = new Set<Program>()
   private server: net.Server | null = null
   private idleTimer: NodeJS.Timeout | null = null
@@ -248,9 +260,21 @@ export class Host {
       socket.destroy()
       return
     }
-    const conn: Conn = { socket, decoder: new FrameDecoder(), state: 'new', nonce: '', viewers: new Map(), closed: false }
+    let unproven = 0
+    for (const c of this.conns) if (c.state !== 'ready') unproven++
+    if (unproven >= MAX_UNPROVEN) {
+      socket.destroy()
+      if (Date.now() - this.refusedLoggedAt > REFUSED_LOG_MS) {
+        this.refusedLoggedAt = Date.now()
+        this.log(`refused a connection: ${MAX_UNPROVEN} others are still in their handshake`)
+      }
+      return
+    }
+    const conn: Conn = {
+      socket, decoder: new FrameDecoder(), state: 'new', nonce: '', viewers: new Map(), closed: false, openedAt: Date.now()
+    }
     this.conns.add(conn)
-    const helloTimer = setTimeout(() => { if (conn.state !== 'ready') this.drop(conn, 'no handshake') }, HELLO_TIMEOUT_MS)
+    const helloTimer = setTimeout(() => { if (conn.state !== 'ready') this.drop(conn, `no handshake within ${HELLO_TIMEOUT_MS / 1000} s`) }, HELLO_TIMEOUT_MS)
     socket.on('data', (chunk: Buffer) => {
       let frames: Frame[]
       try {
@@ -360,6 +384,7 @@ export class Host {
     if (conn.state === 'proving' && msg.t === 'auth' && this.key && checkProof(this.key, 'app', conn.nonce, msg.proof)) {
       conn.state = 'ready'
       this.send(conn, { t: 'ready' })
+      this.log(`an app connected (handshake ${Date.now() - conn.openedAt} ms)`)
       return
     }
     this.drop(conn, msg.t === 'auth' ? "the app's proof doesn't match the host key" : `${msg.t} before the handshake`)

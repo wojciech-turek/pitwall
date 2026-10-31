@@ -16,7 +16,10 @@ function currentUser(): string {
 /**
  * Where the host listens. One host per data dir, so dev and packaged builds (separate data dirs) never share one.
  * Unix: `host.sock` in the data dir (a short path in the per-user temp dir if that would be too long for a socket).
- * Windows: a named pipe per user and data dir (pipes have no folder; the default ACL admits only this user).
+ * Windows: a named pipe per user and data dir. The pipe is not a boundary: created without a security descriptor (as
+ * Node does), its default DACL lets other local users open it for reading, and any user could take the name while no
+ * host runs. What keeps them out is the handshake (auth.ts): both sides prove they know host.key, which only this user
+ * can read (the AppData ACL), and nothing is served or shown before that.
  */
 export function hostSocketPath(
   dataDir: string,
