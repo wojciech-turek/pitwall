@@ -487,13 +487,13 @@ export class HostBackend implements SessionBackend {
       : spawn(launch.file, launch.args, { detached: true, stdio: 'ignore', env: launch.env, cwd: this.o.dataDir, windowsHide: true })
     // What the starter says on stderr (PowerShell on Windows): into host.log and the error, if it fails.
     let stderr = ''
-    child.stderr?.setEncoding('utf8').on('data', (d: string) => { if (stderr.length < 4096) stderr += d })
+    child.stderr?.setEncoding('utf8').on('data', (d: string) => { if (stderr.length < 16_384) stderr += d })
     child.on('error', (e) => { state.failure = e.message })
     // Exit code 0 is a host that found another one already serving: keep connecting, to that one. ('close' comes
     // after the exit and the last of stderr.)
     child.on('close', (code, signal) => {
       if (code === 0) return
-      const said = stderr.trim()
+      const said = powershellText(stderr).trim()
       if (said) {
         try { appendFileSync(hostLogFile(this.o.dataDir), `${new Date().toISOString()} [app] starting the host failed:\n${said}\n`) } catch { /* no log */ }
       }
@@ -539,8 +539,7 @@ function startViaShell(launch: HostLaunch, cwd: string): ChildProcess {
     'if ($p.HasExited) { exit $p.ExitCode }',
     'exit 0'
   ].join('\n')
-  // -OutputFormat Text: with -EncodedCommand and stderr redirected, Windows PowerShell would write its errors as CLIXML.
-  const args = ['-NoProfile', '-NonInteractive', '-OutputFormat', 'Text', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')]
+  const args = ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')]
   return spawn(windowsPowerShell(launch.env), args, {
     stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true,
     env: {
@@ -552,6 +551,20 @@ function startViaShell(launch: HostLaunch, cwd: string): ChildProcess {
       PITWALL_HOST_PSMP_SET: psModulePath === undefined ? '0' : '1'
     }
   })
+}
+
+/**
+ * What Windows PowerShell said on a piped stderr, as text. Under -EncodedCommand it writes CLIXML there (with or without
+ * -OutputFormat Text): its error lines are the <S S="Error"> strings, XML-escaped, with _xHHHH_ for control characters.
+ */
+export function powershellText(stderr: string): string {
+  if (!stderr.startsWith('#< CLIXML')) return stderr
+  const entities: Record<string, string> = { lt: '<', gt: '>', quot: '"', apos: "'", amp: '&' }
+  return [...stderr.matchAll(/<S S="Error">([\s\S]*?)<\/S>/g)]
+    .map((m) => m[1]
+      .replace(/&(lt|gt|quot|apos|amp);/g, (_, e: string) => entities[e])
+      .replace(/_x([0-9A-Fa-f]{4})_/g, (_, h: string) => String.fromCharCode(parseInt(h, 16))))
+    .join('')
 }
 
 function missing(name: string): never {

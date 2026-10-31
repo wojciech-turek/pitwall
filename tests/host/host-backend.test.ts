@@ -7,7 +7,7 @@ import { checkProof, newNonce, proofFor, writeHostKey } from '../../src/host/aut
 import { hostKeyFile, hostLogFile, hostSocketPath } from '../../src/host/paths'
 import { DATA_CHUNK, encodeData, encodeJson, FrameDecoder, PROTOCOL } from '../../src/host/protocol'
 import { sessionBackendKind } from '../../src/main/backend'
-import { HostBackend } from '../../src/main/host-backend'
+import { HostBackend, powershellText } from '../../src/main/host-backend'
 import { makeHostDirs } from '../helpers/host'
 import { WINDOWS } from '../helpers/processes'
 import { waitFor } from '../helpers/wait'
@@ -261,4 +261,25 @@ test.skipIf(WINDOWS)('PITWALL_SESSION_BACKEND=host picks the host; anything else
   expect(sessionBackendKind({})).toBe('tmux')
   expect(sessionBackendKind({ PITWALL_SESSION_BACKEND: 'tmux' })).toBe('tmux')
   expect(sessionBackendKind({ PITWALL_SESSION_BACKEND: 'Host' })).toBe('tmux')
+})
+
+test("PowerShell's CLIXML stderr reads as its error lines (as Windows PowerShell 5.1 wrote it for a failed Start-Process)", () => {
+  // Captured on Windows 11 from `powershell -NoProfile -NonInteractive [-OutputFormat Text] -EncodedCommand …`, stderr piped.
+  const clixml = '#< CLIXML\r\n<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04"><Obj S="progress" RefId="0">' +
+    '<TN RefId="0"><T>System.Management.Automation.PSCustomObject</T><T>System.Object</T></TN><MS><I64 N="SourceId">1</I64>' +
+    '<PR N="Record"><AV>Preparing modules for first use.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR>' +
+    '<SD> </SD></PR></MS></Obj><S S="Error">Start-Process : This command cannot be run due to the error: The system cannot ' +
+    'find the file specified._x000D__x000A_</S><S S="Error">At line:1 char:6_x000D__x000A_</S><S S="Error">+ $p = ' +
+    "Start-Process -FilePath 'C:\\nope\\missing.exe' -PassThru -WindowS ..._x000D__x000A_</S><S S=\"Error\">    + " +
+    'FullyQualifiedErrorId : InvalidOperationException,Microsoft.PowerShell.Commands.StartProcessCommand_x000D__x000A_</S>' +
+    '<S S="Error">&lt;a &amp; b&gt; _x005F_x_x000D__x000A_</S></Objs>'
+  expect(powershellText(clixml).split('\r\n')).toEqual([
+    'Start-Process : This command cannot be run due to the error: The system cannot find the file specified.',
+    'At line:1 char:6',
+    "+ $p = Start-Process -FilePath 'C:\\nope\\missing.exe' -PassThru -WindowS ...",
+    '    + FullyQualifiedErrorId : InvalidOperationException,Microsoft.PowerShell.Commands.StartProcessCommand',
+    '<a & b> _x',
+    ''
+  ])
+  expect(powershellText('Start-Process : plain text\r\n')).toBe('Start-Process : plain text\r\n')
 })
