@@ -85,7 +85,8 @@ describe('messages', () => {
     for (const odd of ['\x1b]52;c;ZXZpbA==\x07', '1.0 evil', '', 'x'.repeat(41), 42, undefined]) expect(cleanVersion(odd)).toBe('unknown')
     expect(parseClientMessage({ t: 'hello', protocol: 2, appVersion: '\x1b[2J', nonce: 'short' })).toEqual({ t: 'hello', protocol: 2, appVersion: 'unknown' })
     expect(parseHostMessage({ t: 'hello', protocol: 2, appVersion: '\x1b[2J', pid: 1 })).toMatchObject({ appVersion: 'unknown' })
-    expect(() => parseHostMessage({ t: `x${'\x1b'.repeat(100)}` })).toThrow(/^unknown message "x(\\u001b){39}"$/)
+    // A host's message may come before its proof: its words are never repeated.
+    expect(() => parseHostMessage({ t: `Visit evil.example${'\x1b'.repeat(100)}` })).toThrow(/^unknown message type$/)
   })
 
   test('valid client messages pass, with defaults', () => {

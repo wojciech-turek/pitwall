@@ -305,6 +305,6 @@ export function parseHostMessage(v: unknown): HostMessage {
       return { t: 'res', id: id(v), ok: false, error: str(v.error, 'error'), code: str(v.code, 'code') as ErrorCode }
     case 'exit': return { t: 'exit', ch: ch(v), code: int(v.code, -MAX_CHANNEL, MAX_CHANNEL, 'code') }
     case 'bye': return { t: 'bye', reason: str(v.reason, 'reason') }
-    default: return bad(`unknown message ${quote(v.t)}`)
+    default: return bad('unknown message type') // (never the peer's words: this may come from an unproven host)
   }
 }

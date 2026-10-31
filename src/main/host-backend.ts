@@ -113,7 +113,12 @@ class Connection {
       const onClose = (): void => {
         fail(hostPid === null ? noHost() : new HostError(`The Pitwall host (pid ${hostPid}) refused this app. See ${hostLogFile(o.dataDir)}.`))
       }
-      const unreadable = (e: unknown): void => fail(new HostError(`The Pitwall host sent something unreadable: ${(e as Error).message}`))
+      // Before the proof, what the peer sent is never quoted (a type name, a JSON snippet, a size): fixed words only.
+      const unreadable = (e: unknown): void => fail(hostPid === null
+        ? new HostError(
+          `Something answering as Pitwall's background host at ${o.path} sent something Pitwall doesn't understand, ` +
+          `so Pitwall sent it nothing and won't use it. Quit other Pitwall versions, or restart your ${machine}.`)
+        : new HostError(`The Pitwall host sent something unreadable: ${(e as Error).message}`))
       const onData = (chunk: Buffer): void => {
         let frames: Frame[]
         try {

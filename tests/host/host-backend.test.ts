@@ -60,6 +60,8 @@ async function fakeHost(
     helloFields?: Record<string, unknown>
     /** Says goodbye instead of greeting, or instead of `ready`. */
     byeOn?: 'hello' | 'auth'
+    /** Answers the app's hello with these bytes instead of a hello. */
+    reply?: Buffer
   } = {}
 ): Promise<Fake> {
   let conns = 0
@@ -78,6 +80,10 @@ async function fakeHost(
         const msg = f.msg as Msg
         got.push(msg)
         if (msg.t === 'hello') {
+          if (o.reply) {
+            s.write(o.reply)
+            continue
+          }
           if (o.hello === false) continue
           if (o.byeOn === 'hello') {
             s.write(encodeJson({ t: 'bye', reason: 'stopping' }))
@@ -166,8 +172,27 @@ const IMPOSTORS: Impostor[] = [
   ['an error, unproven', { proof: 'none' as const, helloFields: { ...HOSTILE, error: 'kill 31337 \x1b[31mNOW-PLEASE' } }, () => {}, "couldn't prove it is one"],
   ['another protocol, unproven, with escapes in its version', { proof: 'none' as const, helloFields: { ...HOSTILE, protocol: PROTOCOL + 1, error: 'OUTDATED-HOST' } }, () => {},
     `doesn't speak this version of Pitwall (or isn't Pitwall). Quit other Pitwall versions, or restart your ${WINDOWS ? 'PC' : 'Mac'}.`],
-  ['another protocol, with a wrong proof', { proof: 'wrong' as const, helloFields: { ...HOSTILE, protocol: PROTOCOL + 1 } }, () => {}, "doesn't speak this version of Pitwall"]
+  ['another protocol, with a wrong proof', { proof: 'wrong' as const, helloFields: { ...HOSTILE, protocol: PROTOCOL + 1 } }, () => {}, "doesn't speak this version of Pitwall"],
+  // Anything it sends that isn't a hello: never quoted back (a message type, a JSON snippet, a field, a size).
+  ['an unknown message', { reply: encodeJson({ t: 'Visit evil.example' }) }, () => {}, "sent something Pitwall doesn't understand"],
+  ['a frame that is not JSON', { reply: rawFrame(1, 'Visit evil.example {') }, () => {}, "sent something Pitwall doesn't understand"],
+  ['a hello with a bad field', { reply: encodeJson({ t: 'hello', protocol: PROTOCOL, appVersion: '1', pid: 'Visit evil.example' }) }, () => {},
+    "sent something Pitwall doesn't understand"],
+  ['an answer before hello', { reply: encodeJson({ t: 'res', id: 1, ok: false, code: 'evil', error: 'Visit evil.example' }) }, () => {},
+    "sent something Pitwall doesn't understand"],
+  ['output before hello', { reply: encodeData(1, Buffer.from('Visit evil.example')) }, () => {}, "sent something Pitwall doesn't understand"],
+  ['an oversize frame', { reply: rawFrame(1, 'x', 0x7fffffff) }, () => {}, "sent something Pitwall doesn't understand"],
+  ['an unknown frame type', { reply: rawFrame(9, 'Visit evil.example') }, () => {}, "sent something Pitwall doesn't understand"]
 ]
+
+/** A frame as written on the wire: length (of type + body, or `length`), type, body. */
+function rawFrame(type: number, body: string, length?: number): Buffer {
+  const b = Buffer.from(body)
+  const h = Buffer.alloc(5)
+  h.writeUInt32BE(length ?? b.length + 1)
+  h[4] = type
+  return Buffer.concat([h, b])
+}
 
 // (A key's POSIX mode means nothing on Windows: the AppData ACL protects it there, and its mode isn't checked.)
 test.each(IMPOSTORS.filter(([what]) => !(WINDOWS && what === 'a host key others can read')))('an impostor (%s) is refused without repeating a word it said, and is sent nothing but hello', async (_what, o, arrange, why) => {
