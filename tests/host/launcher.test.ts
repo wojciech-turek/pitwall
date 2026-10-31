@@ -510,6 +510,18 @@ describe('the PowerShell scripts are tried before each start of Claude (exec-for
     }
   })
 
+  test("a slow script check is noted in the host's log (it held up Claude's start); a quick one isn't", async () => {
+    writeHooks()
+    for (const [step, expected] of [[6000, ['PowerShell scripts checked in 6.0 s before Claude started (slow)']], [1000, []]] as const) {
+      const logged: string[] = []
+      let t = 0
+      launcher({ log: (m) => { logged.push(m) }, now: () => (t += step), runProbe: probe() }).start()
+      await until(() => spawned.length > 0 && spawned.at(-1)?.file !== undefined, 'claude')
+      expect(logged).toEqual(expected)
+      spawned.length = 0
+    }
+  })
+
   test("why the scripts failed goes to the host's log (the scripts write it only when the check asks)", async () => {
     writeHooks()
     const logged: string[] = []

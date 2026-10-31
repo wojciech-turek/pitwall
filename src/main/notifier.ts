@@ -1,5 +1,6 @@
 import { app, nativeImage, Notification, type BrowserWindow } from 'electron'
 import { badgeBitmap, badgeDescription } from './badge'
+import { isViewing } from './viewing'
 
 export interface Notifier {
   notify(n: { sessionId: string; title: string; body: string }): void
@@ -57,7 +58,7 @@ export function electronNotifier(
     attention() {
       if (platform !== 'win32' || o.quiet) return // quiet: tests never draw the eye
       const w = window()
-      if (w && !w.isFocused()) w.flashFrame(true)
+      if (w && !isViewing(w)) w.flashFrame(true) // minimized counts as away, even when Windows still calls it focused
     },
     refresh: showBadge
   }

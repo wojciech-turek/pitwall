@@ -74,6 +74,9 @@ export interface LauncherOptions {
 const PROBE_SECONDS = 20
 
 /** Token variables gh reads before its own store; inherited ones must never stand in for a project's account. */
+/** A script check slower than this is noted in host.log (it holds up Claude's start). */
+const SLOW_PROBE_MS = 5_000
+
 const TOKENS = ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN']
 
 /** The words the shell launcher uses (resources/bin/pitwall-launch); a test keeps the two in step. */
@@ -374,6 +377,7 @@ export class Launcher {
     mkdirSync(dir, { recursive: true })
     const errors = join(dir, 'errors.txt') // where the scripts say what went wrong (only when asked, as here)
     probeEnv.PITWALL_SCRIPT_ERRORS = errors
+    const started = this.now()
     try {
       const events = join(dir, 'events.jsonl')
       const hookRun = await run([...args.slice(0, at + 2), events, 'probe'], JSON.stringify({ hook_event_name: PROBE_EVENT, session_id: 'probe' }))
@@ -387,7 +391,12 @@ export class Launcher {
         lineRun = await run([...args.slice(0, at + 1), script, dir], JSON.stringify({ session_id: 'probe' }))
         statusLine = lineRun.rc === 0 && existsSync(join(dir, 'statusline.json'))
       }
-      if (hooks && statusLine) return { hooks, statusLine }
+      if (hooks && statusLine) {
+        // A slow first check (the first PowerShell after a restart, a busy scanner) delays Claude's start: say so.
+        const took = this.now() - started
+        if (took > SLOW_PROBE_MS) this.o.log?.(`PowerShell scripts checked in ${(took / 1000).toFixed(1)} s before Claude started (slow)`)
+        return { hooks, statusLine }
+      }
       const [failed, failedScript] = hooks && lineRun ? [lineRun, script] : [hookRun, String(args[at + 1])]
       const said = [readIfAny(errors).trim(), failed.stderr?.trim() ?? ''].filter(Boolean).join('\n').slice(0, 2000)
       const why = scriptTrouble(failed, said, !existsSync(failedScript))

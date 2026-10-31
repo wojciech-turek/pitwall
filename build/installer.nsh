@@ -19,7 +19,8 @@
 ; Replaces electron-builder's running-app check, in the installer (a new install or an update over one) and in the
 ; uninstaller. Asks once (a silent run, /S, closes them without asking, so an update can go ahead); OK stops them,
 ; Cancel quits. Unless the stop then confirms that none is left: "close it manually", Retry or Cancel, as
-; electron-builder does. A check that can't tell carries on, as electron-builder does when PowerShell can't run.
+; electron-builder does. A check that can't tell carries on (electron-builder would fall back to finding processes by
+; name, which this never does: a Pitwall elsewhere must not be touched).
 !macro customCheckAppRunning
   Push $0
   Push $R0
@@ -37,7 +38,11 @@
   DetailPrint `Couldn't check whether ${PRODUCT_NAME} is running (PowerShell: $R0).`
   Goto pitwall_done
   pitwall_running:
-    MessageBox MB_OKCANCEL|MB_ICONEXCLAMATION "Pitwall or its background agents are running. Close them to continue?$\r$\n$\r$\nRunning agents stop and resume their conversations when you reopen Pitwall." /SD IDOK IDOK pitwall_stop
+    !ifdef BUILD_UNINSTALLER
+      MessageBox MB_OKCANCEL|MB_ICONEXCLAMATION "Pitwall or its background agents are running. Close them to continue?$\r$\n$\r$\nRunning agents stop." /SD IDOK IDOK pitwall_stop
+    !else
+      MessageBox MB_OKCANCEL|MB_ICONEXCLAMATION "Pitwall or its background agents are running. Close them to continue?$\r$\n$\r$\nRunning agents stop and resume their conversations when you reopen Pitwall." /SD IDOK IDOK pitwall_stop
+    !endif
     Quit
   pitwall_stop:
     DetailPrint "$(appClosing)"
@@ -46,6 +51,8 @@
     MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "$(appCannotBeClosed)" /SD IDCANCEL IDRETRY pitwall_stop
     Quit
   pitwall_done:
+  ; Not passed on to what the installer starts next (the old uninstaller, the app it opens at the end).
+  System::Call 'kernel32::SetEnvironmentVariable(t "PITWALL_INSTDIR", p 0)'
   Pop $R0
   Pop $0
 !macroend
