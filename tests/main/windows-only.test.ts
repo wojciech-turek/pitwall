@@ -49,6 +49,20 @@ describe.skipIf(process.platform !== 'win32')('on Windows', () => {
     expect(r.output.toLowerCase()).toContain(dir.toLowerCase())
   })
 
+  test("teardown: the command reaches cmd.exe byte for byte (quoted values with & | < > ^, && chains, one %-expansion, !), and its output reads in any language", async () => {
+    const env = {
+      ...(process.env as Record<string, string>),
+      V: 'a=1&b=2|c>d^e', PITWALL_SESSION_TITLE: 'Search & filter', V2: 'two', V3: '%OTHER%', OTHER: 'expanded twice'
+    }
+    const out = async (command: string) => (await runTeardown(command, { cwd: dir, env })).output
+    expect(await out('echo "%V%"')).toBe('"a=1&b=2|c>d^e"\r\n')
+    expect(await out('echo "%PITWALL_SESSION_TITLE%"')).toBe('"Search & filter"\r\n')
+    expect(await out('echo first %V2%&& echo second %V2%')).toBe('first two\r\nsecond two\r\n')
+    expect(await out('echo [%V3%]')).toBe('[%OTHER%]\r\n')
+    expect(await out('echo hi! there!')).toBe('hi! there!\r\n')
+    expect(await out('echo zażółć gęślą jaźń')).toBe('zażółć gęślą jaźń\r\n')
+  })
+
   test('a teardown that runs too long is stopped with everything it started', async () => {
     const pidFile = join(dir, 'child.pid')
     await writeFile(join(dir, 'spin.mjs'),
