@@ -195,7 +195,7 @@ describe('lifecycle', () => {
     expect(await hostPids(dataDir)).toEqual([])
   })
 
-  // (Windows: a named pipe, not a file; its default ACL admits only this user.)
+  // (Windows: a named pipe, not a file; it has no file mode. Its default DACL lets other users open it, so HMAC over the key is the boundary.)
   test.skipIf(WINDOWS)('pidfile, log and an owner-only socket in the data dir', async () => {
     const b = app()
     await startAgent(b, 'pw-f')
@@ -331,17 +331,26 @@ describe('the handshake', () => {
     expect(await readFile(hostLogFile(dataDir), 'utf8')).toMatch(/an app connected \(handshake \d+ ms\)/)
   })
 
-  test('at most 8 connections may be in their handshake: more are refused at once; the app gets in once they time out', async () => {
+  test('at 8 unproven connections the oldest silent one is pushed out; the real app gets in at once', async () => {
     const b = app()
     await startAgent(b, 'pw-q')
     const held = await Promise.all(Array.from({ length: 8 }, () => rawClient(dataDir, { handshake: false })))
     await new Promise((r) => setTimeout(r, 200))
-    const ninth = await rawClient(dataDir, { handshake: false })
-    await waitFor(async () => ninth.closed(), 1000, 'the ninth refused at once')
-    expect(ninth.frames).toEqual([])
-    expect(await readFile(hostLogFile(dataDir), 'utf8')).toContain('refused a connection: 8 others are still in their handshake')
-    await waitFor(async () => held.every((c) => c.closed()), 5000, 'the eight timed out')
+    const t0 = Date.now()
     expect(await app().listSessions()).toEqual(['pw-q'])
+    expect(Date.now() - t0).toBeLessThan(1500) // no waiting for the 2 s timeout
+    await waitFor(async () => held[0].closed(), 1000, 'the oldest silent connection closed')
+    expect(held[7].closed()).toBe(false)
+    expect(await readFile(hostLogFile(dataDir), 'utf8')).toContain('too many unproven connections')
+  })
+
+  test('drop lines for silent connections are rate-limited, with a count of those suppressed', async () => {
+    const b = app()
+    await startAgent(b, 'pw-q')
+    const many = await Promise.all(Array.from({ length: 6 }, () => rawClient(dataDir, { handshake: false })))
+    await waitFor(async () => many.every((c) => c.closed()), 5000, 'all timed out')
+    const log = await readFile(hostLogFile(dataDir), 'utf8')
+    expect(log.match(/no handshake within 2 s/g)).toHaveLength(1)
   })
 
   test('a host started afresh writes a new key; apps follow it', async () => {

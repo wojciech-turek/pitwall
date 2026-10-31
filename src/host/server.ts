@@ -42,8 +42,9 @@ const DEFAULT_HIGH_WATER = 4 * 1024 * 1024
 /**
  * A connection must finish the handshake this soon, and at most MAX_UNPROVEN may be in it at once. On Windows the
  * pipe is not a boundary (its default ACL lets other local users open it): they can't prove they know the key, so
- * they get nothing, and these limits keep them from holding the host's connections either. The app's own handshake
- * takes milliseconds (it writes hello on connect, then answers with the key it reads).
+ * they get nothing. These limits bound the host's resources, not who gets a slot: at the cap the oldest connection
+ * that has sent nothing is closed to make room, so an unproven connection can be pushed out by newer ones (the app
+ * sends hello within milliseconds of connecting, so it is never the silent one).
  */
 const HELLO_TIMEOUT_MS = 2_000
 const MAX_UNPROVEN = 8
@@ -119,6 +120,7 @@ export class Host {
   private terms = new Map<string, Term>()
   private conns = new Set<Conn>()
   private refusedLoggedAt = 0
+  private suppressedDrops = 0
   private dying = new Set<Program>()
   private server: net.Server | null = null
   private idleTimer: NodeJS.Timeout | null = null
@@ -262,14 +264,20 @@ export class Host {
       return
     }
     let unproven = 0
-    for (const c of this.conns) if (c.state !== 'ready') unproven++
+    let oldestNew: Conn | undefined
+    for (const c of this.conns) {
+      if (c.state === 'ready') continue
+      unproven++
+      if (c.state === 'new' && !oldestNew) oldestNew = c // the set keeps insertion order: the first is the oldest
+    }
     if (unproven >= MAX_UNPROVEN) {
-      socket.destroy()
-      if (Date.now() - this.refusedLoggedAt > REFUSED_LOG_MS) {
-        this.refusedLoggedAt = Date.now()
-        this.log(`refused a connection: ${MAX_UNPROVEN} others are still in their handshake`)
+      if (!oldestNew) {
+        // All of them are mid-proof: nothing silent to push out.
+        socket.destroy()
+        this.logDrop(`refused a connection: ${MAX_UNPROVEN} others are in the middle of their handshake`)
+        return
       }
-      return
+      this.drop(oldestNew, 'too many unproven connections; this one had sent nothing')
     }
     const conn: Conn = {
       socket, decoder: new FrameDecoder(), state: 'new', nonce: '', viewers: new Map(), closed: false, openedAt: Date.now()
@@ -309,8 +317,20 @@ export class Host {
     conn.viewers.clear()
   }
 
+  /** Drops of connections that never said anything are the noise a hostile local user can make: one line per REFUSED_LOG_MS. */
+  private logDrop(line: string): void {
+    const now = Date.now()
+    if (now - this.refusedLoggedAt < REFUSED_LOG_MS) { this.suppressedDrops++; return }
+    this.refusedLoggedAt = now
+    const more = this.suppressedDrops ? ` (${this.suppressedDrops} similar lines suppressed)` : ''
+    this.suppressedDrops = 0
+    this.log(line + more)
+  }
+
   private drop(conn: Conn, why: string): void {
-    this.log(`dropping a connection: ${why}`)
+    const quiet = why.startsWith('no handshake') || why.startsWith('too many unproven')
+    if (quiet) this.logDrop(`dropping a connection: ${why}`)
+    else this.log(`dropping a connection: ${why}`)
     conn.socket.destroy()
     this.closeConn(conn)
   }
