@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { exec } from '../../src/main/exec'
 import { GitClient } from '../../src/main/git'
 import { sessionDir } from '../../src/main/paths'
-import { archiveSession, checkArchive, type ArchiveDeps } from '../../src/main/sessions/archive'
+import { archiveSession, checkArchive, removeEmptyWorktreesFolder, type ArchiveDeps } from '../../src/main/sessions/archive'
 import { SessionManager } from '../../src/main/sessions/manager'
 import { KeyedMutex } from '../../src/main/sessions/mutex'
 import { Store } from '../../src/main/store'
@@ -172,6 +172,54 @@ describe('archive', () => {
     await rm(s.worktreePath!, { recursive: true, force: true })
     expect(await checkArchive(s.id, deps)).toMatchObject({ willRemoveWorktree: false, willDeleteBranch: true, unpushedCommits: 0 })
     expect(await archiveSession(s.id, { confirmedDataLoss: false }, deps)).toEqual({ ok: true })
+  })
+
+  describe("the folder's own folder in the worktrees folder (worktrees/<folder>/)", () => {
+    test('archiving its last session removes it once empty; while another session is left, it stays', async () => {
+      const { sp, deps } = await addRepo()
+      const a = await startOne(sp, { requestId: 'r1', title: 'First one' })
+      const b = await startOne(sp, { requestId: 'r2', title: 'Second one' })
+      const folder = dirname(a.worktreePath!)
+      expect(dirname(b.worktreePath!)).toBe(folder)
+      expect(dirname(folder)).toBe(t.paths.worktreesRoot)
+      expect(await archiveSession(a.id, { confirmedDataLoss: true }, deps)).toEqual({ ok: true })
+      expect(await has(folder)).toBe(true)
+      expect(await archiveSession(b.id, { confirmedDataLoss: true }, deps)).toEqual({ ok: true })
+      expect(await has(folder)).toBe(false)
+      expect(await has(t.paths.worktreesRoot)).toBe(true)
+    })
+
+    test('anything else in it keeps it, untouched', async () => {
+      const { sp, deps } = await addRepo()
+      const s = await startOne(sp)
+      const folder = dirname(s.worktreePath!)
+      await writeFile(join(folder, 'notes.txt'), 'mine')
+      expect(await archiveSession(s.id, { confirmedDataLoss: true }, deps)).toEqual({ ok: true })
+      expect(await readdir(folder)).toEqual(['notes.txt'])
+    })
+
+    test('also when the worktree was deleted by hand', async () => {
+      const { sp, deps } = await addRepo()
+      const s = await startOne(sp)
+      await rm(s.worktreePath!, { recursive: true, force: true })
+      expect(await archiveSession(s.id, { confirmedDataLoss: false }, deps)).toEqual({ ok: true })
+      expect(await has(dirname(s.worktreePath!))).toBe(false)
+    })
+
+    test('only a folder directly in the worktrees folder, never the worktrees folder itself or one elsewhere', async () => {
+      const root = join(t.tmp, 'wt-root')
+      const elsewhere = join(t.tmp, 'elsewhere', 'proj')
+      await mkdir(join(root, 'proj'), { recursive: true })
+      await mkdir(elsewhere, { recursive: true })
+      await removeEmptyWorktreesFolder(join(elsewhere, 'session'), root, process.platform)
+      expect(await has(elsewhere)).toBe(true)
+      await removeEmptyWorktreesFolder(join(root, 'session'), root, process.platform)
+      expect(await has(root)).toBe(true)
+      await removeEmptyWorktreesFolder(join(root, 'proj', 'session'), root, process.platform)
+      expect(await has(join(root, 'proj'))).toBe(false)
+      // Gone already, or never there: nothing happens, nothing throws.
+      await removeEmptyWorktreesFolder(join(root, 'proj', 'session'), root, process.platform)
+    })
   })
 
   test('existing-branch session keeps its branch', async () => {

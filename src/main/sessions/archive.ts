@@ -1,5 +1,5 @@
-import { access, mkdir, realpath, rm } from 'node:fs/promises'
-import { join } from 'node:path'
+import { access, mkdir, realpath, rm, rmdir } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import type { ArchiveCheck, ArchiveResult, Session, SubProject } from '@shared/types'
 import { deleteEnv, mergeEnv } from '../../host/win-command'
 import { samePath } from '../git'
@@ -63,6 +63,20 @@ async function removeWorktree(repoRoot: string, path: string, deps: ArchiveDeps)
     if (i < 2) await sleep((deps.removeRetryMs ?? 400) * (i + 1))
   }
   return { ok: false, error }
+}
+
+/**
+ * A worktree lives in worktrees/<folder>/<session>. Once the last one there is gone, worktrees/<folder>/ is removed,
+ * but only when it is empty (rmdir, which never deletes anything with content) and only when it is directly inside
+ * Pitwall's worktrees folder (a session resumed elsewhere, or the worktrees folder itself, is never touched). Never
+ * throws: not empty, in use or already gone all leave it as it is.
+ */
+export async function removeEmptyWorktreesFolder(
+  worktreePath: string, worktreesRoot: string, platform: NodeJS.Platform
+): Promise<void> {
+  const folder = dirname(worktreePath)
+  if (!samePath(dirname(folder), worktreesRoot, platform)) return
+  await rmdir(folder).catch(() => undefined)
 }
 
 const EMPTY: ArchiveCheck = {
@@ -246,6 +260,7 @@ export async function archiveSession(
       if (x) x.archivedAt = Date.now()
       if (x && branchDeleted) x.branchDeleted = true
     })
+    if (s.worktreePath) await removeEmptyWorktreesFolder(s.worktreePath, deps.paths.worktreesRoot, platform)
     return leftFolder ? { ok: true, leftFolder } : { ok: true }
   } catch (e) {
     if (terminalsClosed) reattachable()
