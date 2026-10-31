@@ -43,14 +43,22 @@ try {
     $target = [System.IO.Path]::Combine($dir, 'statusline.json')
     $tmp = [System.IO.Path]::Combine($dir, ".statusline.$PID.tmp")
     try {
+      # A rename over the old file (MoveFileEx, as mv -f): readers see the old file or the new one, never neither, and
+      # nothing else is left beside it. Not [IO.File]::Replace: that moves the old file aside first, and when another run
+      # replaces it at that moment, the old one is left behind as statusline.json~RF<hex>.TMP.
+      Add-Type -AssemblyName Microsoft.VisualBasic
       [System.IO.File]::WriteAllText($tmp, $text + "`n", $utf8)
-      if ([System.IO.File]::Exists($target)) {
-        [System.IO.File]::Replace($tmp, $target, [NullString]::Value)
-      } else {
-        [System.IO.File]::Move($tmp, $target)
+      # Windows refuses while another process has the file open at that instant (a reader, a scanner, another run):
+      # tried again briefly, else this update is dropped (Claude Code sends the next one soon).
+      for ($attempt = 0; $attempt -lt 4; $attempt++) {
+        if ($attempt -gt 0) { Start-Sleep -Milliseconds (25 * $attempt) }
+        try { [Microsoft.VisualBasic.FileIO.FileSystem]::MoveFile($tmp, $target, $true); break } catch { }
       }
     } catch {
-      try { [System.IO.File]::Delete($tmp) } catch { }
+      # Best effort, like the usage meter it feeds: the user's own line below still runs.
+    } finally {
+      # This run's temp file never stays, whatever happened above.
+      try { if ([System.IO.File]::Exists($tmp)) { [System.IO.File]::Delete($tmp) } } catch { }
     }
   }
 
