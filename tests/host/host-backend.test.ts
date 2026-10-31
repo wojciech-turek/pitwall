@@ -283,3 +283,10 @@ test("PowerShell's CLIXML stderr reads as its error lines (as Windows PowerShell
   ])
   expect(powershellText('Start-Process : plain text\r\n')).toBe('Start-Process : plain text\r\n')
 })
+
+test('a CLIXML blob with no complete error record is kept as it came, so host.log is never empty', () => {
+  const cut = '#< CLIXML\r\n<Objs Version="1.1.0.1"><S S="Error">Start-Process : cut off_x000D__x000A_'
+  expect(powershellText(cut)).toBe(cut)
+  const noErrors = '#< CLIXML\r\n<Objs Version="1.1.0.1"><Obj S="progress" RefId="0"></Obj></Objs>'
+  expect(powershellText(noErrors)).toBe(noErrors)
+})

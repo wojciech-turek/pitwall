@@ -560,11 +560,12 @@ function startViaShell(launch: HostLaunch, cwd: string): ChildProcess {
 export function powershellText(stderr: string): string {
   if (!stderr.startsWith('#< CLIXML')) return stderr
   const entities: Record<string, string> = { lt: '<', gt: '>', quot: '"', apos: "'", amp: '&' }
-  return [...stderr.matchAll(/<S S="Error">([\s\S]*?)<\/S>/g)]
+  const text = [...stderr.matchAll(/<S S="Error">([\s\S]*?)<\/S>/g)]
     .map((m) => m[1]
       .replace(/&(lt|gt|quot|apos|amp);/g, (_, e: string) => entities[e])
       .replace(/_x([0-9A-Fa-f]{4})_/g, (_, h: string) => String.fromCharCode(parseInt(h, 16))))
     .join('')
+  return text || stderr // no complete error record (cut at the cap, another shape): the raw text beats an empty log
 }
 
 function missing(name: string): never {
