@@ -364,7 +364,6 @@ describe('reattaching', () => {
     process.stdout.on('resize', () => console.log('size ' + process.stdout.columns + 'x' + process.stdout.rows))
     setInterval(() => {}, 1e5)
   `
-  const count = (text: string, s: string): number => text.split(s).length - 1
 
   test('an attach at the same size nudges the program to redraw; one that resizes it does not need to', async () => {
     const b = app()
@@ -377,10 +376,9 @@ describe('reattaching', () => {
     first.a.close()
 
     const again = await attach(b, 'pw-s') // same size: nothing would make it redraw
-    await waitFor(async () => count(again.out(), 'size 100x30') >= 2, 8000, 'redrawn at the same size') // replay + nudge
-    expect(again.out()).toContain('size 100x29')
-    await new Promise((r) => setTimeout(r, 300))
-    expect((await b.capture('pw-s')).trimEnd().endsWith('size 100x30')).toBe(true) // back at its real size
+    // The program's own line (on Windows, ConPTY's repaint at each resize repeats the screen's lines first).
+    await waitFor(async () => again.out().includes('size 100x29'), 8000, 'nudged one row smaller')
+    await waitFor(async () => (await b.capture('pw-s')).trimEnd().endsWith('size 100x30'), 8000, 'back at its real size')
   })
 })
 
