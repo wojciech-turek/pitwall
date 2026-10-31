@@ -33,6 +33,13 @@ dmg:
 win:
   target: nsis
   icon: build/icon.ico
+  # node-pty's sources, its macOS binaries and its test files aren't needed on Windows (debug symbols, .pdb, are
+  # never packed). Both win32 prebuilds stay: they are small without their symbols.
+  files:
+    - '!**/node_modules/node-pty/prebuilds/darwin-*{,/**}'
+    - '!**/node_modules/node-pty/{deps,src,third_party,scripts,build}{,/**}'
+    - '!**/node_modules/node-pty/binding.gyp'
+    - '!**/node_modules/node-pty/lib/**/*.{test.js,map}'
 nsis:
   artifactName: Pitwall-${version}-${arch}-setup.${ext}
   # Per user, into %LOCALAPPDATA%\Programs\pitwall (one-click installs use the package name): no administrator rights

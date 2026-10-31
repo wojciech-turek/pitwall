@@ -24,6 +24,12 @@ jobs:
           fi
           node scripts/release-notes.mjs "$VERSION" > notes.md
           test -s notes.md || { echo "CHANGELOG has no notes for $VERSION" >&2; exit 1; }
+          # The heading carries the release date, not a placeholder such as "Unreleased".
+          V_RE="$(printf '%s' "$VERSION" | sed 's/[.]/\\./g')"
+          grep -Eq "^## \[$V_RE\] - [0-9]{4}-[0-9]{2}-[0-9]{2}\s*$" CHANGELOG.md || {
+            echo "CHANGELOG's ## [$VERSION] heading needs the release date (## [$VERSION] - YYYY-MM-DD)" >&2
+            exit 1
+          }
 
   mac:
     needs: check
@@ -67,6 +73,9 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # What only Windows proves (the PowerShell hook and status line, cmd.exe, taskkill), before anything ships.
+      - name: Windows-only unit tests
+        run: pnpm exec vitest run tests/main/windows-scripts.test.ts tests/main/windows-only.test.ts
       - run: pnpm dist:win --${{ matrix.arch }}
       - name: Check the installer and the app in it
         run: node scripts/verify-windows.mjs ${{ matrix.arch }}

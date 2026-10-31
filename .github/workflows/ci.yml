@@ -85,14 +85,9 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
-      # As `pnpm test:e2e:host-launcher`, whose VAR=value prefix cmd.exe can't run. (On Windows these are the
-      # defaults anyway.)
+      # (On Windows these are the defaults anyway: the host, its launcher, the Node stubs.)
       - name: End-to-end tests (host, its launcher, Node stubs)
-        env:
-          PITWALL_SESSION_BACKEND: host
-          PITWALL_LAUNCHER: host
-          PITWALL_E2E_NODE_STUBS: '1'
-        run: pnpm test:e2e
+        run: pnpm test:e2e:host-launcher
       # The x64 installer and the app in it (release/win-unpacked), built as the release builds them.
       - name: Build the installer
         if: ${{ !cancelled() }}
