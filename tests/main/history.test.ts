@@ -1,4 +1,4 @@
-import { appendFile, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, mkdtemp, realpath, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
@@ -337,6 +337,21 @@ describe('SessionHistory', () => {
     s = session('a', { claudeSessionId: 'c-b', pastClaudeIds: ['c-a'] })
     expect(await h.search('puffin gannet')).toHaveLength(1)
     expect(h.bytesRead - before).toBeLessThan(Buffer.byteLength(next) + 100)
+  })
+
+  test("a conversation added to a folder in the same clock step as the last search is still found (Windows' ~16 ms steps)", async () => {
+    const cfg = join(tmp, '.claude')
+    await transcript(cfg, '-x', 'c-a', [user('first, puffin')])
+    const dir = join(cfg, 'projects', '-x')
+    const step = new Date()
+    await utimes(dir, step, step)
+    let s = session('a')
+    const h = new SessionHistory(() => [source(s, cfg)])
+    expect(await h.search('puffin')).toHaveLength(1)
+    await transcript(cfg, '-x', 'c-b', [user('then, gannet')])
+    await utimes(dir, step, step) // the folder's mtime didn't move: same step
+    s = session('a', { claudeSessionId: 'c-b', pastClaudeIds: ['c-a'] })
+    expect(await h.search('puffin gannet')).toHaveLength(1)
   })
 
   test('a 20 MB transcript: indexed in the background, then searched in well under a second', async () => {
