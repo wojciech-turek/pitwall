@@ -9,7 +9,7 @@ import { encodeData, encodeJson, PROTOCOL } from '../../src/host/protocol'
 import type { Attachment } from '../../src/main/backend'
 import { HostBackend } from '../../src/main/host-backend'
 import { alive, hostLaunch, hostPids, makeHostBackend, makeHostDirs, rawClient, stopHost } from '../helpers/host'
-import { residentKb, WINDOWS } from '../helpers/processes'
+import { childPids, residentKb, WINDOWS } from '../helpers/processes'
 import { waitFor } from '../helpers/wait'
 
 // A stand-in agent: says it's ready and answers each line; `flood` writes as fast as the terminal takes it until
@@ -571,5 +571,21 @@ describe('the launch the app uses', () => {
       dataDir, appVersion: 'test', launch: { file: process.execPath, args: ['-e', 'process.exit(3)'], env: {} }
     })
     await expect(b.newSession({ name: 'pw-x', cwd, argv: ['true'] })).rejects.toThrow(/exited with code 3.*host\.log/)
+  })
+
+  test('a host that dies while starting is reported with its exit code however long it took, not as a timeout', async () => {
+    // Later than the 2 s Windows' PowerShell starter used to wait for an exit code (a slow PC, a busy CI runner).
+    const b = new HostBackend({
+      dataDir, appVersion: 'test', launch: { file: process.execPath, args: ['-e', 'setTimeout(() => process.exit(3), 3000)'], env: {} }
+    })
+    await expect(b.newSession({ name: 'pw-x', cwd, argv: ['true'] })).rejects.toThrow(/exited with code 3.*host\.log/)
+  })
+
+  test.runIf(WINDOWS)('Windows: the PowerShell that started the host is stopped once the app is connected', async () => {
+    const b = app()
+    await b.newSession({ name: 'pw-p', cwd, argv: [process.execPath, '-e', 'setInterval(() => {}, 1e5)'] })
+    expect(await b.hasSession('pw-p')).toBe(true)
+    // Left alone it would wait out the whole start time (15 s) for an exit code that isn't coming.
+    await waitFor(async () => (await childPids('powershell.exe')).length === 0, 8000, 'no PowerShell starter left')
   })
 })

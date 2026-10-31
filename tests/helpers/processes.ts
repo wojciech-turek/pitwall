@@ -47,6 +47,14 @@ export function runsHost(cmd: string, script: string, dataDir: string): boolean 
   return c.includes(norm(script)) && (c.endsWith(arg) || c.includes(`${arg} --`))
 }
 
+/** Windows: the pids of this process's own children named `name` (e.g. powershell.exe), never the query's own. */
+export async function childPids(name: string): Promise<number[]> {
+  const text = await powershell(
+    `Get-CimInstance Win32_Process -Filter "ParentProcessId = ${process.pid} AND Name = '${name.replace(/'/g, "''")}'" | ` +
+    'Where-Object { $_.ProcessId -ne $PID } | ForEach-Object { $_.ProcessId }')
+  return text.split(/\r?\n/).map((l) => Number(l.trim())).filter((n) => Number.isInteger(n) && n > 0)
+}
+
 /** A process's resident memory in KB: ps's rss, or on Windows its working set. */
 export async function residentKb(pid: number): Promise<number> {
   if (WINDOWS) return Math.round(Number((await powershell(`(Get-Process -Id ${pid}).WorkingSet64`)).trim()) / 1024)

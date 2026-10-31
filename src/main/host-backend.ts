@@ -481,18 +481,20 @@ export class HostBackend implements SessionBackend {
     const launch = this.o.launch
     if (!launch) throw new HostError('No Pitwall host is running.')
     mkdirSync(this.o.dataDir, { recursive: true })
-    const state = { failure: null as string | null }
-    const child = (this.o.platform ?? process.platform) === 'win32'
-      ? startViaShell(launch, this.o.dataDir)
+    const state = { failure: null as string | null, settled: false }
+    const viaShell = (this.o.platform ?? process.platform) === 'win32'
+    const child = viaShell
+      ? startViaShell(launch, this.o.dataDir, this.startTimeoutMs / 1000)
       : spawn(launch.file, launch.args, { detached: true, stdio: 'ignore', env: launch.env, cwd: this.o.dataDir, windowsHide: true })
     // What the starter says on stderr (PowerShell on Windows): into host.log and the error, if it fails.
     let stderr = ''
     child.stderr?.setEncoding('utf8').on('data', (d: string) => { if (stderr.length < 16_384) stderr += d })
     child.on('error', (e) => { state.failure = e.message })
     // Exit code 0 is a host that found another one already serving: keep connecting, to that one. ('close' comes
-    // after the exit and the last of stderr.)
+    // after the exit and the last of stderr.) Once this start is settled, connected or given up, how the starter ends
+    // is no longer news (on Windows the app stops it then, below).
     child.on('close', (code, signal) => {
-      if (code === 0) return
+      if (code === 0 || state.settled) return
       const said = powershellText(stderr).trim()
       if (said) {
         try { appendFileSync(hostLogFile(this.o.dataDir), `${new Date().toISOString()} [app] starting the host failed:\n${said}\n`) } catch { /* no log */ }
@@ -503,31 +505,39 @@ export class HostBackend implements SessionBackend {
     child.unref()
     ;(child.stderr as { unref?: () => void } | null)?.unref?.()
     const deadline = Date.now() + this.startTimeoutMs
-    for (;;) {
-      const c = await this.connectOnce()
-      if (c) return c
-      if (state.failure) throw new HostError(`Couldn't start the Pitwall host: ${state.failure}. See ${hostLogFile(this.o.dataDir)}.`)
-      if (Date.now() > deadline) {
-        throw new HostError(`The Pitwall host didn't start within ${duration(this.startTimeoutMs)}. See ${hostLogFile(this.o.dataDir)}.`)
+    try {
+      for (;;) {
+        const c = await this.connectOnce()
+        if (c) return c
+        if (state.failure) throw new HostError(`Couldn't start the Pitwall host: ${state.failure}. See ${hostLogFile(this.o.dataDir)}.`)
+        if (Date.now() > deadline) {
+          throw new HostError(`The Pitwall host didn't start within ${duration(this.startTimeoutMs)}. See ${hostLogFile(this.o.dataDir)}.`)
+        }
+        await sleep(50)
       }
-      await sleep(50)
+    } finally {
+      state.settled = true
+      // Windows: PowerShell is only waiting to pass on the exit code of a host that dies while starting; the host
+      // doesn't depend on it. (Elsewhere the child is the host itself, and it stays.)
+      if (viaShell && child.exitCode === null && child.signalCode === null) child.kill()
     }
   }
 }
-
-/** How long PowerShell waits for a host it started on Windows, so one that fails at once still reports its exit code. */
-const SHELL_START_WAIT_S = 2
 
 /**
  * Windows: the host is started with ShellExecute (PowerShell's Start-Process), not CreateProcess. Electron leaves its
  * own stdout/stderr inheritable, and CreateProcess hands every inheritable handle to the child: a host started
  * directly would hold open whatever pipes started Pitwall (pnpm dev, a test runner, CI) for as long as it lives.
- * ShellExecute passes no handles. PowerShell exits with the host's code if it ends within SHELL_START_WAIT_S, else 0;
- * the host gets PowerShell's environment as the app gave it (the variables used here, and PowerShell's own change to
- * PSModulePath, are put back first). Cmdlets and property reads only, no method calls: those stay allowed where
- * PowerShell runs in Constrained Language Mode. PowerShell's own errors go to stderr, which the caller keeps.
+ * ShellExecute passes no handles. PowerShell then waits for the host for as long as the app waits for it to answer
+ * (`waitS`, the app stops PowerShell sooner once it is connected): it exits with the host's code if the host ends in
+ * that time, else 0. So a host that dies while starting is reported with its exit code however slow the machine, as a
+ * host spawned directly is elsewhere. (A fixed 2 s wait lost it on busy CI runners: the app waited out its start
+ * timeout and could only say the host hadn't started.) The host gets PowerShell's environment as the
+ * app gave it (the variables used here, and PowerShell's own change to PSModulePath, are put back first). Cmdlets and
+ * property reads only, no method calls: those stay allowed where PowerShell runs in Constrained Language Mode.
+ * PowerShell's own errors go to stderr, which the caller keeps.
  */
-function startViaShell(launch: HostLaunch, cwd: string): ChildProcess {
+function startViaShell(launch: HostLaunch, cwd: string, waitS: number): ChildProcess {
   const psModulePath = envValue(launch.env, 'PSModulePath')
   const script = [
     "$ErrorActionPreference = 'Stop'",
@@ -535,7 +545,7 @@ function startViaShell(launch: HostLaunch, cwd: string): ChildProcess {
     "if ($env:PITWALL_HOST_PSMP_SET -eq '1') { $env:PSModulePath = $env:PITWALL_HOST_PSMP } else { Remove-Item Env:PSModulePath -ErrorAction SilentlyContinue }",
     'Remove-Item Env:PITWALL_HOST_FILE, Env:PITWALL_HOST_ARGS, Env:PITWALL_HOST_CWD, Env:PITWALL_HOST_PSMP, Env:PITWALL_HOST_PSMP_SET -ErrorAction SilentlyContinue',
     '$p = Start-Process -FilePath $file -ArgumentList $argLine -WorkingDirectory $dir -WindowStyle Hidden -PassThru',
-    `Wait-Process -Id $p.Id -Timeout ${SHELL_START_WAIT_S} -ErrorAction SilentlyContinue`,
+    `Wait-Process -Id $p.Id -Timeout ${Math.max(1, Math.min(32767, Math.ceil(waitS)))} -ErrorAction SilentlyContinue`,
     'if ($p.HasExited) { exit $p.ExitCode }',
     'exit 0'
   ].join('\n')
