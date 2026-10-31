@@ -482,7 +482,7 @@ export class HostBackend implements SessionBackend {
     if (!launch) throw new HostError('No Pitwall host is running.')
     mkdirSync(this.o.dataDir, { recursive: true })
     const state = { failure: null as string | null }
-    const child = process.platform === 'win32'
+    const child = (this.o.platform ?? process.platform) === 'win32'
       ? startViaShell(launch, this.o.dataDir)
       : spawn(launch.file, launch.args, { detached: true, stdio: 'ignore', env: launch.env, cwd: this.o.dataDir, windowsHide: true })
     // What the starter says on stderr (PowerShell on Windows): into host.log and the error, if it fails.

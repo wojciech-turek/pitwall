@@ -2,6 +2,9 @@ import type { TermKind } from '@shared/types'
 import type { Attachment, SessionBackend } from './backend'
 import { claudeTmuxName, shellTmuxName } from './tmux'
 
+/** Characters typed into a terminal that is still attaching, kept for it (the excess is dropped). */
+export const MAX_TYPED = 1024 * 1024
+
 interface Deps {
   backend: SessionBackend
   ensureTarget: (id: string, kind: TermKind) => Promise<void>
@@ -72,7 +75,13 @@ export class PtyBridge {
   write(id: string, kind: TermKind, data: string): void {
     const t = this.terms.get(keyOf(id, kind))
     if (t?.a) t.a.write(data)
-    else if (t) t.typed = (t.typed ?? '') + data
+    else if (t) {
+      // Kept until the attachment arrives (a host can take seconds to start), up to MAX_TYPED: a paste beyond that
+      // is dropped (and logged) rather than held without bound.
+      const typed = (t.typed ?? '') + data
+      if (typed.length > MAX_TYPED) console.warn(`[pitwall] dropped ${typed.length - MAX_TYPED} characters typed into ${keyOf(id, kind)} while it was attaching`)
+      t.typed = typed.slice(0, MAX_TYPED)
+    }
     this.deps.onUserInput(id, kind, data)
   }
 

@@ -1,9 +1,9 @@
 import { rm } from 'node:fs/promises'
 import os from 'node:os'
-import { afterEach, beforeEach, describe, expect, test } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { AttachHandlers, SessionBackend } from '../../src/main/backend'
 import { exec } from '../../src/main/exec'
-import { PtyBridge } from '../../src/main/pty-bridge'
+import { MAX_TYPED, PtyBridge } from '../../src/main/pty-bridge'
 import { resolveShellEnv } from '../../src/main/shell-env'
 import { claudeTmuxName, Tmux } from '../../src/main/tmux'
 import { TmuxBackend } from '../../src/main/tmux-backend'
@@ -166,6 +166,26 @@ describe('PtyBridge with a backend that attaches asynchronously', () => {
     })
     return { b, closed, got, calls, handlers: () => waitFor(async () => h, 2000, 'attach called') }
   }
+
+  test('input typed while attaching is kept up to MAX_TYPED; the excess is dropped, with a log line', async () => {
+    let arrive!: () => void
+    const { b, calls, handlers } = slow(new Promise((r) => { arrive = r }))
+    const opening = b.open('s1', 'claude', 100, 30)
+    await handlers()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      b.write('s1', 'claude', 'x'.repeat(MAX_TYPED - 1))
+      b.write('s1', 'claude', 'yz') // one fits, one doesn't
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('dropped 1 characters'))
+    } finally {
+      warn.mockRestore()
+    }
+    arrive()
+    await opening
+    expect(calls).toHaveLength(1)
+    expect(calls[0]).toBe(`write ${'x'.repeat(MAX_TYPED - 1)}y`)
+    b.dispose()
+  })
 
   test('a resize and keys sent while attaching reach the attachment once it arrives (the last size only)', async () => {
     let arrive!: () => void
