@@ -555,7 +555,7 @@ describe('the launch the app uses', () => {
       dataDir, appVersion: 'test', launch: { file: join(tmp, 'no such host.exe'), args: ['--data', dataDir], env: process.env as Record<string, string> }
     })
     const e = await b.newSession({ name: 'pw-x', cwd, argv: ['x'] }).then(() => null, (err: Error) => err)
-    expect(e?.message).toMatch(/exited with code 1 \(.+\)\. See .*host\.log/)
+    expect(e?.message).toMatch(/exited with code 1 \(Start-Process : .+\)\. See .*host\.log/)
     expect(await readFile(hostLogFile(dataDir), 'utf8')).toMatch(/starting the host failed:[\s\S]*Start-Process/)
   })
 

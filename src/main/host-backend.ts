@@ -489,18 +489,16 @@ export class HostBackend implements SessionBackend {
     let stderr = ''
     child.stderr?.setEncoding('utf8').on('data', (d: string) => { if (stderr.length < 4096) stderr += d })
     child.on('error', (e) => { state.failure = e.message })
-    // Exit code 0 is a host that found another one already serving: keep connecting, to that one.
-    child.on('exit', (code, signal) => {
+    // Exit code 0 is a host that found another one already serving: keep connecting, to that one. ('close' comes
+    // after the exit and the last of stderr.)
+    child.on('close', (code, signal) => {
       if (code === 0) return
-      // (A moment for the last of stderr: 'exit' can come before the pipe's last data.)
-      setTimeout(() => {
-        const said = stderr.trim()
-        if (said) {
-          try { appendFileSync(hostLogFile(this.o.dataDir), `${new Date().toISOString()} [app] starting the host failed:\n${said}\n`) } catch { /* no log */ }
-        }
-        const first = said.split(/\r?\n/)[0]?.replace(/[\x00-\x1f\x7f]/g, '').slice(0, 200)
-        state.failure = (signal ? `it was killed (${signal})` : `it exited with code ${code}`) + (first ? ` (${first})` : '')
-      }, 50)
+      const said = stderr.trim()
+      if (said) {
+        try { appendFileSync(hostLogFile(this.o.dataDir), `${new Date().toISOString()} [app] starting the host failed:\n${said}\n`) } catch { /* no log */ }
+      }
+      const first = said.split(/\r?\n/)[0]?.replace(/[\x00-\x1f\x7f]/g, '').slice(0, 200)
+      state.failure = (signal ? `it was killed (${signal})` : `it exited with code ${code}`) + (first ? ` (${first})` : '')
     })
     child.unref()
     ;(child.stderr as { unref?: () => void } | null)?.unref?.()
@@ -541,7 +539,9 @@ function startViaShell(launch: HostLaunch, cwd: string): ChildProcess {
     'if ($p.HasExited) { exit $p.ExitCode }',
     'exit 0'
   ].join('\n')
-  return spawn(windowsPowerShell(launch.env), ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], {
+  // -OutputFormat Text: with -EncodedCommand and stderr redirected, Windows PowerShell would write its errors as CLIXML.
+  const args = ['-NoProfile', '-NonInteractive', '-OutputFormat', 'Text', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')]
+  return spawn(windowsPowerShell(launch.env), args, {
     stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true,
     env: {
       ...launch.env,
