@@ -18,6 +18,10 @@ All notable changes to Pitwall are listed here, newest first. Pitwall shows thes
 - Teardown commands run in `cmd.exe`.
 - The README's **Windows (beta)** section has the requirements (Claude Code, Git for Windows recommended), where things live and the known limitations.
 
+### Changed
+
+- **Archiving retries when a file is briefly in use** (a virus scan, the indexer, an editor) on every platform, and, if git has already let go of the worktree but a file in it stays in use, it finishes and tells you which folder to delete later.
+
 ## [0.2.0] - 2026-10-30
 
 ### Added

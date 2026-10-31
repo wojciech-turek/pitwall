@@ -1,8 +1,9 @@
 // Runs a command with some environment variables set, the same on every platform (cmd.exe, where pnpm runs scripts on
 // Windows, can't do `VAR=value command`):
 //   node scripts/with-env.mjs PITWALL_SESSION_BACKEND=host [MORE=value …] -- playwright test [args…]
-// `playwright` is started with Node directly (no shell, so arguments arrive exactly as given); any other command is
-// looked up on PATH.
+// `playwright` is started with Node directly (no shell, so arguments arrive exactly as given). Any other command is
+// started without a shell too: a real executable found on PATH (node, git…); on Windows that is never a .cmd/.bat
+// shim such as a package's bin (Windows only starts those through cmd.exe).
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
 
