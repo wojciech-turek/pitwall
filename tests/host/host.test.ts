@@ -555,6 +555,10 @@ describe('output bursts', () => {
   })
 })
 
+/** The whole environment, as the app passes its own to the host (an empty one is nothing the app ever sends). */
+const appEnv = (): Record<string, string> =>
+  Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => e[1] !== undefined))
+
 /** A start that must fail with the host's own exit code 3; on a mismatch the failure shows host.log, to say why. */
 async function expectStartFailure(b: HostBackend): Promise<void> {
   const e = await b.newSession({ name: 'pw-x', cwd, argv: ['true'] }).then(() => null, (err: Error) => err)
@@ -592,7 +596,7 @@ describe('the launch the app uses', () => {
 
   test('a host that fails to start is reported with where to look', async () => {
     const b = new HostBackend({
-      dataDir, appVersion: 'test', launch: { file: process.execPath, args: ['-e', 'process.exit(3)'], env: {} }
+      dataDir, appVersion: 'test', launch: { file: process.execPath, args: ['-e', 'process.exit(3)'], env: appEnv() }
     })
     await expectStartFailure(b)
   })
@@ -600,7 +604,7 @@ describe('the launch the app uses', () => {
   test('a host that dies while starting is reported with its exit code however long it took, not as a timeout', async () => {
     // Later than the 2 s Windows' PowerShell starter used to wait for an exit code (a slow PC, a busy CI runner).
     const b = new HostBackend({
-      dataDir, appVersion: 'test', launch: { file: process.execPath, args: ['-e', 'setTimeout(() => process.exit(3), 3000)'], env: {} }
+      dataDir, appVersion: 'test', launch: { file: process.execPath, args: ['-e', 'setTimeout(() => process.exit(3), 3000)'], env: appEnv() }
     })
     await expectStartFailure(b)
   })

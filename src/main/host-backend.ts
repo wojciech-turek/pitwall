@@ -512,7 +512,8 @@ export class HostBackend implements SessionBackend {
         if (state.failure) throw new HostError(`Couldn't start the Pitwall host: ${state.failure}. See ${hostLogFile(this.o.dataDir)}.`)
         if (Date.now() > deadline) {
           const starter = child.exitCode !== null ? `its starter had exited with code ${child.exitCode}` : 'its starter was still running'
-          try { appendFileSync(hostLogFile(this.o.dataDir), `${new Date().toISOString()} [app] no answer from the host within ${duration(this.startTimeoutMs)}; ${starter}\n`) } catch { /* no log */ }
+          const said = powershellText(stderr).trim().slice(0, 2000)
+          try { appendFileSync(hostLogFile(this.o.dataDir), `${new Date().toISOString()} [app] no answer from the host within ${duration(this.startTimeoutMs)}; ${starter}${said ? `; it said:\n${said}` : ''}\n`) } catch { /* no log */ }
           throw new HostError(`The Pitwall host didn't start within ${duration(this.startTimeoutMs)}. See ${hostLogFile(this.o.dataDir)}.`)
         }
         await sleep(50)
