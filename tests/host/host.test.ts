@@ -12,23 +12,34 @@ import { alive, hostLaunch, hostPids, makeHostBackend, makeHostDirs, rawClient, 
 import { childPids, residentKb, WINDOWS } from '../helpers/processes'
 import { waitFor } from '../helpers/wait'
 
+/** A flood is at least this much: many times the ring (1 MB) and the high-water mark (4 MB). */
+const FLOOD_MIN_MB = 24
+
 // A stand-in agent: says it's ready and answers each line; `flood` writes as fast as the terminal takes it until
-// `stop`, then says how much it wrote.
+// `stop` and FLOOD_MIN_MB, whichever comes later, then says how much it wrote (also in the file named by its argument,
+// if any: finding it on the screen means rendering the 1 MB of flood the host keeps, each time).
 const AGENT = `
 console.log('AGENT READY')
+const doneFile = process.argv[1]
 let flooding = false
+let stopAsked = false
 let written = 0
 const chunk = ('x'.repeat(99) + '\\n').repeat(1000)
 // (A TTY's stdout is synchronous on Unix: yield between chunks, or 'stop' is never read.)
 const pump = () => {
-  if (!flooding) return console.log('FLOOD DONE ' + Math.round(written / 1048576) + ' MB')
+  if (stopAsked && written >= ${FLOOD_MIN_MB} * 1048576) flooding = false
+  if (!flooding) {
+    const done = 'FLOOD DONE ' + Math.round(written / 1048576) + ' MB'
+    if (doneFile) require('node:fs').writeFileSync(doneFile, done)
+    return console.log(done)
+  }
   written += chunk.length
   if (process.stdout.write(chunk)) setImmediate(pump)
   else process.stdout.once('drain', pump)
 }
 require('node:readline').createInterface({ input: process.stdin }).on('line', (l) => {
-  if (l === 'flood') { flooding = true; return pump() }
-  if (l === 'stop') { flooding = false; return }
+  if (l === 'flood') { flooding = true; stopAsked = false; return pump() }
+  if (l === 'stop') { stopAsked = true; return }
   console.log('agent: ' + l)
 })
 setInterval(() => {}, 60000)
@@ -61,8 +72,8 @@ function app(o: { idleMs?: number; start?: boolean } = {}): HostBackend {
   return b
 }
 
-async function startAgent(b: HostBackend, name: string): Promise<void> {
-  await b.newSession({ name, cwd, argv: [process.execPath, '-e', AGENT] })
+async function startAgent(b: HostBackend, name: string, args: string[] = []): Promise<void> {
+  await b.newSession({ name, cwd, argv: [process.execPath, '-e', AGENT, ...args] })
   await waitFor(async () => (await b.capture(name)).includes('AGENT READY'), 8000, `${name} ready`)
 }
 
@@ -493,9 +504,12 @@ describe('versions and bad clients', () => {
 })
 
 describe('output bursts', () => {
-  test('a flood never blocks other agents, nor grows the host for an app that stopped reading; that app is resynced', { timeout: 60_000 }, async () => {
+  // The flood is a fixed amount, not a fixed time: a slower machine floods for longer, not less. (In the same few seconds
+  // ConPTY on a busy ARM CI runner carried 11 MB, a Mac's pty 270 MB.)
+  test('a flood never blocks other agents, nor grows the host for an app that stopped reading; that app is resynced', { timeout: 120_000 }, async () => {
     const b = app()
-    await startAgent(b, 'pw-flood')
+    const doneFile = join(tmp, 'flood done.txt')
+    await startAgent(b, 'pw-flood', [doneFile])
     await startAgent(b, 'pw-calm')
     const stuck = await rawClient(dataDir)
     const got = (): Buffer => Buffer.concat(stuck.frames.flatMap((f) => (f.type === 'data' ? [f.data] : [])))
@@ -510,7 +524,7 @@ describe('output bursts', () => {
     }
     await b.sendKeys('pw-flood', ['flood', 'Enter'])
     await new Promise((r) => setTimeout(r, 300))
-    // While it floods (it only stops when told): another agent answers every time, promptly.
+    // While it floods (it only stops when told, and not before FLOOD_MIN_MB): another agent answers every time, promptly.
     for (let i = 0; i < 5; i++) {
       await b.sendKeys('pw-calm', [`ping ${i}`, 'Enter'])
       await waitFor(async () => (await b.capture('pw-calm')).includes(`agent: ping ${i}`), 3000, `calm agent answers during the flood (${i})`)
@@ -521,11 +535,13 @@ describe('output bursts', () => {
       await sample()
     }
     await b.sendKeys('pw-flood', ['stop', 'Enter']) // its input is served during the flood too
-    const done = await waitFor(async () => /FLOOD DONE (\d+) MB/.exec(await b.capture('pw-flood')), 15_000, 'flood stops')
-    console.log(`flood: ${done[1]} MB, host peak RSS ${Math.round(peakKb / 1024)} MB`)
-    // A flood many times the ring (1 MB) and the high-water mark (4 MB). ConPTY carries a few times less than a Unix
-    // pty in the same time (45-80 MB on a Windows ARM VM).
-    expect(Number(done[1])).toBeGreaterThan(WINDOWS ? 20 : 50)
+    const done = await waitFor(async () => {
+      await sample()
+      return /FLOOD DONE (\d+) MB/.exec(await readFile(doneFile, 'utf8').catch(() => ''))
+    }, 90_000, 'flood stops')
+    const floodMb = Number(done[1])
+    console.log(`flood: ${floodMb} MB, host peak RSS ${Math.round(peakKb / 1024)} MB`)
+    expect(floodMb).toBeGreaterThanOrEqual(FLOOD_MIN_MB)
     expect(peakKb).toBeLessThan(200 * 1024) // the host holds ~1 MB of output per terminal, not what went through
 
     const before = got().length
@@ -533,7 +549,8 @@ describe('output bursts', () => {
     stuck.s.resume()
     await waitFor(async () => got().includes('FLOOD DONE'), 15_000, 'the stuck app catches up')
     expect(got().includes('\x1bc')).toBe(true) // resynced from the recent output, not fed everything
-    expect(before + got().length).toBeLessThan(20 * 1024 * 1024)
+    // What was queued for it (up to the high-water mark) and the recent output: well under what went through.
+    expect(before + got().length).toBeLessThan(Math.min(20, floodMb / 2) * 1024 * 1024)
     stuck.s.destroy()
   })
 })
