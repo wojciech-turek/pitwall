@@ -57,6 +57,21 @@ test('mark as unread stays while visible and clears when opened', async () => {
   await expect(row()).toHaveAttribute('data-status', 'read')
 })
 
+test('minimized with no blur (Windows can leave a minimized window focused): a finished reply is unread', async () => {
+  const emit = (event: string) => app!.evaluate(({ BrowserWindow }, ev) => { BrowserWindow.getAllWindows()[0].emit(ev) }, event)
+  await emit('focus')
+  await expect(row()).toHaveAttribute('data-status', 'read')
+  await emit('minimize')
+  await page.getByTestId('terminal-claude').click()
+  await page.keyboard.type('away')
+  await page.keyboard.press('Enter')
+  await waitFor(async () => (await paneText(e, id)).includes('echo: away'), 15_000, 'echo: away')
+  await expect(row()).toHaveAttribute('data-status', 'unread', { timeout: 15_000 })
+  await emit('restore')
+  await emit('focus')
+  await expect(row()).toHaveAttribute('data-status', 'read')
+})
+
 test('a muted project still shows what needs you', async () => {
   await expect(page.getByTestId('project-muted')).toHaveCount(0)
   await page.getByTestId('project-row').hover()

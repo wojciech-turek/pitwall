@@ -25,6 +25,7 @@ import { Tmux } from './tmux'
 import { TmuxBackend } from './tmux-backend'
 import { releasesUrl, UpdateChecker } from './updates'
 import { UsageTracker } from './usage'
+import { isViewing, viewingAfter, type ViewingEvent } from './viewing'
 import { windowChrome } from './window-chrome'
 import { APP_VERSION } from '@shared/version'
 
@@ -98,11 +99,17 @@ function createWindow(): void {
     else w.show()
     refreshBadge?.() // Windows: the waiting count is an overlay on this window's taskbar button
   })
+  // Viewed while focused and neither minimized nor hidden: on Windows a minimize can come with no blur.
+  const viewing = (e: ViewingEvent): void => manager?.setViewing(visibleIds, viewingAfter(e, w))
   w.on('focus', () => {
     if (WINDOWS) w.flashFrame(false)
-    manager?.setViewing(visibleIds, true)
+    viewing('focus')
   })
-  w.on('blur', () => manager?.setViewing(visibleIds, false))
+  w.on('blur', () => viewing('blur'))
+  w.on('minimize', () => viewing('minimize'))
+  w.on('hide', () => viewing('hide'))
+  w.on('restore', () => viewing('restore'))
+  w.on('show', () => viewing('show'))
   // Nothing may replace the app's UI (a file dropped outside a terminal used to navigate to it). The one exception is
   // reloading the app's own page (the error screen's Reload button; location.reload() counts as a navigation).
   w.webContents.on('will-navigate', (e) => {
@@ -244,7 +251,7 @@ async function bootstrap(): Promise<void> {
     launcher,
     onViewing: (ids) => {
       visibleIds = ids
-      mgr.setViewing(ids, win?.isFocused() ?? false)
+      mgr.setViewing(ids, isViewing(win))
     }
   })
   Menu.setApplicationMenu(Menu.buildFromTemplate(buildMenuTemplate((c) => send(IPC.menuCommand, c), !app.isPackaged, process.platform)))
