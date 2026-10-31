@@ -1,6 +1,7 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
-import { closeSync, fstatSync, openSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { closeSync, fstatSync, openSync, readFileSync, writeFileSync } from 'node:fs'
 import { hostKeyFile } from './paths'
+import { renameSyncRetrying } from './rename-sync'
 
 /**
  * Proving knowledge of the host key (see protocol.ts). Each host writes a fresh key when it starts; the app reads it
@@ -33,16 +34,8 @@ export function writeHostKey(dataDir: string): Buffer {
   const file = hostKeyFile(dataDir)
   const tmp = `${file}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`
   writeFileSync(tmp, key.toString('hex'), { mode: 0o600, flag: 'wx' })
-  for (let attempt = 0; ; attempt++) {
-    try {
-      renameSync(tmp, file) // atomic: an app never reads half a key
-      return key
-    } catch (e) {
-      // Windows refuses to replace a file another process has open for a moment; try again briefly.
-      if (attempt >= 20) throw e
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25)
-    }
-  }
+  renameSyncRetrying(tmp, file) // atomic: an app never reads half a key
+  return key
 }
 
 /** The app: the key the host wrote. Refused if missing, malformed, or (Unix) someone else's or readable by others. */

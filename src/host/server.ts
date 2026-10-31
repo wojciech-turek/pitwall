@@ -4,6 +4,7 @@ import * as net from 'node:net'
 import * as pty from 'node-pty'
 import { checkProof, newNonce, proofFor, writeHostKey } from './auth'
 import { pasteBytes, sendKeysBytes } from './keys'
+import { renameSyncRetrying } from './rename-sync'
 import { Launcher, type FetchToken, type PtyLike } from './launcher'
 import { ANSWERS, ModeTracker } from './modes'
 import { hostLogFile, hostPidFile, hostSocketPath } from './paths'
@@ -639,7 +640,7 @@ export class Host {
     const file = hostPidFile(this.o.dataDir)
     const tmp = `${file}.${process.pid}.tmp`
     writeFileSync(tmp, `${process.pid}\n`)
-    renameSync(tmp, file)
+    renameSyncRetrying(tmp, file) // (a moment's lock on host.pid must not end a host that just started listening)
   }
 
   /**

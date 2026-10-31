@@ -239,7 +239,8 @@ export async function archiveSession(
     }
 
     deps.manager.dropSession(s.id)
-    await rm(sessionDir(deps.paths, s.id), { recursive: true, force: true })
+    // (Retried: on Windows a scanner may hold a file in Pitwall's own session folder for a moment.)
+    await rm(sessionDir(deps.paths, s.id), { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
     await deps.store.update((d) => {
       const x = d.sessions.find((y) => y.id === s.id)
       if (x) x.archivedAt = Date.now()
