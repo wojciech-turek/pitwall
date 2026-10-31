@@ -36,11 +36,18 @@ type Removal = { ok: true; folderLeft: boolean } | { ok: false; error: unknown }
  * On Windows a file or folder in use (an editor, a terminal cd'd there) makes git fail *after* it has unregistered
  * the worktree and deleted the rest; git then knows no worktree there (later attempts say "not a working tree"). Then
  * what's left of the folder is deleted as far as it can be, and archiving goes on: `folderLeft` says the folder is
- * still there. Archiving checked for uncommitted work (and asked) before this, as it does before any removal.
+ * still there. Only a folder git had as this repo's worktree before the first attempt is ever deleted that way: a
+ * path git never registered (a repo of its own, say) is never removed by hand. Archiving checked for uncommitted
+ * work (and asked) before this, as it does before any removal. On macOS the same applies (retries are rarely needed).
  */
 async function removeWorktree(repoRoot: string, path: string, deps: ArchiveDeps): Promise<Removal> {
   const platform = deps.platform ?? process.platform
   const real = await realpath(path).catch(() => path) // git records real paths (a worktree under a symlink)
+  // A listing that fails answers "not registered" before the attempts (nothing is deleted by hand) and "registered"
+  // after them (the old path: the agent goes back in).
+  const registered = (fallback: boolean): Promise<boolean> => deps.git.listWorktrees(repoRoot)
+    .then((ws) => ws.some((w) => samePath(w.path, path, platform) || samePath(w.path, real, platform)), () => fallback)
+  const wasRegistered = await registered(false)
   let error: unknown
   for (let i = 0; i < 3; i++) {
     try {
@@ -49,9 +56,7 @@ async function removeWorktree(repoRoot: string, path: string, deps: ArchiveDeps)
     } catch (e) {
       error = e
     }
-    const registered = await deps.git.listWorktrees(repoRoot)
-      .then((ws) => ws.some((w) => samePath(w.path, path, platform) || samePath(w.path, real, platform)), () => true)
-    if (!registered) {
+    if (wasRegistered && !(await registered(true))) {
       await rm(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }).catch(() => undefined)
       return { ok: true, folderLeft: await exists(path) }
     }

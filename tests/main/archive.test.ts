@@ -304,6 +304,27 @@ describe('archive', () => {
     }
   })
 
+  test("a folder git never had as this repo's worktree is never deleted by hand when git refuses to remove it", async () => {
+    const { r, sp } = await addRepo()
+    class StrangerGit extends GitClient {
+      override async listWorktrees(): Promise<{ path: string; prunable: boolean }[]> {
+        return [{ path: r.root, prunable: false }] // not the session's folder: git never registered it
+      }
+      override async removeWorktree(_repo: string, path: string): Promise<void> {
+        throw new Error(`fatal: '${path}' is not a working tree`)
+      }
+    }
+    const deps = { ...setup(r.env, new StrangerGit(exec, r.env)), removeRetryMs: 10 }
+    const s = await startOne(sp)
+    await writeFile(join(s.worktreePath!, 'mine.txt'), 'keep')
+    await sh(r, s.worktreePath!, 'add', '-A')
+    await sh(r, s.worktreePath!, 'commit', '-m', 'work')
+    const res = await archiveSession(s.id, { confirmedDataLoss: true }, deps)
+    expect(res).toEqual({ ok: false, error: expect.stringContaining('is not a working tree') })
+    expect(await has(join(s.worktreePath!, 'mine.txt'))).toBe(true)
+    expect(store.state.sessions[0].archivedAt).toBeUndefined()
+  })
+
   test('a removal that fails while git still has the worktree is tried again, then reported (the agent goes back in)', async () => {
     const { r, sp } = await addRepo()
     let tries = 0
