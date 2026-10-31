@@ -525,6 +525,15 @@ describe('the launch the app uses', () => {
     if (!WINDOWS) expect(env.TERM).toBe('xterm-256color') // (node-pty sets no TERM on Windows; Windows programs don't need one)
   })
 
+  test.runIf(WINDOWS)("Windows: when PowerShell can't start the host, its own error is in host.log and the message", async () => {
+    const b = new HostBackend({
+      dataDir, appVersion: 'test', launch: { file: join(tmp, 'no such host.exe'), args: ['--data', dataDir], env: process.env as Record<string, string> }
+    })
+    const e = await b.newSession({ name: 'pw-x', cwd, argv: ['x'] }).then(() => null, (err: Error) => err)
+    expect(e?.message).toMatch(/exited with code 1 \(.+\)\. See .*host\.log/)
+    expect(await readFile(hostLogFile(dataDir), 'utf8')).toMatch(/starting the host failed:[\s\S]*Start-Process/)
+  })
+
   test('a host that fails to start is reported with where to look', async () => {
     const b = new HostBackend({
       dataDir, appVersion: 'test', launch: { file: process.execPath, args: ['-e', 'process.exit(3)'], env: {} }

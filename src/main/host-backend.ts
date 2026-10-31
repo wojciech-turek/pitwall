@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process'
-import { mkdirSync } from 'node:fs'
+import { appendFileSync, mkdirSync } from 'node:fs'
 import * as net from 'node:net'
 import { StringDecoder } from 'node:string_decoder'
 import { checkProof, HostKeyError, newNonce, proofFor, readHostKey } from '../host/auth'
@@ -480,10 +480,25 @@ export class HostBackend implements SessionBackend {
     const child = process.platform === 'win32'
       ? startViaShell(launch, this.o.dataDir)
       : spawn(launch.file, launch.args, { detached: true, stdio: 'ignore', env: launch.env, cwd: this.o.dataDir, windowsHide: true })
+    // What the starter says on stderr (PowerShell on Windows): into host.log and the error, if it fails.
+    let stderr = ''
+    child.stderr?.setEncoding('utf8').on('data', (d: string) => { if (stderr.length < 4096) stderr += d })
     child.on('error', (e) => { state.failure = e.message })
     // Exit code 0 is a host that found another one already serving: keep connecting, to that one.
-    child.on('exit', (code, signal) => { if (code !== 0) state.failure = signal ? `it was killed (${signal})` : `it exited with code ${code}` })
+    child.on('exit', (code, signal) => {
+      if (code === 0) return
+      // (A moment for the last of stderr: 'exit' can come before the pipe's last data.)
+      setTimeout(() => {
+        const said = stderr.trim()
+        if (said) {
+          try { appendFileSync(hostLogFile(this.o.dataDir), `${new Date().toISOString()} [app] starting the host failed:\n${said}\n`) } catch { /* no log */ }
+        }
+        const first = said.split(/\r?\n/)[0]?.replace(/[\x00-\x1f\x7f]/g, '').slice(0, 200)
+        state.failure = (signal ? `it was killed (${signal})` : `it exited with code ${code}`) + (first ? ` (${first})` : '')
+      }, 50)
+    })
     child.unref()
+    ;(child.stderr as { unref?: () => void } | null)?.unref?.()
     const deadline = Date.now() + this.startTimeoutMs
     for (;;) {
       const c = await this.connectOnce()
@@ -498,15 +513,16 @@ export class HostBackend implements SessionBackend {
 }
 
 /** How long PowerShell waits for a host it started on Windows, so one that fails at once still reports its exit code. */
-const SHELL_START_WAIT_MS = 1500
+const SHELL_START_WAIT_S = 2
 
 /**
  * Windows: the host is started with ShellExecute (PowerShell's Start-Process), not CreateProcess. Electron leaves its
  * own stdout/stderr inheritable, and CreateProcess hands every inheritable handle to the child: a host started
  * directly would hold open whatever pipes started Pitwall (pnpm dev, a test runner, CI) for as long as it lives.
- * ShellExecute passes no handles. PowerShell exits with the host's code if it ends within SHELL_START_WAIT_MS, else 0;
+ * ShellExecute passes no handles. PowerShell exits with the host's code if it ends within SHELL_START_WAIT_S, else 0;
  * the host gets PowerShell's environment as the app gave it (the variables used here, and PowerShell's own change to
- * PSModulePath, are put back first).
+ * PSModulePath, are put back first). Cmdlets and property reads only, no method calls: those stay allowed where
+ * PowerShell runs in Constrained Language Mode. PowerShell's own errors go to stderr, which the caller keeps.
  */
 function startViaShell(launch: HostLaunch, cwd: string): ChildProcess {
   const psModulePath = envValue(launch.env, 'PSModulePath')
@@ -516,11 +532,12 @@ function startViaShell(launch: HostLaunch, cwd: string): ChildProcess {
     "if ($env:PITWALL_HOST_PSMP_SET -eq '1') { $env:PSModulePath = $env:PITWALL_HOST_PSMP } else { Remove-Item Env:PSModulePath -ErrorAction SilentlyContinue }",
     'Remove-Item Env:PITWALL_HOST_FILE, Env:PITWALL_HOST_ARGS, Env:PITWALL_HOST_CWD, Env:PITWALL_HOST_PSMP, Env:PITWALL_HOST_PSMP_SET -ErrorAction SilentlyContinue',
     '$p = Start-Process -FilePath $file -ArgumentList $argLine -WorkingDirectory $dir -WindowStyle Hidden -PassThru',
-    `if ($p.WaitForExit(${SHELL_START_WAIT_MS})) { exit $p.ExitCode }`,
+    `Wait-Process -Id $p.Id -Timeout ${SHELL_START_WAIT_S} -ErrorAction SilentlyContinue`,
+    'if ($p.HasExited) { exit $p.ExitCode }',
     'exit 0'
   ].join('\n')
   return spawn(windowsPowerShell(launch.env), ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], {
-    stdio: 'ignore', windowsHide: true,
+    stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true,
     env: {
       ...launch.env,
       PITWALL_HOST_FILE: launch.file,
