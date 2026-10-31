@@ -20,12 +20,14 @@
 param(
   [string]$AppDir = (Join-Path $env:LOCALAPPDATA 'Programs\pitwall'),
   [string]$DataDir = (Join-Path $env:APPDATA 'pitwall'),
-  [string]$Repo = (Split-Path -Parent $PSScriptRoot),
+  [string]$Repo = '',
   [switch]$SkipUnitTests
 )
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+# The repository this script is in (Windows PowerShell 5.1 has no $PSScriptRoot yet while it reads param defaults).
+if (-not $Repo) { $Repo = Split-Path -Parent $PSScriptRoot }
 # Relative paths from here on mean the current folder, for .NET calls too.
 $AppDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($AppDir)
 $DataDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($DataDir)
@@ -265,11 +267,14 @@ try {
   if (Test-Path -LiteralPath $DataDir) {
     foreach ($p in @($DataDir, (Join-Path $DataDir 'host.key'))) {
       if (-not (Test-Path -LiteralPath $p)) { continue }
-      # ReadData is bit 1 of the rights.
-      $open = @((Get-Acl -LiteralPath $p).Access | Where-Object {
-        ($_.AccessControlType -eq 'Allow') -and
-        ($_.IdentityReference.Value -match '^(Everyone|BUILTIN\\Users|NT AUTHORITY\\Authenticated Users)$') -and
-        ((([int]$_.FileSystemRights) -band 1) -ne 0)
+      # By SID, whatever the system's language: Everyone, Users, Authenticated Users. Read access is ReadData (bit 0),
+      # GENERIC_ALL (bit 28) or GENERIC_READ (bit 31, which makes the signed value negative).
+      $others = @('S-1-1-0', 'S-1-5-32-545', 'S-1-5-11')
+      $rules = (Get-Acl -LiteralPath $p).GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])
+      $open = @($rules | Where-Object {
+        $r = [int]$_.FileSystemRights
+        ($_.AccessControlType -eq 'Allow') -and ($others -contains $_.IdentityReference.Value) -and
+        ((($r -band 1) -ne 0) -or (($r -band 0x10000000) -ne 0) -or ($r -lt 0))
       })
       if ($open.Count -eq 0) { Report 'PASS' '13' "$p is readable only by this user, administrators and SYSTEM" }
       else { Report 'FAIL' '13' "$p is readable by $(($open | ForEach-Object { $_.IdentityReference.Value }) -join ', ')" }

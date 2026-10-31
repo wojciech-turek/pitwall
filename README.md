@@ -111,6 +111,7 @@ To update, download the new installer, quit Pitwall and run it (SmartScreen asks
 - **Status hooks run in PowerShell.** Every hook starts Windows PowerShell, which takes about half a second. Claude waits for the hooks around each tool call, so tools feel a little slower than on a Mac.
 - **If PowerShell scripts are blocked by policy** (a Group Policy that forces an execution policy, common on managed PCs), Claude still works, but the session's status and usage don't update, and its header says so.
 - **Teardown commands run in `cmd.exe`**, so write them for cmd (`docker compose down` works the same).
+- **A file in use in a worktree** (an editor's terminal there, an Explorer window) can keep Windows from deleting the folder when you archive. Archiving still finishes and tells you which folder to delete later.
 - **Notifications and the taskbar:** Windows notifications, a red count on the taskbar button and a flashing button when a session needs you, instead of the Dock badge.
 - **Open in Cursor** runs `cursor` from your PATH (Cursor's installer adds it).
 
@@ -129,7 +130,6 @@ To update, download the new installer, quit Pitwall and run it (SmartScreen asks
 - **The usage meter doesn't update** if your user folder's path contains both an apostrophe and `$`, `` ` `` or `"`.
 - **Paths longer than 260 characters** need long paths enabled in Windows. Pitwall never changes your git config, so very deep worktrees may need `git config --global core.longpaths true` from you.
 - **SSH keys with a passphrase:** Git for Windows' own `ssh` doesn't use the Windows ssh-agent (or 1Password's), so it can't unlock them for the agents. A key without a passphrase works.
-- **In the command palette,** use the arrow keys (Ctrl+N/P are macOS only).
 
 ## Getting started
 
@@ -203,7 +203,14 @@ pnpm test:e2e:host                # the same, with sessions in the Pitwall host 
 pnpm test:e2e:host-launcher       # as Windows runs them: in the host, started by its launcher, with the Node stubs
 ```
 
-On Windows, `pnpm test` leaves out the suites that need tmux, sh or ps (listed in `vitest.config.ts`), and `pnpm test:e2e` already runs in the host with its launcher and the Node stubs. `pnpm package:win` builds `release\win-unpacked` (or `win-arm64-unpacked` on ARM), `pnpm dist:win --x64` or `--arm64` the installer, and `node scripts/verify-windows.mjs <x64|arm64>` checks one. `scripts\windows-smoke.ps1` checks what a script can on a real Windows machine (installed app, data folder ACL, hook timing, execution policy):
+### Develop on Windows
+
+The same commands work in PowerShell or cmd, with Node 24, pnpm and Git for Windows. No Visual Studio is needed: node-pty ships prebuilt for Windows x64 and ARM64, and packaging uses those (`npmRebuild: false`).
+
+- **Windows on ARM:** `pnpm install` unpacks Electron with a native module that needs the [Visual C++ ARM64 runtime](https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist). Without it, install that runtime, or unpack Electron's downloaded zip into `node_modules/electron/dist` yourself (Windows' `tar -xf` does it) and write `electron.exe` into `node_modules/electron/path.txt`.
+- `pnpm test` runs everything that can run on Windows: the session suites run in a Pitwall host, and the suites that need tmux, sh or ps (listed in `vitest.config.ts`) are left out. `pnpm test:e2e` already runs in the host with its launcher and the Node stubs, as `pnpm test:e2e:host-launcher` does.
+- `pnpm package:win` builds `release\win-unpacked` (or `win-arm64-unpacked` on ARM), `pnpm dist:win --x64` or `--arm64` the installer, and `node scripts/verify-windows.mjs <x64|arm64>` checks one.
+- `scripts\windows-smoke.ps1` checks what a script can on a real Windows machine (the installed app, the data folder's ACL, hook timing, execution policy):
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows-smoke.ps1
