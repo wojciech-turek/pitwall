@@ -48,3 +48,119 @@ jobs:
           name: e2e-results
           path: test-results/
           retention-days: 7
+
+  # Windows (beta) has no tmux: sessions run in the Pitwall host, started by its own launcher, here with the Node
+  # stubs of claude and gh. Each check is its own step, and later steps run even when an earlier one fails, so one
+  # run shows everything that's wrong.
+  windows-test:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      # What only Windows can prove (the PowerShell hook and status line, cmd.exe, taskkill), on its own first.
+      - name: Windows-only unit tests
+        if: ${{ !cancelled() }}
+        run: pnpm exec vitest run tests/main/windows-scripts.test.ts tests/main/windows-only.test.ts
+      # Everything else (vitest.config.ts leaves out the suites that need tmux, sh or ps).
+      - name: Unit tests
+        if: ${{ !cancelled() }}
+        run: pnpm test
+
+  windows-e2e:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      # (On Windows these are the defaults anyway: the host, its launcher, the Node stubs.)
+      - name: End-to-end tests (host, its launcher, Node stubs)
+        run: pnpm test:e2e:host-launcher
+      # The x64 installer and the app in it (release/win-unpacked), built as the release builds them.
+      - name: Build the installer
+        if: ${{ !cancelled() }}
+        run: pnpm dist:win --x64
+      - name: Check the build
+        if: ${{ !cancelled() }}
+        run: node scripts/verify-windows.mjs x64
+      # The packaged app: its host runs from app.asar, with node-pty unpacked beside it.
+      - name: End-to-end tests against the packaged app
+        if: ${{ !cancelled() }}
+        env:
+          PACKAGED: '1'
+        run: pnpm exec playwright test --output test-results/packaged
+      # What a script can check from the Windows checklist, with the packaged app's own scripts (nothing installed).
+      - name: Windows smoke check
+        if: ${{ !cancelled() }}
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows-smoke.ps1 -AppDir release/win-unpacked -SkipUnitTests
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-e2e-results
+          path: test-results/
+          retention-days: 7
+      # To try on a Windows PC or VM (unsigned: More info, then Run anyway).
+      - if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64-installer
+          path: release/Pitwall-*-x64-setup.exe
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # Windows on ARM (GitHub's windows-11-arm runners): the unit tests, and the arm64 installer built and run natively.
+  # continue-on-error: a failure here shows, but doesn't fail CI while these runners and ARM support are new.
+  windows-arm:
+    runs-on: windows-11-arm
+    continue-on-error: true
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      # Node first (its image has fewer tools preinstalled than the x64 ones), then pnpm; no package cache.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v4
+      - run: pnpm install --frozen-lockfile
+      - name: Windows-only unit tests
+        run: pnpm exec vitest run tests/main/windows-scripts.test.ts tests/main/windows-only.test.ts
+      - name: Unit tests
+        if: ${{ !cancelled() }}
+        run: pnpm test
+      - name: Build the installer
+        if: ${{ !cancelled() }}
+        run: pnpm dist:win --arm64
+      - name: Check the build
+        if: ${{ !cancelled() }}
+        run: node scripts/verify-windows.mjs arm64
+      # node-pty's arm64 binaries and ConPTY in the arm64 app: sessions start and answer.
+      - name: End-to-end tests against the packaged app
+        if: ${{ !cancelled() }}
+        env:
+          PACKAGED: '1'
+        run: pnpm exec playwright test --output test-results/packaged
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-arm-results
+          path: test-results/
+          retention-days: 7
+      - if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-arm64-installer
+          path: release/Pitwall-*-arm64-setup.exe
+          if-no-files-found: ignore
+          retention-days: 7

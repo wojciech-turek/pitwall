@@ -1,5 +1,5 @@
-import { describe, test, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtemp, rm, readdir, writeFile, readFile } from 'node:fs/promises'
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest'
+import { copyFile, mkdtemp, rename, rm, readdir, writeFile, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Store, newId, settingsFrom } from '../../src/main/store'
@@ -111,6 +111,44 @@ describe('Store', () => {
     await Store.open(join(dir, 'sub', 'state.json')) // recreate dir
     await s.update((d) => { d.projects.push(proj('p_2')) })
     expect(s.state.projects.map((p) => p.id)).toEqual(['p_2'])
+  })
+
+  // Windows won't replace (or copy) a file another process has open at that moment: a scanner, a backup, a reader.
+  const busy = (n: number, real: (a: string, b: string) => Promise<void>) => {
+    let calls = 0
+    const op = async (a: string, b: string): Promise<void> => {
+      if (++calls <= n) throw Object.assign(new Error(`EPERM: operation not permitted, '${a}'`), { code: 'EPERM' })
+      return real(a, b)
+    }
+    return { op, calls: () => calls }
+  }
+
+  test('Windows: a save whose copy and rename are refused for a moment is retried and lands, leaving no .tmp', async () => {
+    await writeFile(f, JSON.stringify({ version: 1, projects: [], subProjects: [], sessions: [] }))
+    const r = busy(2, rename)
+    const c = busy(2, copyFile)
+    const s = await Store.open(f, { platform: 'win32', rename: r.op, copyFile: c.op })
+    await s.update((d) => { d.projects.push(proj('p_1')) })
+    expect(r.calls()).toBe(3)
+    expect(c.calls()).toBe(3)
+    expect(JSON.parse(await readFile(f, 'utf8')).projects.map((p: Project) => p.id)).toEqual(['p_1'])
+    expect(JSON.parse(await readFile(`${f}.bak`, 'utf8')).projects).toEqual([])
+    expect((await readdir(dir)).sort()).toEqual(['state.json', 'state.json.bak'])
+  })
+
+  test("Windows: a save refused for longer than the retries fails the update, logs, keeps the state as it was, leaves no .tmp", async () => {
+    const r = busy(1000, rename)
+    const s = await Store.open(f, { platform: 'win32', rename: r.op, retryForMs: 200 })
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      await expect(s.update((d) => { d.projects.push(proj('p_1')) })).rejects.toThrow('EPERM')
+      expect(log).toHaveBeenCalledWith(expect.stringContaining("couldn't save"), expect.anything())
+    } finally {
+      log.mockRestore()
+    }
+    expect(s.state.projects).toEqual([])
+    expect(await readdir(dir)).toEqual([])
+    expect(r.calls()).toBeGreaterThan(1)
   })
 })
 

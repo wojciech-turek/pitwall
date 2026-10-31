@@ -3,8 +3,9 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import type { PersistedState } from '../../src/shared/types'
+import { WINDOWS } from '../helpers/processes'
 import { waitFor } from '../helpers/wait'
-import { launchApp, makeE2eEnv, paneText, shot, type E2eEnv } from './helpers'
+import { launchApp, makeE2eEnv, MOD, paneText, shot, type E2eEnv } from './helpers'
 
 test.describe.configure({ mode: 'serial' })
 test.skip(process.env.PACKAGED === '1', 'dev build only')
@@ -57,7 +58,7 @@ const focusIn = (): Promise<string> => page.evaluate(`(() => {
 async function typeTo(sessionId: string, text: string): Promise<void> {
   await page.keyboard.type(text)
   await page.keyboard.press('Enter')
-  await waitFor(async () => (await paneText(e.socket, sessionId)).includes(`echo: ${text}`), 15_000, `echo: ${text}`)
+  await waitFor(async () => (await paneText(e, sessionId)).includes(`echo: ${text}`), 15_000, `echo: ${text}`)
 }
 
 async function startSession(title: string): Promise<string> {
@@ -67,7 +68,7 @@ async function startSession(title: string): Promise<string> {
   await page.getByTestId('start-session').click()
   await expect(page.getByTestId('new-session-dialog')).toHaveCount(0, { timeout: 30_000 })
   const id = (await row(title).getAttribute('data-session-id'))!
-  await waitFor(async () => (await paneText(e.socket, id)).includes('STUB CLAUDE READY'), 15_000, `${title} ready`)
+  await waitFor(async () => (await paneText(e, id)).includes('STUB CLAUDE READY'), 15_000, `${title} ready`)
   return id
 }
 
@@ -156,7 +157,7 @@ test('⌘Enter opens a session split to the right; arrows and the mouse move the
   await tax.hover()
   await expect(tax).toHaveAttribute('data-selected', 'true')
   await expect(palette()).toContainText('split right')
-  await page.keyboard.press('Meta+Enter')
+  await page.keyboard.press(`${MOD}+Enter`)
   await expect(palette()).toHaveCount(0)
   await expect(panes()).toHaveCount(2)
   await expect(panes().nth(0)).toHaveAttribute('data-session-id', alpha)
@@ -241,7 +242,7 @@ test('⌘P opens a file of the active session; over the editor, Esc puts the cur
   await expect(editor).toBeVisible()
   await expect.poll(focusIn).toBe('editor')
 
-  await page.keyboard.press('Meta+ArrowDown') // end of the file
+  await page.keyboard.press(WINDOWS ? 'Control+End' : 'Meta+ArrowDown') // end of the file
   await menu('CmdOrCtrl+K')
   await expect.poll(focusIn).toBe('palette')
   await page.keyboard.press('Escape')
@@ -309,12 +310,13 @@ test('typing a word from an archived session\'s conversation finds it; Enter res
   await expect(page.getByTestId('resume-dialog')).toHaveCount(0, { timeout: 30_000 })
   await expect(row('Tax rounding')).toHaveCount(1)
   await expect(page.locator('[data-testid="pane"][data-active="true"]')).toHaveAttribute('data-session-id', beta)
-  await waitFor(async () => (await paneText(e.socket, beta)).includes('STUB CLAUDE READY'), 15_000, 'ready after resume')
+  await waitFor(async () => (await paneText(e, beta)).includes('STUB CLAUDE READY'), 15_000, 'ready after resume')
 })
 
 // Synthesized keys never reach the native menu (it only sees real OS key events), so the menu items above stand in
 // for ⌘K/⌘P. What the menu needs from the page: a keydown nobody handled, over a terminal or the editor alike.
 test('⌘K and ⌘P keydowns over a terminal or the editor are left to the app menu, never typed', async () => {
+  test.skip(WINDOWS, 'macOS: the menu takes ⌘ keys (Windows: the next test)')
   await page.evaluate(`(() => {
     window.paletteKeys = []
     window.addEventListener('keydown', (ev) => {
@@ -335,6 +337,34 @@ test('⌘K and ⌘P keydowns over a terminal or the editor are left to the app m
   await page.keyboard.press('Meta+k')
   await page.keyboard.press('Meta+p')
   expect(await page.evaluate('window.paletteKeys')).toEqual(['k:free', 'p:free', 'k:free', 'p:free'])
+  await expect(page.locator('.tab-dirty')).toHaveCount(0)
+  await menu('CmdOrCtrl+W')
+  await expect(page.getByTestId('editor-README.md')).toHaveCount(0)
+})
+
+// Windows' menu registers no accelerators (so no key is ever taken from a terminal program); the page maps them.
+test('Windows: Ctrl+Shift+K/P over a terminal and Ctrl+K/P elsewhere open the palette; plain Ctrl+K stays with the program', async () => {
+  test.skip(!WINDOWS, 'Windows only')
+  await page.getByTestId('terminal-claude').click()
+  expect(await focusIn()).toBe(`terminal:${beta}`)
+  await page.keyboard.press('Control+k') // the program's, as in any terminal
+  await page.waitForTimeout(300)
+  await expect(palette()).toHaveCount(0)
+  await page.keyboard.press('Enter') // (the stub reads lines: hand it the one holding the Ctrl+K)
+  await page.keyboard.press('Control+Shift+K')
+  await expect(palette()).toHaveAttribute('data-mode', 'commands')
+  await page.keyboard.press('Escape')
+  await expect.poll(focusIn).toBe(`terminal:${beta}`)
+  await page.keyboard.press('Control+Shift+P')
+  await expect(palette()).toBeVisible()
+  await input().fill('readme')
+  await expect(selected()).toHaveAttribute('data-path', 'README.md')
+  await page.keyboard.press('Enter')
+  await expect.poll(focusIn).toBe('editor')
+  await page.keyboard.press('Control+k')
+  await expect(palette()).toHaveAttribute('data-mode', 'commands')
+  await page.keyboard.press('Escape')
+  await expect.poll(focusIn).toBe('editor')
   await expect(page.locator('.tab-dirty')).toHaveCount(0)
   await menu('CmdOrCtrl+W')
   await expect(page.getByTestId('editor-README.md')).toHaveCount(0)

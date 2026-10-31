@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { formatAgentReference } from '@shared/agent-ref'
+import { platform } from '../platform'
 import type { AppSnapshot } from '@shared/types'
 import { clearDraft, draftKey, getDraft, setDraft } from '../editor/drafts'
 import { createEditor, type EditorHandle } from '../editor/codemirror'
@@ -147,7 +148,7 @@ export default function FileEditor({ snap, sessionId, path, active }: {
   async function sendToAgent(): Promise<void> {
     const sel = handle.current?.selectedLines()
     try {
-      await window.pitwall.sendToAgent(sessionId, formatAgentReference(path, sel))
+      await window.pitwall.sendToAgent(sessionId, formatAgentReference(path, sel, platform()))
       requestFocus(sessionId, 'claude')
       useUi.getState().setActiveTab(sessionId, 'claude')
     } catch (e) {

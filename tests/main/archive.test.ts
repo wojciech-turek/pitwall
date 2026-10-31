@@ -1,19 +1,21 @@
 import { execFile, spawn } from 'node:child_process'
-import { access, appendFile, mkdir, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { access, appendFile, chmod, mkdir, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { exec } from '../../src/main/exec'
 import { GitClient } from '../../src/main/git'
 import { sessionDir } from '../../src/main/paths'
-import { archiveSession, checkArchive, type ArchiveDeps } from '../../src/main/sessions/archive'
+import { archiveSession, checkArchive, removeEmptyWorktreesFolder, type ArchiveDeps } from '../../src/main/sessions/archive'
 import { SessionManager } from '../../src/main/sessions/manager'
 import { KeyedMutex } from '../../src/main/sessions/mutex'
 import { Store } from '../../src/main/store'
 import { claudeTmuxName, shellTmuxName } from '../../src/main/tmux'
 import type { NewSessionInput, Project, Session, SubProject } from '../../src/shared/types'
 import { makeTestEnv } from '../helpers/env'
+import { WINDOWS } from '../helpers/processes'
 import { makeRepo } from '../helpers/repo'
+import { waitFor } from '../helpers/wait'
 
 const run = promisify(execFile)
 const has = (p: string) => access(p).then(() => true, () => false)
@@ -53,11 +55,11 @@ afterEach(async () => {
 function setup(gitEnv: Record<string, string>, g?: GitClient): ArchiveDeps {
   git = g ?? new GitClient(exec, gitEnv)
   manager = new SessionManager({
-    store, paths: t.paths, git, tmux: t.tmux, exec, env: t.env, home: t.tmp, mutex: new KeyedMutex(),
+    store, paths: t.paths, git, backend: t.backend, exec, env: t.env, home: t.tmp, mutex: new KeyedMutex(),
     firstEventTimeoutMs: 8000, notifier: { notify: () => {}, setBadge: () => {} }
   })
   return {
-    store, paths: t.paths, git, tmux: t.tmux, exec, env: t.env, home: t.tmp, mutex: new KeyedMutex(), manager,
+    store, paths: t.paths, git, backend: t.backend, exec, env: t.env, home: t.tmp, mutex: new KeyedMutex(), manager,
     ptyBridge: {
       close: (id: string, kind: string) => { closed.push(`${id}:${kind}`) },
       detach: (id: string, kind: string) => { detached.push(`${id}:${kind}`) }
@@ -102,8 +104,8 @@ describe('archive', () => {
     expect(await archiveSession(s.id, { confirmedDataLoss: false }, deps)).toEqual({ ok: true })
     expect(await has(s.worktreePath!)).toBe(false)
     expect(await branchesOf(r)).toEqual(['main'])
-    expect(await t.tmux.hasSession(claudeTmuxName(s.id))).toBe(false)
-    expect(await t.tmux.hasSession(shellTmuxName(s.id))).toBe(false)
+    expect(await t.backend.hasSession(claudeTmuxName(s.id))).toBe(false)
+    expect(await t.backend.hasSession(shellTmuxName(s.id))).toBe(false)
     expect(await has(sessionDir(t.paths, s.id))).toBe(false)
     expect(closed.sort()).toEqual([`${s.id}:claude`, `${s.id}:shell`])
     expect(detached).toEqual([])
@@ -120,7 +122,7 @@ describe('archive', () => {
     const res = await archiveSession(s.id, { confirmedDataLoss: false }, deps)
     expect(res).toMatchObject({ ok: false, needsConfirm: { uncommittedFiles: 1 } })
     expect(await has(s.worktreePath!)).toBe(true)
-    expect(await t.tmux.hasSession(claudeTmuxName(s.id))).toBe(true)
+    expect(await t.backend.hasSession(claudeTmuxName(s.id))).toBe(true)
     expect(closed).toEqual([])
     expect(store.state.sessions[0].archivedAt).toBeUndefined()
     expect(manager.snapshot().sessions).toHaveLength(1)
@@ -172,6 +174,54 @@ describe('archive', () => {
     expect(await archiveSession(s.id, { confirmedDataLoss: false }, deps)).toEqual({ ok: true })
   })
 
+  describe("the folder's own folder in the worktrees folder (worktrees/<folder>/)", () => {
+    test('archiving its last session removes it once empty; while another session is left, it stays', async () => {
+      const { sp, deps } = await addRepo()
+      const a = await startOne(sp, { requestId: 'r1', title: 'First one' })
+      const b = await startOne(sp, { requestId: 'r2', title: 'Second one' })
+      const folder = dirname(a.worktreePath!)
+      expect(dirname(b.worktreePath!)).toBe(folder)
+      expect(dirname(folder)).toBe(t.paths.worktreesRoot)
+      expect(await archiveSession(a.id, { confirmedDataLoss: true }, deps)).toEqual({ ok: true })
+      expect(await has(folder)).toBe(true)
+      expect(await archiveSession(b.id, { confirmedDataLoss: true }, deps)).toEqual({ ok: true })
+      expect(await has(folder)).toBe(false)
+      expect(await has(t.paths.worktreesRoot)).toBe(true)
+    })
+
+    test('anything else in it keeps it, untouched', async () => {
+      const { sp, deps } = await addRepo()
+      const s = await startOne(sp)
+      const folder = dirname(s.worktreePath!)
+      await writeFile(join(folder, 'notes.txt'), 'mine')
+      expect(await archiveSession(s.id, { confirmedDataLoss: true }, deps)).toEqual({ ok: true })
+      expect(await readdir(folder)).toEqual(['notes.txt'])
+    })
+
+    test('also when the worktree was deleted by hand', async () => {
+      const { sp, deps } = await addRepo()
+      const s = await startOne(sp)
+      await rm(s.worktreePath!, { recursive: true, force: true })
+      expect(await archiveSession(s.id, { confirmedDataLoss: false }, deps)).toEqual({ ok: true })
+      expect(await has(dirname(s.worktreePath!))).toBe(false)
+    })
+
+    test('only a folder directly in the worktrees folder, never the worktrees folder itself or one elsewhere', async () => {
+      const root = join(t.tmp, 'wt-root')
+      const elsewhere = join(t.tmp, 'elsewhere', 'proj')
+      await mkdir(join(root, 'proj'), { recursive: true })
+      await mkdir(elsewhere, { recursive: true })
+      await removeEmptyWorktreesFolder(join(elsewhere, 'session'), root, process.platform)
+      expect(await has(elsewhere)).toBe(true)
+      await removeEmptyWorktreesFolder(join(root, 'session'), root, process.platform)
+      expect(await has(root)).toBe(true)
+      await removeEmptyWorktreesFolder(join(root, 'proj', 'session'), root, process.platform)
+      expect(await has(join(root, 'proj'))).toBe(false)
+      // Gone already, or never there: nothing happens, nothing throws.
+      await removeEmptyWorktreesFolder(join(root, 'proj', 'session'), root, process.platform)
+    })
+  })
+
   test('existing-branch session keeps its branch', async () => {
     const { r, sp, deps } = await addRepo()
     await sh(r, r.root, 'branch', 'feature/keep')
@@ -207,7 +257,7 @@ describe('archive', () => {
     })
     expect(await archiveSession(s.id, { confirmedDataLoss: false }, deps)).toEqual({ ok: true })
     expect(await has(join(folder, 'notes.md'))).toBe(true)
-    expect(await t.tmux.hasSession(claudeTmuxName(s.id))).toBe(false)
+    expect(await t.backend.hasSession(claudeTmuxName(s.id))).toBe(false)
     expect(manager.snapshot().archived).toHaveLength(1)
   })
 
@@ -231,11 +281,112 @@ describe('archive', () => {
     expect(res).toEqual({ ok: false, error: expect.stringContaining('worktree is locked') })
     expect(await has(s.worktreePath!)).toBe(true)
     expect(await branchesOf(r)).toContain(s.branch)
-    expect(await t.tmux.hasSession(claudeTmuxName(s.id))).toBe(true)
+    expect(await t.backend.hasSession(claudeTmuxName(s.id))).toBe(true)
     expect(store.state.sessions[0].archivedAt).toBeUndefined()
     expect(manager.snapshot().sessions).toHaveLength(1)
     // Its terminals were closed for the archive: they offer to reattach instead of staying frozen.
     expect(detached.sort()).toEqual([`${s.id}:claude`, `${s.id}:shell`])
+  })
+
+  // Windows, with a file in the worktree in use: git unregisters the worktree and deletes the rest, then fails.
+  class HalfRemovingGit extends GitClient {
+    tries = 0
+    override async removeWorktree(repoRoot: string, path: string, force: boolean): Promise<void> {
+      this.tries++
+      if (this.tries === 1) await super.removeWorktree(repoRoot, path, force)
+      await mkdir(join(path, 'held'), { recursive: true }) // what was in use
+      throw new Error(this.tries === 1 ? `failed to delete '${path}/held': Permission denied` : `'${path}' is not a working tree`)
+    }
+  }
+
+  test('git unregisters the worktree but leaves part of its folder: the rest is deleted and archiving finishes, no relaunch', async () => {
+    const { r, sp } = await addRepo()
+    const git = new HalfRemovingGit(exec, r.env)
+    const deps = setup(r.env, git)
+    const s = await startOne(sp)
+    expect(await archiveSession(s.id, { confirmedDataLoss: false }, deps)).toEqual({ ok: true })
+    expect(git.tries).toBe(1) // not retried: git no longer knows the worktree
+    expect(await has(s.worktreePath!)).toBe(false)
+    expect(await branchesOf(r)).toEqual(['main'])
+    expect(await t.backend.hasSession(claudeTmuxName(s.id))).toBe(false) // never relaunched into the remains
+    expect(store.state.sessions[0].archivedAt).toBeGreaterThan(0)
+    expect(detached).toEqual([])
+  })
+
+  // (POSIX modes stand in for a folder Windows won't let go of.)
+  test.skipIf(WINDOWS)("a folder that can't be deleted at all: archived anyway, and the result names the folder left behind", async () => {
+    const { r, sp } = await addRepo()
+    const git = new HalfRemovingGit(exec, r.env)
+    const deps = setup(r.env, git)
+    const s = await startOne(sp)
+    const parent = dirname(s.worktreePath!)
+    const realRemove = git.removeWorktree.bind(git)
+    git.removeWorktree = async (repoRoot, path, force) => {
+      await realRemove(repoRoot, path, force).catch(async (e) => {
+        await chmod(parent, 0o500) // nothing under it can be deleted now
+        throw e
+      })
+    }
+    try {
+      expect(await archiveSession(s.id, { confirmedDataLoss: false }, deps)).toEqual({ ok: true, leftFolder: s.worktreePath })
+      expect(await has(s.worktreePath!)).toBe(true)
+      expect(store.state.sessions[0].archivedAt).toBeGreaterThan(0)
+      expect(await branchesOf(r)).toEqual(['main'])
+    } finally {
+      await chmod(parent, 0o700)
+    }
+  })
+
+  test.runIf(WINDOWS)("Windows: a program working in the worktree (an editor's terminal): archived, its folder named as left over", async () => {
+    const { r, sp, deps } = await addRepo()
+    const s = await startOne(sp)
+    const holder = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1e5)'], { cwd: s.worktreePath!, stdio: 'ignore' })
+    try {
+      const res = await archiveSession(s.id, { confirmedDataLoss: false }, deps)
+      expect(res).toEqual({ ok: true, leftFolder: s.worktreePath })
+      expect(await branchesOf(r)).toEqual(['main'])
+      expect(await t.backend.hasSession(claudeTmuxName(s.id))).toBe(false)
+      expect(store.state.sessions[0].archivedAt).toBeGreaterThan(0)
+    } finally {
+      holder.kill()
+    }
+  })
+
+  test("a folder git never had as this repo's worktree is never deleted by hand when git refuses to remove it", async () => {
+    const { r, sp } = await addRepo()
+    class StrangerGit extends GitClient {
+      override async listWorktrees(): Promise<{ path: string; prunable: boolean }[]> {
+        return [{ path: r.root, prunable: false }] // not the session's folder: git never registered it
+      }
+      override async removeWorktree(_repo: string, path: string): Promise<void> {
+        throw new Error(`fatal: '${path}' is not a working tree`)
+      }
+    }
+    const deps = { ...setup(r.env, new StrangerGit(exec, r.env)), removeRetryMs: 10 }
+    const s = await startOne(sp)
+    await writeFile(join(s.worktreePath!, 'mine.txt'), 'keep')
+    await sh(r, s.worktreePath!, 'add', '-A')
+    await sh(r, s.worktreePath!, 'commit', '-m', 'work')
+    const res = await archiveSession(s.id, { confirmedDataLoss: true }, deps)
+    expect(res).toEqual({ ok: false, error: expect.stringContaining('is not a working tree') })
+    expect(await has(join(s.worktreePath!, 'mine.txt'))).toBe(true)
+    expect(store.state.sessions[0].archivedAt).toBeUndefined()
+  })
+
+  test('a removal that fails while git still has the worktree is tried again, then reported (the agent goes back in)', async () => {
+    const { r, sp } = await addRepo()
+    let tries = 0
+    class BusyGit extends GitClient {
+      override async removeWorktree(): Promise<void> {
+        tries++
+        throw new Error('Device or resource busy')
+      }
+    }
+    const deps = { ...setup(r.env, new BusyGit(exec, r.env)), removeRetryMs: 10 }
+    const s = await startOne(sp)
+    expect(await archiveSession(s.id, { confirmedDataLoss: false }, deps)).toEqual({ ok: false, error: expect.stringContaining('busy') })
+    expect(tries).toBe(3)
+    expect(await t.backend.hasSession(claudeTmuxName(s.id))).toBe(true)
   })
 
   test('unknown session never throws', async () => {
@@ -244,16 +395,17 @@ describe('archive', () => {
     expect(await checkArchive('nope', deps)).toMatchObject({ willRemoveWorktree: false, willDeleteBranch: false })
   })
 
+  // Teardown commands are sh here; Windows runs cmd.exe (its tests: windows-only.test.ts, and the non-zero exit below).
   describe('teardown', () => {
     const setTeardown = (cmd: string) => store.update((d) => { d.subProjects[0].teardownCommand = cmd })
 
-    test('runs after tmux is killed, before the worktree is removed, in the folder, with the session env', async () => {
+    test.skipIf(WINDOWS)('runs after tmux is killed, before the worktree is removed, in the folder, with the session env', async () => {
       const { sp, deps } = await addRepo()
       const s = await startOne(sp)
       const out = join(t.tmp, 'td.txt')
       const order = join(t.tmp, 'order.txt')
-      const real = deps.tmux.killSession.bind(deps.tmux)
-      deps.tmux = Object.assign(Object.create(deps.tmux), {
+      const real = deps.backend.killSession.bind(deps.backend)
+      deps.backend = Object.assign(Object.create(deps.backend), {
         killSession: async (n: string) => { await appendFile(order, `kill\n`); return real(n) }
       })
       const wt = await realpath(s.worktreePath!)
@@ -270,7 +422,7 @@ describe('archive', () => {
       expect(await has(s.worktreePath!)).toBe(false)
     })
 
-    test("with a project GitHub account: the project's token and extra env reach teardown, inherited tokens don't", async () => {
+    test.skipIf(WINDOWS)("with a project GitHub account: the project's token and extra env reach teardown, inherited tokens don't", async () => {
       const { sp, deps } = await addRepo()
       const s = await startOne(sp)
       await store.update((d) => { d.projects[0].extraEnv = [{ key: 'GITHUB_TOKEN', value: 'from-project' }] })
@@ -284,7 +436,9 @@ describe('archive', () => {
     test('non-zero exit reports the code and last 4 KB, leaves the worktree', async () => {
       const { sp, deps } = await addRepo()
       const s = await startOne(sp)
-      await setTeardown('head -c 10000 /dev/zero | tr "\\0" x; echo; echo boom >&2; exit 3')
+      await setTeardown(WINDOWS
+        ? `node -e "process.stdout.write('x'.repeat(10000))" & echo. & echo boom 1>&2 & exit /b 3`
+        : 'head -c 10000 /dev/zero | tr "\\0" x; echo; echo boom >&2; exit 3')
       const res = await archiveSession(s.id, { confirmedDataLoss: false }, deps)
       expect(res).toMatchObject({ ok: false, teardownFailed: { exitCode: 3, timedOut: false } })
       const out = (res as { teardownFailed: { output: string } }).teardownFailed.output
@@ -294,9 +448,9 @@ describe('archive', () => {
       expect(store.state.sessions[0].archivedAt).toBeUndefined()
       // The agent was stopped for the teardown: its terminals offer to reattach, which relaunches it (Cancel).
       expect(detached.sort()).toEqual([`${s.id}:claude`, `${s.id}:shell`])
-      expect(await t.tmux.hasSession(claudeTmuxName(s.id))).toBe(false)
+      expect(await t.backend.hasSession(claudeTmuxName(s.id))).toBe(false)
       await manager.ensureTerminalTarget(s.id, 'claude')
-      expect(await t.tmux.hasSession(claudeTmuxName(s.id))).toBe(true)
+      expect(await t.backend.hasSession(claudeTmuxName(s.id))).toBe(true)
     })
 
     test('skipTeardown archives without running it', async () => {
@@ -309,7 +463,7 @@ describe('archive', () => {
       expect(await has(s.worktreePath!)).toBe(false)
     })
 
-    test('a command past the limit is killed with its process group', async () => {
+    test.skipIf(WINDOWS)('a command past the limit is killed with its process group', async () => {
       const { sp, deps } = await addRepo()
       const s = await startOne(sp)
       const marker = join(t.tmp, 'late')
@@ -325,7 +479,7 @@ describe('archive', () => {
       expect(detached.sort()).toEqual([`${s.id}:claude`, `${s.id}:shell`])
     })
 
-    test('a backgrounded child that outlives the command does not keep archive waiting', async () => {
+    test.skipIf(WINDOWS)('a backgrounded child that outlives the command does not keep archive waiting', async () => {
       const { sp, deps } = await addRepo()
       const s = await startOne(sp)
       await setTeardown('sleep 20 & echo started')
@@ -335,7 +489,7 @@ describe('archive', () => {
       expect(Date.now() - t0).toBeLessThan(5000)
     })
 
-    test("gh acts as the project's account: the token is in the teardown's env only, never in argv or on disk", async () => {
+    test.skipIf(WINDOWS)("gh acts as the project's account: the token is in the teardown's env only, never in argv or on disk", async () => {
       const { sp, deps } = await addRepo()
       const s = await startOne(sp)
       const argv: string[] = []
@@ -359,7 +513,7 @@ describe('archive', () => {
       }
     })
 
-    test("an account with no token runs gh signed out, never as the machine's active account", async () => {
+    test.skipIf(WINDOWS)("an account with no token runs gh signed out, never as the machine's active account", async () => {
       const { sp, deps } = await addRepo()
       const s = await startOne(sp)
       await store.update((d) => { d.projects[0].identity.ghAccount = 'signed-out-account' })
@@ -381,7 +535,7 @@ describe('archive', () => {
       expect(await archiveSession(s.id, { confirmedDataLoss: false }, deps)).toEqual({ ok: true })
     })
 
-    test('folder sessions run it in the folder', async () => {
+    test.skipIf(WINDOWS)('folder sessions run it in the folder', async () => {
       const dir = join(t.tmp, 'plain')
       await mkdir(dir)
       const sp: SubProject = { id: 'sp_f', projectId: 'p_1', name: 'Plain', kind: 'folder', path: dir, createdAt: 0, teardownCommand: 'pwd -P > where.txt' }
@@ -393,21 +547,59 @@ describe('archive', () => {
     })
   })
 
-  test('archiving stops processes the session left running, and only those', async () => {
+  test('Windows: leftovers are snapshotted before the kill and ended after it, each checked by creation time', async () => {
+    const { sp, deps } = await addRepo()
+    const s = await startOne(sp)
+    await manager.ensureTerminalTarget(s.id, 'shell')
+    // (In the host the launcher starts each program a moment later, after checking the scripts.)
+    const roots = await waitFor(async () => {
+      const rs = [await t.backend.processRoots(claudeTmuxName(s.id)), await t.backend.processRoots(shellTmuxName(s.id))]
+      return rs.every((r) => r.panePids.length === 1) && rs
+    }, 15_000, 'both panes running')
+    const server = roots[0].serverPid!
+    const [claudePane, shellPane] = roots.flatMap((r) => r.panePids)
+    // A Windows process list (pid ppid created): the panes under the server, a child of the Claude pane, a stale
+    // "child" older than its pane (its real parent died long ago and the pid was reused), a newer pid reused by
+    // the time the leftovers are ended, and Pitwall itself under the shell pane by a stale link.
+    const list = (reused: boolean) => [
+      `${server} 1 1000`, `${claudePane} ${server} 2000`, `${shellPane} ${server} 2100`, `7001 ${claudePane} 3000`,
+      `7002 ${claudePane} 1500`, `7003 ${shellPane} ${reused ? 9999 : 3100}`, `${process.pid} ${shellPane} 500`
+    ].join('\r\n')
+    const order: string[] = []
+    let listed = 0
+    const real = deps.backend
+    deps.backend = Object.assign(Object.create(deps.backend), {
+      killSession: async (n: string) => { order.push(`kill ${n}`); return real.killSession(n) },
+      // The made-up creation times above stand for the panes: no real start times to check them against.
+      processRoots: async (n: string) => { const { paneStarts: _, ...r } = await real.processRoots(n); return r }
+    })
+    deps.platform = 'win32'
+    deps.leftovers = {
+      ps: async () => { order.push('list'); return list(listed++ > 0) },
+      end: async (targets) => { order.push(`end ${targets.map(([p, c]) => `${p}@${c}`).sort().join(' ')}`) }
+    }
+    expect(await archiveSession(s.id, { confirmedDataLoss: false }, deps)).toEqual({ ok: true })
+    expect(order).toEqual([
+      'list', `kill ${claudeTmuxName(s.id)}`, `kill ${shellTmuxName(s.id)}`, 'list',
+      `end ${[`${claudePane}@2000`, `${shellPane}@2100`, '7001@3000'].sort().join(' ')}`
+    ])
+  })
+
+  test.skipIf(WINDOWS)('archiving stops processes the session left running, and only those', async () => {
     const { sp, deps } = await addRepo()
     const s = await startOne(sp)
     const f1 = join(t.tmp, 'pid1'), f2 = join(t.tmp, 'pid2')
     await manager.ensureTerminalTarget(s.id, 'shell')
     const shellName = shellTmuxName(s.id)
-    await t.tmux.sendKeys(shellName, [`nohup sleep 301 >/dev/null 2>&1 & echo $! > ${f1}; nohup sh -c 'sleep 302 & echo $! > ${f2}; wait' >/dev/null 2>&1 &`], true)
-    await t.tmux.sendKeys(shellName, ['Enter'])
+    await t.backend.sendKeys(shellName, [`nohup sleep 301 >/dev/null 2>&1 & echo $! > ${f1}; nohup sh -c 'sleep 302 & echo $! > ${f2}; wait' >/dev/null 2>&1 &`], true)
+    await t.backend.sendKeys(shellName, ['Enter'])
     const outside = spawn('sleep', ['303'], { stdio: 'ignore' })
     // A sibling Pitwall session with its own background process.
     const sib = await startOne(sp, { requestId: 'r2', title: 'Other work' })
     await manager.ensureTerminalTarget(sib.id, 'shell')
     const f3 = join(t.tmp, 'pid3')
-    await t.tmux.sendKeys(shellTmuxName(sib.id), [`nohup sleep 304 >/dev/null 2>&1 & echo $! > ${f3}`], true)
-    await t.tmux.sendKeys(shellTmuxName(sib.id), ['Enter'])
+    await t.backend.sendKeys(shellTmuxName(sib.id), [`nohup sleep 304 >/dev/null 2>&1 & echo $! > ${f3}`], true)
+    await t.backend.sendKeys(shellTmuxName(sib.id), ['Enter'])
     const alive = (pid: number) => { try { process.kill(pid, 0); return true } catch { return false } }
     const pidOf = async (f: string) => {
       for (let i = 0; i < 100; i++) {
@@ -426,7 +618,7 @@ describe('archive', () => {
       expect(alive(p2)).toBe(false)
       expect(alive(outside.pid!)).toBe(true)
       expect(alive(p3)).toBe(true)
-      expect(await t.tmux.hasSession(claudeTmuxName(sib.id))).toBe(true)
+      expect(await t.backend.hasSession(claudeTmuxName(sib.id))).toBe(true)
     } finally {
       outside.kill('SIGKILL')
       await pidOf(f3).then((p) => process.kill(p, 'SIGKILL')).catch(() => undefined)

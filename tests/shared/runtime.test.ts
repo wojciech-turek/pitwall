@@ -75,6 +75,17 @@ describe('reduceRuntime', () => {
     expect(o.activity).toBe('starting')
     expect(o.exitCode).toBeUndefined()
   })
+  test('pitwall:warning: one per kind, until the next launch; never counts as Claude reporting in', () => {
+    let o = r(initialRuntime, 'pitwall:warning', { kind: 'gh', msg: 'signed out' })
+    o = reduceRuntime(o, E('pitwall:warning', { kind: 'setup', msg: 'setup failed' }))
+    o = reduceRuntime(o, E('pitwall:warning', { kind: 'gh', msg: 'signed out again' }))
+    expect(o.warnings).toEqual({ gh: 'signed out again', setup: 'setup failed' })
+    expect(o.firstEventSeen).toBe(false)
+    expect(o.activity).toBe('starting')
+    expect(reduceRuntime(o, E('pitwall:launch', { mode: 'resume' })).warnings).toBeUndefined()
+    expect(reduceRuntime(o, E('SessionStart', { src: 'startup' })).warnings).toEqual(o.warnings)
+    expect(r(initialRuntime, 'pitwall:warning', { kind: 'x' }).warnings).toBeUndefined() // no message: nothing
+  })
   test('pitwall:exited', () => {
     expect(r(rt({ activity: 'working' }), 'pitwall:exited', { code: 3 })).toMatchObject({ activity: 'exited', exitCode: 3 })
   })

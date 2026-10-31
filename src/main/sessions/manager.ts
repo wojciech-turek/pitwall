@@ -5,15 +5,17 @@ import type {
   AppSnapshot, DisplayStatus, HookEvent, NewSessionDefaults, NewSessionInput, Session, SessionRuntime, SessionView,
   StartProgress, StartResult, TermKind
 } from '@shared/types'
+import { isFile } from '../exec'
 import { appendEvent, EventTailer } from '../hooks/events'
 import type { Notifier } from '../notifier'
 import { eventsFile, sessionDir } from '../paths'
+import { shellTabArgv } from '../platform'
 import { claudeTmuxName, shellTmuxName } from '../tmux'
 import { isAnswerInput } from './input'
 import { notificationBody } from './notify-text'
 import { resumeSession } from './resume'
 import {
-  assertSessionFolder, launchTmuxFor, prepareNewSession, startSession, writeSessionFiles, type StarterDeps
+  assertSessionFolder, launchTmuxFor, prepareNewSession, startSession, usesHostLauncher, writeSessionFiles, type StarterDeps
 } from './starter'
 
 type Deps = StarterDeps & { notifier: Notifier; now?: () => number; firstEventTimeoutMs?: number }
@@ -114,6 +116,7 @@ export class SessionManager {
       if (lastError) view.lastError = lastError
       const warning = this.warnings.get(s.id)
       if (warning) view.startWarning = warning
+      if (rt.warnings) view.launchWarnings = Object.values(rt.warnings)
       return view
     })
     return {
@@ -232,12 +235,18 @@ export class SessionManager {
   async ensureTerminalTarget(sessionId: string, kind: TermKind): Promise<void> {
     const s = this.deps.store.state.sessions.find((x) => x.id === sessionId)
     if (!s) throw new Error('Session not found.')
-    const { tmux, paths } = this.deps
+    const { backend, paths } = this.deps
     if (kind === 'claude') return this.relaunchIfMissing(s)
     const name = shellTmuxName(sessionId)
-    if (await tmux.hasSession(name)) return
+    if (await backend.hasSession(name)) return
     await assertSessionFolder(s.cwd)
-    await tmux.newSession({ name, cwd: s.cwd, argv: [join(paths.binDir, 'pitwall-shell'), sessionDir(paths, sessionId)] })
+    if (usesHostLauncher(this.deps)) {
+      // The session's identity, then PowerShell (pwsh if installed) on Windows, as pitwall-shell does elsewhere.
+      const argv = shellTabArgv(this.deps.platform ?? process.platform, this.deps.env, isFile)
+      await backend.newSession({ name, cwd: s.cwd, argv, launcher: { kind: 'shell', sessionDir: sessionDir(paths, sessionId) } })
+      return
+    }
+    await backend.newSession({ name, cwd: s.cwd, argv: [join(paths.binDir, 'pitwall-shell'), sessionDir(paths, sessionId)] })
   }
 
   /** After a project edit: its running sessions pick up the new identity and env on their next (re)launch. */
@@ -280,7 +289,8 @@ export class SessionManager {
     const seen = await this.waitForFirstEvent(id, this.deps.firstEventTimeoutMs ?? FIRST_EVENT_TIMEOUT_MS)
       .catch(() => false)
     const t = this.tracked.get(id)
-    if (seen || this.disposed || !t || t.rt.firstEventSeen || this.session(id)?.archivedAt !== undefined) return
+    // Hooks that Windows wouldn't run say so themselves (a launcher warning): not a trust prompt.
+    if (seen || this.disposed || !t || t.rt.firstEventSeen || t.rt.warnings?.scripts || this.session(id)?.archivedAt !== undefined) return
     this.warnings.set(id, START_WARNING)
     this.publish()
   }
@@ -349,7 +359,7 @@ export class SessionManager {
   }
 
   private async relaunchIfMissing(s: Session): Promise<void> {
-    if (await this.deps.tmux.hasSession(claudeTmuxName(s.id))) return
+    if (await this.deps.backend.hasSession(claudeTmuxName(s.id))) return
     try {
       await writeSessionFiles(s, this.deps)
       await launchTmuxFor(s, this.deps)
@@ -422,6 +432,7 @@ export class SessionManager {
       title: `${s.title} · ${project?.name ?? ''}`,
       body: notificationBody(status, rt)
     })
+    if (status === 'needs_you') this.deps.notifier.attention?.()
   }
 
   private updateBadge(): void {

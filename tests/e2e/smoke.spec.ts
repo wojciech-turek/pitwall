@@ -5,7 +5,12 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test'
 import { waitFor } from '../helpers/wait'
-import { launchApp, makeE2eEnv, paneText, sessionIdOf, shot, tmux, type E2eEnv } from './helpers'
+import { fromGit } from '../../src/main/git'
+import { WINDOWS } from '../helpers/processes'
+import {
+  clearLine, hasSession, hostPids, launchApp, makeE2eEnv, MOD, PACKAGED_EXE, paneText, sendKeys, SESSION_BACKEND, sessionIdOf, sessionNames,
+  shot, tmux, type E2eEnv
+} from './helpers'
 
 const run = promisify(execFile)
 const PACKAGED = process.env.PACKAGED === '1'
@@ -65,13 +70,20 @@ test.describe('dev build', () => {
     await expect(page.getByTestId('new-session-dialog')).toHaveCount(0, { timeout: 30_000 })
 
     await expect(page.getByTestId('session-row')).toHaveCount(1)
-    sessionId = await waitFor(() => sessionIdOf(e.socket), 15_000, 'tmux session')
-    await waitFor(async () => (await paneText(e.socket, sessionId)).includes('STUB CLAUDE READY'), 15_000, 'STUB CLAUDE READY')
+    sessionId = await waitFor(() => sessionIdOf(e), 15_000, 'tmux session')
+    await waitFor(async () => (await paneText(e, sessionId)).includes('STUB CLAUDE READY'), 15_000, 'STUB CLAUDE READY')
     await expect(page.getByTestId('terminal-claude')).toBeVisible()
     await shot(page, '5-session-running')
+    // Only the selected backend runs sessions: no tmux server with the host, no host with tmux.
+    if (SESSION_BACKEND === 'host') {
+      expect(await tmux(e.socket, 'list-sessions').catch(() => 'no server')).toBe('no server')
+      expect(await hostPids(e.dataDir)).toHaveLength(1)
+    } else {
+      expect(await hostPids(e.dataDir)).toEqual([])
+    }
 
     await typeLine('hello')
-    await waitFor(async () => (await paneText(e.socket, sessionId)).includes('echo: hello'), 15_000, 'echo: hello')
+    await waitFor(async () => (await paneText(e, sessionId)).includes('echo: hello'), 15_000, 'echo: hello')
     await expect(page.getByTestId('session-row')).toHaveAttribute('data-status', /^(read|unread)$/)
 
     // The stub's status line reports 42% (5h) and 18% (week); the meter picks it up.
@@ -94,11 +106,11 @@ test.describe('dev build', () => {
   test('agents survive an app restart', async () => {
     await app!.close()
     app = undefined
-    await run('tmux', ['-L', e.socket, 'has-session', '-t', `=pw-${sessionId}`])
+    expect(await hasSession(e, sessionId)).toBe(true)
     ;({ app, page } = await launchApp(e.env))
     await expect(page.getByTestId('session-row')).toHaveCount(1)
     await expect(page.getByTestId('usage-5h')).toContainText('42%') // last known usage, without a new reply
-    await waitFor(async () => (await paneText(e.socket, sessionId)).includes('STUB CLAUDE READY'), 15_000, 'reattached screen')
+    await waitFor(async () => (await paneText(e, sessionId)).includes('STUB CLAUDE READY'), 15_000, 'reattached screen')
     await expect(page.getByTestId('session-row')).toHaveAttribute('data-status', 'needs_you')
     await page.getByTestId('session-row').click()
     await expect(page.getByTestId('terminal-claude')).toBeVisible()
@@ -106,8 +118,8 @@ test.describe('dev build', () => {
     await expect(page.getByTestId('session-row')).toHaveAttribute('data-status', 'needs_you')
     await shot(page, '7-after-restart')
     await typeLine('again')
-    await waitFor(async () => (await paneText(e.socket, sessionId)).includes('echo: again'), 15_000, 'typing after reattach')
-    expect(await tmux(e.socket, 'list-sessions', '-F', '#{session_name}')).toContain(`pw-${sessionId}`)
+    await waitFor(async () => (await paneText(e, sessionId)).includes('echo: again'), 15_000, 'typing after reattach')
+    expect(await sessionNames(e)).toContain(`pw-${sessionId}`)
   })
 
   test('files tab: open a file, edit, save, send to agent', async () => {
@@ -117,12 +129,12 @@ test.describe('dev build', () => {
     await page.locator('.cm-content').click()
     await page.keyboard.type('x')
     await expect(page.locator('.tab-dirty')).toHaveCount(1)
-    await page.keyboard.press('Meta+s')
+    await page.keyboard.press(`${MOD}+s`)
     await expect(page.locator('.tab-dirty')).toHaveCount(0)
     await shot(page, '8-file-editor')
     await page.getByTestId('send-to-agent').click()
     await expect(page.getByTestId('terminal-claude')).toBeVisible()
-    await waitFor(async () => (await paneText(e.socket, sessionId)).includes('@README.md'), 15_000, '@README.md in prompt')
+    await waitFor(async () => (await paneText(e, sessionId)).includes('@README.md'), 15_000, '@README.md in prompt')
 
     // closing a dirty tab asks first
     await page.getByTestId('file-README.md').click()
@@ -169,8 +181,10 @@ test.describe('dev build window', () => {
     })()`)
 
     expect(await dropOn('[data-testid="terminal-claude"]')).toBe(false) // handled, default prevented
-    await waitFor(async () => /'\/[^'\n]*\/drop me\.txt'/.test(await paneText(e.socket, sessionId)), 15_000, 'dropped path in prompt')
-    expect(await paneText(e.socket, sessionId)).not.toMatch(/echo: .*drop me\.txt/) // pasted, never submitted
+    // Quoted as the platform's shell would need it: '/…/drop me.txt' on macOS, "C:\…\drop me.txt" on Windows.
+    const dropped = WINDOWS ? /"[A-Za-z]:\\[^"\n]*\\drop me\.txt"/ : /'\/[^'\n]*\/drop me\.txt'/
+    await waitFor(async () => dropped.test(await paneText(e, sessionId)), 15_000, 'dropped path in prompt')
+    expect(await paneText(e, sessionId)).not.toMatch(/echo: .*drop me\.txt/) // pasted, never submitted
 
     expect(await dropOn('.sidebar')).toBe(false) // anywhere else: swallowed
     expect(await page.evaluate('window.open("about:blank") === null')).toBe(true) // no new windows
@@ -193,7 +207,9 @@ test.describe('dev build window', () => {
     await expect(page.getByTestId('session-row')).toHaveCount(1)
   })
 
+  // macOS keeps the app running with no window (the Dock reopens it); on Windows closing the last window quits.
   test('closing the window stops viewing; reopening for a notification selects the session', async () => {
+    test.skip(WINDOWS, 'macOS: an app without windows')
     const row = page.getByTestId('session-row')
     await row.click()
     await expect(row).toHaveClass(/selected/)
@@ -203,8 +219,9 @@ test.describe('dev build window', () => {
     await expect.poll(() => app!.windows().length).toBe(0)
 
     // Claude finishes while the window is closed: nothing is being viewed, so it's Unread.
-    await tmux(e.socket, 'send-keys', '-t', `=pw-${sessionId}:`, 'C-u', 'closed', 'Enter')
-    await waitFor(async () => (await paneText(e.socket, sessionId)).includes('echo: closed'), 15_000, 'echo: closed')
+    await clearLine(e, sessionId)
+    await sendKeys(e, sessionId, 'closed', 'Enter')
+    await waitFor(async () => (await paneText(e, sessionId)).includes('echo: closed'), 15_000, 'echo: closed')
 
     // Reopen (Dock click) and let the OS focus it: the old selection must not mark the session read.
     const reopened = app!.waitForEvent('window')
@@ -251,9 +268,10 @@ test.describe('dev build window', () => {
     const { stdout } = await run('git', ['-C', e.repo.root, 'config', '--local', 'user.email'], { env: e.repo.env })
     expect(stdout.trim()).toBe('jane@new.test')
 
-    await tmux(e.socket, 'send-keys', '-t', `=pw-${sessionId}:`, 'C-u', 'exit', 'Enter')
-    await waitFor(async () => (await paneText(e.socket, sessionId)).includes('Press Enter to resume'), 15_000, 'claude exited')
-    await tmux(e.socket, 'send-keys', '-t', `=pw-${sessionId}:`, 'Enter')
+    await clearLine(e, sessionId)
+    await sendKeys(e, sessionId, 'exit', 'Enter')
+    await waitFor(async () => (await paneText(e, sessionId)).includes('Press Enter to resume'), 15_000, 'claude exited')
+    await sendKeys(e, sessionId, 'Enter')
     await waitFor(async () => (await readFile(e.env.STUB_CLAUDE_LOG, 'utf8')).includes('GIT_AUTHOR_EMAIL=jane@new.test'), 15_000, 'new identity after relaunch')
   })
 })
@@ -263,7 +281,7 @@ test.describe('dev build changes', () => {
 
   test('changes tab lists work, opens a diff, sidebar shows line counts', async () => {
     const { stdout } = await run('git', ['-C', e.repo.root, 'worktree', 'list', '--porcelain'], { env: e.repo.env })
-    const wt = stdout.split('\n').filter((l) => l.startsWith('worktree ')).map((l) => l.slice(9)).find((p) => p !== e.repo.root)!
+    const wt = stdout.split('\n').filter((l) => l.startsWith('worktree ')).map((l) => fromGit(l.slice(9))).find((p) => p !== e.repo.root)!
     await writeFile(join(wt, 'changed-by-test.txt'), 'one\ntwo\nthree\n')
     await page.getByTestId('session-row').click()
     await page.getByTestId('tab-claude').click()
@@ -359,13 +377,13 @@ test.describe('dev build changes', () => {
 
   test('archive warns about uncommitted work, then removes the worktree and lists the session as archived', async () => {
     const { stdout } = await run('git', ['-C', e.repo.root, 'worktree', 'list', '--porcelain'], { env: e.repo.env })
-    const wt = stdout.split('\n').filter((l) => l.startsWith('worktree ')).map((l) => l.slice(9)).find((p) => p !== e.repo.root)!
+    const wt = stdout.split('\n').filter((l) => l.startsWith('worktree ')).map((l) => fromGit(l.slice(9))).find((p) => p !== e.repo.root)!
     expect(existsSync(wt)).toBe(true)
     await page.getByTestId('session-row').hover()
     await page.getByTestId('session-menu').click()
     await page.getByTestId('session-archive').click()
     await expect(page.getByTestId('archive-dialog')).toBeVisible()
-    await expect(page.getByTestId('archive-actions')).toContainText(/Delete worktree .*worktrees\/tax-service\/fix-tax-rounding/)
+    await expect(page.getByTestId('archive-actions')).toContainText(/Delete worktree .*worktrees[\\/]tax-service[\\/]fix-tax-rounding/)
     await expect(page.getByTestId('archive-actions')).toContainText('Delete branch pitwall/fix-tax-rounding')
     await expect(page.getByTestId('archive-warning')).toContainText('uncommitted file')
     await shot(page, '11-archive-dialog')
@@ -383,13 +401,13 @@ test.describe('dev build changes', () => {
     await shot(page, '12-archived-list')
     const branches = await run('git', ['-C', e.repo.root, 'branch', '--format=%(refname:short)'], { env: e.repo.env })
     expect(branches.stdout).not.toContain('pitwall/fix-tax-rounding')
-    expect(await tmux(e.socket, 'list-sessions', '-F', '#{session_name}').catch(() => '')).not.toContain(`pw-${sessionId}`)
+    expect(await sessionNames(e)).not.toContain(`pw-${sessionId}`)
   })
 
   test('teardown: failure offers Cancel and Archive anyway, success archives', async () => {
     const wtDirs = async (): Promise<string[]> => {
       const { stdout } = await run('git', ['-C', e.repo.root, 'worktree', 'list', '--porcelain'], { env: e.repo.env })
-      return stdout.split('\n').filter((l) => l.startsWith('worktree ')).map((l) => l.slice(9)).filter((p) => p !== e.repo.root)
+      return stdout.split('\n').filter((l) => l.startsWith('worktree ')).map((l) => fromGit(l.slice(9))).filter((p) => p !== e.repo.root)
     }
     const setTeardown = async (cmd: string): Promise<void> => {
       await page.getByTestId('subproject-row').hover()
@@ -416,10 +434,11 @@ test.describe('dev build changes', () => {
     const ok = join(e.tmp, 'teardown-ok')
 
     await startSession('Teardown fails')
-    const failingId = await waitFor(() => sessionIdOf(e.socket), 15_000, 'tmux session')
-    await waitFor(async () => (await paneText(e.socket, failingId)).includes('STUB CLAUDE READY'), 15_000, 'STUB CLAUDE READY')
+    const failingId = await waitFor(() => sessionIdOf(e), 15_000, 'tmux session')
+    await waitFor(async () => (await paneText(e, failingId)).includes('STUB CLAUDE READY'), 15_000, 'STUB CLAUDE READY')
     expect(await wtDirs()).toHaveLength(1)
-    await setTeardown('echo teardown-said-no; exit 5')
+    // Teardown runs in sh on macOS, in cmd.exe on Windows.
+    await setTeardown(WINDOWS ? 'echo teardown-said-no& exit /b 5' : 'echo teardown-said-no; exit 5')
     await openArchive()
     await expect(page.getByTestId('teardown-failed')).toContainText('exit code 5', { timeout: 30_000 })
     await expect(page.getByTestId('teardown-output')).toContainText('teardown-said-no')
@@ -433,7 +452,7 @@ test.describe('dev build changes', () => {
     await page.getByTestId('terminal-claude').click()
     await waitFor(async () => {
       await page.keyboard.press('x')
-      return (await paneText(e.socket, failingId)).includes('STUB CLAUDE READY')
+      return (await paneText(e, failingId)).includes('STUB CLAUDE READY')
     }, 20_000, 'agent relaunched by a key')
     const claudeId = (await readFile(join(e.dataDir, 'sessions', failingId, 'claude-id'), 'utf8')).trim()
     await waitFor(async () => (await readFile(e.env.STUB_CLAUDE_LOG, 'utf8')).includes(`--resume ${claudeId}`), 10_000, 'claude --resume')
@@ -446,7 +465,7 @@ test.describe('dev build changes', () => {
     expect(await wtDirs()).toHaveLength(0)
 
     await startSession('Teardown works')
-    await setTeardown(`touch ${ok}`)
+    await setTeardown(WINDOWS ? `type nul > "${ok}"` : `touch ${ok}`)
     await openArchive()
     await expect(page.getByTestId('archive-dialog')).toHaveCount(0, { timeout: 30_000 })
     expect(existsSync(ok)).toBe(true)
@@ -458,7 +477,7 @@ test.describe('packaged app', () => {
   test.skip(!PACKAGED, 'set PACKAGED=1 (after pnpm package)')
 
   test('packaged app launches and starts a session', async () => {
-    const exe = join(process.cwd(), 'release/mac-arm64/Pitwall.app/Contents/MacOS/Pitwall')
+    const exe = PACKAGED_EXE
     expect(existsSync(exe)).toBe(true)
     ;({ app, page } = await launchApp(e.env, exe))
     await expect(page.getByTestId('create-first-project')).toBeVisible()
@@ -480,9 +499,10 @@ test.describe('packaged app', () => {
     await page.getByTestId('session-title-input').fill('Packaged run')
     await page.getByTestId('start-session').click()
     await expect(page.getByTestId('new-session-dialog')).toHaveCount(0, { timeout: 30_000 })
-    const id = await waitFor(() => sessionIdOf(e.socket), 15_000, 'tmux session')
-    await waitFor(async () => (await paneText(e.socket, id)).includes('STUB CLAUDE READY'), 15_000, 'STUB CLAUDE READY')
+    const id = await waitFor(() => sessionIdOf(e), 15_000, 'tmux session')
+    await waitFor(async () => (await paneText(e, id)).includes('STUB CLAUDE READY'), 15_000, 'STUB CLAUDE READY')
+    expect(await hostPids(e.dataDir)).toHaveLength(SESSION_BACKEND === 'host' ? 1 : 0) // the packaged app runs its own host
     await typeLine('hello')
-    await waitFor(async () => (await paneText(e.socket, id)).includes('echo: hello'), 15_000, 'echo: hello')
+    await waitFor(async () => (await paneText(e, id)).includes('echo: hello'), 15_000, 'echo: hello')
   })
 })

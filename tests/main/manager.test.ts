@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
@@ -12,7 +13,11 @@ import { claudeTmuxName, shellTmuxName } from '../../src/main/tmux'
 import type { Notifier } from '../../src/main/notifier'
 import type { HookEvent, Project, Session, SubProject } from '../../src/shared/types'
 import { makeTestEnv } from '../helpers/env'
+import { WINDOWS } from '../helpers/processes'
 import { waitFor } from '../helpers/wait'
+
+/** A program that just runs (Windows has no `sleep` to start directly). */
+const INERT = WINDOWS ? [process.execPath, '-e', 'setInterval(() => {}, 1e5)'] : ['sleep', '600']
 
 let t: Awaited<ReturnType<typeof makeTestEnv>>
 let store: Store
@@ -51,7 +56,7 @@ afterEach(async () => {
 
 function mkManager(firstEventTimeoutMs = 8000): SessionManager {
   const m = new SessionManager({
-    store, paths: t.paths, git: new GitClient(exec, t.env), tmux: t.tmux, exec, env: t.env, home: t.tmp,
+    store, paths: t.paths, git: new GitClient(exec, t.env), backend: t.backend, exec, env: t.env, home: t.tmp,
     mutex: new KeyedMutex(), firstEventTimeoutMs, notifier
   })
   managers.push(m)
@@ -67,7 +72,9 @@ async function addSession(id: string, o: Partial<Session> = {}, events: Partial<
     d.sessions.push(s)
   })
   // An inert tmux session so reconcile leaves it alone (a relaunched stub would race the events these tests append).
-  if (o.archivedAt === undefined) await t.tmux.newSession({ name: claudeTmuxName(id), cwd: s.cwd, argv: ['sleep', '600'] })
+  // (Windows can't start a program in a folder that doesn't exist; tmux starts it anyway.)
+  const cwd = WINDOWS && !existsSync(s.cwd) ? t.tmp : s.cwd
+  if (o.archivedAt === undefined) await t.backend.newSession({ name: claudeTmuxName(id), cwd, argv: INERT })
   for (const e of events) await ev(id, e)
   return s
 }
@@ -101,6 +108,22 @@ describe('SessionManager', () => {
     await new Promise((r) => setTimeout(r, 300))
     expect(notes).toEqual([{ sessionId: 'a', title: `${s.title} · Proj`, body: 'Needs your permission' }])
     expect(badges.at(-1)).toBe(1)
+  })
+
+  test('needing you asks for attention (the Windows taskbar flash); finishing a reply does not', async () => {
+    await addSession('a')
+    let attention = 0
+    notifier = { ...notifier, attention: () => { attention++ } }
+    const m = await ready()
+    await ev('a', { e: 'UserPromptSubmit' })
+    await waitStatus(m, 'a', 'working')
+    await new Promise((r) => setTimeout(r, 5))
+    await ev('a', { e: 'Stop', msg: 'done' })
+    await waitFor(async () => notes.length === 1)
+    expect(attention).toBe(0)
+    await ev('a', { e: 'PermissionRequest', tool: 'Bash' })
+    await waitFor(async () => notes.length === 2)
+    expect(attention).toBe(1)
   })
 
   test('question and other bodies', async () => {
@@ -236,7 +259,7 @@ describe('SessionManager', () => {
     expect(res.ok).toBe(true)
     if (!res.ok) return
     const s = store.state.sessions[0]
-    await t.tmux.sendKeys(claudeTmuxName(s.id), ['clear', 'Enter'])
+    await t.backend.sendKeys(claudeTmuxName(s.id), ['clear', 'Enter'])
     const want = `${s.claudeSessionId}-cleared`
     await waitFor(async () => store.state.sessions[0].claudeSessionId === want, 8000, 'sid update')
     await waitFor(async () => (await readFile(join(sessionDir(t.paths, s.id), 'claude-id'), 'utf8')).trim() === want)
@@ -260,9 +283,29 @@ describe('SessionManager', () => {
     )
     expect(res.ok).toBe(true)
     if (!res.ok) return
-    await t.tmux.sendKeys(claudeTmuxName(res.sessionId), ['hello', 'Enter'])
+    await t.backend.sendKeys(claudeTmuxName(res.sessionId), ['hello', 'Enter'])
     await waitFor(async () => store.state.sessions[0].lastMessage === 'echo: hello', 8000, 'live message')
     expect(m.snapshot().sessions[0].startWarning).toBeUndefined()
+  })
+
+  test("the launcher's warnings show as banners until Claude's next launch; blocked scripts aren't a trust prompt", async () => {
+    t.env.STUB_CLAUDE_SILENT = '1'
+    // Long enough for the warning to be read first, even on a busy machine.
+    const m = await ready(5000)
+    const t0 = Date.now()
+    const res = await m.start({ requestId: 'r', subProjectId: 'sp_1', title: 'Blocked', branchMode: 'new', branch: '' }, () => {})
+    if (!res.ok) throw new Error(res.error)
+    const id = res.sessionId
+    // After the launcher's own pitwall:launch (which clears banners), as the host's launcher logs them.
+    await waitFor(async () => (await readFile(eventsFile(t.paths, id), 'utf8').catch(() => '')).includes('pitwall:launch'), 8000, 'launch')
+    await ev(id, { e: 'pitwall:warning', kind: 'scripts', msg: 'Windows blocked the scripts' })
+    await ev(id, { e: 'pitwall:warning', kind: 'gh', msg: 'Signed out' })
+    await waitFor(async () => m.snapshot().sessions[0].launchWarnings?.length === 2, 8000, 'banners')
+    expect(m.snapshot().sessions[0].launchWarnings).toEqual(['Windows blocked the scripts', 'Signed out'])
+    await new Promise((r) => setTimeout(r, Math.max(0, t0 + 5800 - Date.now()))) // past the first-event timeout
+    expect(m.snapshot().sessions[0].startWarning).toBeUndefined()
+    await ev(id, { e: 'pitwall:launch', mode: 'resume' })
+    await waitFor(async () => m.snapshot().sessions[0].launchWarnings === undefined, 8000, 'banners cleared')
   })
 
   test('silent claude: start returns at once; the trust-prompt warning shows after the timeout and clears on the first event', async () => {
@@ -284,12 +327,21 @@ describe('SessionManager', () => {
   })
 
   test('no warning when Claude reports in before the timeout', async () => {
-    const m = await ready(1500)
+    // Claude's first event is written here as soon as start returns, so it is in before the timeout on any machine.
+    // (The stub's own comes after the whole launch: on Windows gh, the two PowerShell script checks, then Claude and
+    // its PowerShell hook. That took longer than a 1.5 s timeout on a busy ARM CI runner.)
+    t.env.STUB_CLAUDE_SILENT = '1'
+    const timeoutMs = 3000
+    const m = await ready(timeoutMs)
     const res = await m.start(
       { requestId: 'r', subProjectId: 'sp_1', title: 'Loud', branchMode: 'new', branch: '' }, () => {}
     )
     if (!res.ok) throw new Error(res.error)
-    await new Promise((r) => setTimeout(r, 2500))
+    const t0 = Date.now() // the timeout runs from here
+    await ev(res.sessionId, { e: 'SessionStart', sid: 'x' })
+    expect(await m.waitForFirstEvent(res.sessionId, timeoutMs)).toBe(true)
+    expect(Date.now() - t0).toBeLessThan(timeoutMs) // seen before the timeout, or this test proves nothing
+    await new Promise((r) => setTimeout(r, Math.max(0, t0 + timeoutMs + 1000 - Date.now()))) // past it
     expect(m.snapshot().sessions[0].startWarning).toBeUndefined()
   })
 
@@ -304,10 +356,10 @@ describe('SessionManager', () => {
     // start no longer waits for Claude; let the first launch happen before pulling the rug.
     await waitFor(async () => (await readFile(t.env.STUB_CLAUDE_LOG, 'utf8').catch(() => '')).includes('--session-id'), 8000, 'first launch')
     m1.dispose()
-    await t.tmux.killSession(claudeTmuxName(res.sessionId))
-    expect(await t.tmux.hasSession(claudeTmuxName(res.sessionId))).toBe(false)
+    await t.backend.killSession(claudeTmuxName(res.sessionId))
+    expect(await t.backend.hasSession(claudeTmuxName(res.sessionId))).toBe(false)
     const m2 = await ready()
-    expect(await t.tmux.hasSession(claudeTmuxName(res.sessionId))).toBe(true)
+    expect(await t.backend.hasSession(claudeTmuxName(res.sessionId))).toBe(true)
     await waitFor(async () => (await readFile(t.env.STUB_CLAUDE_LOG, 'utf8')).includes('--resume'), 8000, '--resume')
     expect(m2.snapshot().sessions).toHaveLength(1)
   })
@@ -315,14 +367,14 @@ describe('SessionManager', () => {
   test('ensureTerminalTarget creates shell session lazily', async () => {
     await addSession('a')
     const m = await ready()
-    expect(await t.tmux.hasSession(shellTmuxName('a'))).toBe(false)
+    expect(await t.backend.hasSession(shellTmuxName('a'))).toBe(false)
     await m.ensureTerminalTarget('a', 'shell')
-    expect(await t.tmux.hasSession(shellTmuxName('a'))).toBe(true)
+    expect(await t.backend.hasSession(shellTmuxName('a'))).toBe(true)
     await m.ensureTerminalTarget('a', 'shell')
-    await t.tmux.killSession(claudeTmuxName('a'))
-    expect(await t.tmux.hasSession(claudeTmuxName('a'))).toBe(false)
+    await t.backend.killSession(claudeTmuxName('a'))
+    expect(await t.backend.hasSession(claudeTmuxName('a'))).toBe(false)
     await m.ensureTerminalTarget('a', 'claude')
-    expect(await t.tmux.hasSession(claudeTmuxName('a'))).toBe(true)
+    expect(await t.backend.hasSession(claudeTmuxName('a'))).toBe(true)
   })
 
   test('rewriteProjectSessionFiles rewrites env.sh for that project\'s active sessions only', async () => {
@@ -382,7 +434,7 @@ describe('SessionManager', () => {
     expect(await readFile(join(dir, 'env.sh'), 'utf8')).toContain("PITWALL_SESSION_ID='a'")
     // the conversation id replayed from events wins over the stale one
     expect((await readFile(join(dir, 'claude-id'), 'utf8')).trim()).toBe('claude-a-cleared')
-    expect(await t.tmux.hasSession(claudeTmuxName('a'))).toBe(true)
+    expect(await t.backend.hasSession(claudeTmuxName('a'))).toBe(true)
     // a session whose files can't be written is left alone: it's running, so no error is shown
     expect(m.snapshot().sessions.find((x) => x.id === 'b')?.lastError).toBeUndefined()
   })
@@ -391,14 +443,14 @@ describe('SessionManager', () => {
     await addSession('a')
     await addSession('b')
     await addSession('c')
-    await t.tmux.killSession(claudeTmuxName('b'))
-    await t.tmux.killSession(claudeTmuxName('c'))
+    await t.backend.killSession(claudeTmuxName('b'))
+    await t.backend.killSession(claudeTmuxName('c'))
     // 'b' points at a sub-project that does not exist, so writeSessionFiles throws.
     await store.update((d) => {
       d.sessions.find((x) => x.id === 'b')!.subProjectId = 'sp_missing'
     })
     const m = await ready()
-    expect(await t.tmux.hasSession(claudeTmuxName('c'))).toBe(true)
+    expect(await t.backend.hasSession(claudeTmuxName('c'))).toBe(true)
     expect(m.snapshot().sessions.find((x) => x.id === 'b')?.lastError).toMatch(/Sub-project not found/)
     expect(m.snapshot().sessions.find((x) => x.id === 'c')?.lastError).toBeUndefined()
     await expect(m.ensureTerminalTarget('b', 'claude')).rejects.toThrow(/Sub-project not found/)
@@ -407,12 +459,12 @@ describe('SessionManager', () => {
   test('a session whose folder is gone: reconcile records the error, the shell tab refuses', async () => {
     const gone = join(t.tmp, 'gone')
     await addSession('a', { cwd: gone })
-    await t.tmux.killSession(claudeTmuxName('a'))
+    await t.backend.killSession(claudeTmuxName('a'))
     const m = await ready()
     expect(m.snapshot().sessions[0].lastError).toBe(`Session folder not found: ${gone}`)
-    expect(await t.tmux.hasSession(claudeTmuxName('a'))).toBe(false)
+    expect(await t.backend.hasSession(claudeTmuxName('a'))).toBe(false)
     await expect(m.ensureTerminalTarget('a', 'shell')).rejects.toThrow(`Session folder not found: ${gone}`)
-    expect(await t.tmux.hasSession(shellTmuxName('a'))).toBe(false)
+    expect(await t.backend.hasSession(shellTmuxName('a'))).toBe(false)
   })
 
   test('replay folds the last message into the snapshot', async () => {
@@ -421,7 +473,8 @@ describe('SessionManager', () => {
     expect(m.snapshot().sessions[0].lastMessage).toBe('done X')
   })
 
-  test('an unreadable events file does not block other sessions, and tracking retries', async () => {
+  // (Windows opens a folder as if it were a file, which reads as empty: nothing goes wrong there to record.)
+  test.skipIf(WINDOWS)('an unreadable events file does not block other sessions, and tracking retries', async () => {
     await addSession('a')
     await addSession('b', {}, [{ e: 'Stop', t: 3000, msg: 'ok' }])
     await rm(eventsFile(t.paths, 'a'), { force: true })

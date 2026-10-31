@@ -2,17 +2,22 @@ import { randomUUID } from 'node:crypto'
 import { access, mkdir, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { writeFileAtomic } from '../atomic'
+import type { LauncherChoice, SessionBackend } from '../backend'
 import type {
   NewSessionDefaults, NewSessionInput, Project, Session, StartProgress, StartResult, StartStep, SubProject
 } from '@shared/types'
 import { defaultBranchName, slugify } from '@shared/slug'
 import type { Exec } from '../exec'
 import { GitClient, uniquePath } from '../git'
-import { buildHookSettings, findUserStatusLine, hookCommandFor, statusLineCommandFor } from '../hooks/settings'
+import { isFile } from '../exec'
+import {
+  buildHookSettings, findUserStatusLine, hookCommandFor, statusLineCommandFor, windowsHookCommand, windowsStatusLineCommand
+} from '../hooks/settings'
 import { buildSessionEnv, claudeConfigDir, getGhToken, renderEnvFile } from '../identity'
 import { eventsFile, sessionDir, type AppPaths } from '../paths'
+import { findGitBash, windowsPowerShell } from '../platform'
 import { newId, type Store } from '../store'
-import { claudeTmuxName, type Tmux } from '../tmux'
+import { claudeTmuxName } from '../tmux'
 import type { KeyedMutex } from './mutex'
 
 export type { NewSessionDefaults, NewSessionInput, StartProgress, StartResult, StartStep }
@@ -21,11 +26,20 @@ export interface StarterDeps {
   store: Store
   paths: AppPaths
   git: GitClient
-  tmux: Tmux
+  backend: SessionBackend
   exec: Exec
   env: Record<string, string>
   home: string
   mutex: KeyedMutex
+  /** Default: this machine's. Tests pass 'win32' to check what Windows gets. */
+  platform?: NodeJS.Platform
+  /** What starts Claude (see launcherChoice). Default: the host's launcher on Windows, pitwall-launch elsewhere. */
+  launcher?: LauncherChoice
+}
+
+/** True when the host's launcher runs this app's sessions (Windows; PITWALL_LAUNCHER=host elsewhere). */
+export function usesHostLauncher(deps: Pick<StarterDeps, 'launcher' | 'platform'>): boolean {
+  return (deps.launcher ?? ((deps.platform ?? process.platform) === 'win32' ? 'host' : 'script')) === 'host'
 }
 
 export class StepError extends Error {
@@ -65,7 +79,8 @@ export function progressSteps(requestId: string, onProgress: (p: StartProgress) 
 /** The project's SSH key exists and its GitHub account can give a token. */
 export async function checkIdentity(project: Project, deps: StarterDeps): Promise<void> {
   const key = project.identity.sshKeyPath
-  const keyPath = key === '~' || key.startsWith('~/') ? join(deps.home, key.slice(2)) : key
+  const home = key === '~' || key.startsWith('~/') || ((deps.platform ?? process.platform) === 'win32' && key.startsWith('~\\'))
+  const keyPath = home ? join(deps.home, key.slice(2)) : key
   if (key && !(await exists(keyPath))) throw new Error(`SSH key not found: ${key}`)
   if (!project.identity.ghAccount) return
   const token = await getGhToken(deps.paths.ghBin, project.identity.ghAccount, deps.exec, deps.env)
@@ -95,6 +110,8 @@ export async function writeSessionFiles(session: Session, deps: StarterDeps): Pr
   if (!project) throw new Error('Project not found.')
   const dir = sessionDir(deps.paths, session.id)
   const events = eventsFile(deps.paths, session.id)
+  const windows = (deps.platform ?? process.platform) === 'win32'
+  const userStatusLine = await findUserStatusLine(session.cwd, claudeConfigDir(project, deps.home, deps.env))
   const env = buildSessionEnv({
     project,
     session,
@@ -104,14 +121,23 @@ export async function writeSessionFiles(session: Session, deps: StarterDeps): Pr
     claudeBin: deps.paths.claudeBin,
     ghBin: deps.paths.ghBin,
     setupCommand: sp.setupCommand,
-    userStatusLine: await findUserStatusLine(session.cwd, claudeConfigDir(project, deps.home, deps.env)),
-    home: deps.home
+    userStatusLine,
+    gitBash: windows && userStatusLine ? findGitBash(deps.env, isFile) ?? undefined : undefined,
+    home: deps.home,
+    platform: deps.platform
   })
   await mkdir(dir, { recursive: true })
   // Atomic: a relaunching launcher may be sourcing env.sh while a project edit rewrites it.
   await writeFileAtomic(join(dir, 'env.sh'), renderEnvFile(env), 0o600)
-  const hook = hookCommandFor(join(deps.paths.binDir, 'pitwall-hook'), events, session.id)
-  const statusLine = statusLineCommandFor(join(deps.paths.binDir, 'pitwall-statusline'), dir)
+  // The same for the host's launcher (Windows), which reads JSON, not sh.
+  await writeFileAtomic(join(dir, 'env.json'), JSON.stringify(env, null, 2) + '\n', 0o600)
+  // Windows: PowerShell scripts, the hook in exec form (no shell between Claude and the paths).
+  const hook = windows
+    ? windowsHookCommand(windowsPowerShell(deps.env), join(deps.paths.binDir, 'pitwall-hook.ps1'), events, session.id)
+    : hookCommandFor(join(deps.paths.binDir, 'pitwall-hook'), events, session.id)
+  const statusLine = windows
+    ? windowsStatusLineCommand(join(deps.paths.binDir, 'pitwall-statusline.ps1'), dir)
+    : statusLineCommandFor(join(deps.paths.binDir, 'pitwall-statusline'), dir)
   // Atomic: a running Claude or the launcher may read these at any moment.
   await writeFileAtomic(join(dir, 'hooks.json'), JSON.stringify(buildHookSettings(hook, statusLine), null, 2))
   // Re-read: a /clear may have recorded a new conversation id while the files above were written.
@@ -127,10 +153,16 @@ export async function assertSessionFolder(cwd: string): Promise<void> {
 
 export async function launchTmuxFor(session: Session, deps: StarterDeps): Promise<void> {
   await assertSessionFolder(session.cwd)
-  await deps.tmux.newSession({
+  const dir = sessionDir(deps.paths, session.id)
+  if (usesHostLauncher(deps)) {
+    // The host runs Claude itself, as pitwall-launch would (Windows has no sh).
+    await deps.backend.newSession({ name: claudeTmuxName(session.id), cwd: session.cwd, argv: [], launcher: { kind: 'claude', sessionDir: dir } })
+    return
+  }
+  await deps.backend.newSession({
     name: claudeTmuxName(session.id),
     cwd: session.cwd,
-    argv: [join(deps.paths.binDir, 'pitwall-launch'), sessionDir(deps.paths, session.id)]
+    argv: [join(deps.paths.binDir, 'pitwall-launch'), dir]
   })
 }
 
@@ -154,7 +186,7 @@ async function doStart(
 ): Promise<StartResult> {
   const steps = progressSteps(input.requestId, onProgress)
   const { emit, run } = steps
-  const { paths, git, tmux } = deps
+  const { paths, git, backend } = deps
   const id = newId('s')
   const dir = sessionDir(paths, id)
   const created = { worktree: undefined as string | undefined, branch: undefined as string | undefined, tmux: false }
@@ -168,7 +200,7 @@ async function doStart(
         // best effort; never mask the original error
       }
     }
-    if (created.tmux) await attempt(() => tmux.killSession(claudeTmuxName(id)))
+    if (created.tmux) await attempt(() => backend.killSession(claudeTmuxName(id)))
     if (created.worktree && repoRoot) await attempt(() => git.removeWorktree(repoRoot!, created.worktree!, true))
     if (created.worktree) await attempt(() => rm(created.worktree!, { recursive: true, force: true }))
     if (created.branch && repoRoot) await attempt(() => git.deleteBranch(repoRoot!, created.branch!))

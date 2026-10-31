@@ -1,5 +1,5 @@
 import { mkdir, access, readFile } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { dirname, win32 } from 'node:path'
 import type { ChangedFile } from '@shared/types'
 import type { Exec, ExecResult } from './exec'
 
@@ -18,6 +18,21 @@ const firstLine = (s: string) => s.trim().split('\n')[0] ?? ''
 const WORKTREE_TIMEOUT_MS = 5 * 60_000
 const nulList = (s: string) => s.split('\0').filter((x) => x.length > 0)
 
+/**
+ * A path as git prints it, in the platform's own form: Git for Windows prints `C:/Users/…`, while Pitwall (and Node)
+ * spell it `C:\Users\…`. Unchanged elsewhere.
+ */
+export function fromGit(p: string, platform: NodeJS.Platform = process.platform): string {
+  return platform === 'win32' && p ? win32.normalize(p) : p
+}
+
+/** Whether two paths name the same folder: on Windows whatever their separators, letter case or trailing separator. */
+export function samePath(a: string, b: string, platform: NodeJS.Platform = process.platform): boolean {
+  if (platform !== 'win32') return a === b
+  const n = (p: string): string => win32.normalize(p).replace(/\\+$/, '').toLowerCase()
+  return n(a) === n(b)
+}
+
 function countLines(buf: Buffer): number {
   if (buf.length === 0) return 0
   let n = 0
@@ -28,7 +43,7 @@ function countLines(buf: Buffer): number {
 export class GitClient {
   private readonly env: Record<string, string>
 
-  constructor(private readonly exec: Exec, env: Record<string, string>) {
+  constructor(private readonly exec: Exec, env: Record<string, string>, private readonly platform: NodeJS.Platform = process.platform) {
     // Background status/diff refreshes must not take index.lock while the agent commits.
     this.env = { ...env, GIT_OPTIONAL_LOCKS: '0' }
   }
@@ -56,7 +71,8 @@ export class GitClient {
     if (!r || r.code !== 0) return { kind: 'folder' }
     const [repoRoot, prefix = ''] = r.stdout.split('\n')
     if (!repoRoot) return { kind: 'folder' }
-    return { kind: 'repo', repoRoot, relPath: prefix.replace(/\/+$/, '') }
+    // relPath stays as git prints it (always `/`): it is joined onto paths and shown as is.
+    return { kind: 'repo', repoRoot: fromGit(repoRoot, this.platform), relPath: prefix.replace(/\/+$/, '') }
   }
 
   hasCommits(repoRoot: string): Promise<boolean> {
@@ -93,7 +109,7 @@ export class GitClient {
     const checkedOut = new Map<string, string>()
     let path = ''
     for (const line of (await this.run(repoRoot, ['worktree', 'list', '--porcelain'])).split('\n')) {
-      if (line.startsWith('worktree ')) path = line.slice(9)
+      if (line.startsWith('worktree ')) path = fromGit(line.slice(9), this.platform)
       else if (line.startsWith('branch refs/heads/')) checkedOut.set(line.slice(18), path)
     }
     return names.map((name) => (checkedOut.has(name) ? { name, checkedOutAt: checkedOut.get(name) } : { name }))
@@ -142,7 +158,7 @@ export class GitClient {
     const list: { path: string; prunable: boolean }[] = []
     for (const line of (await this.run(repoRoot, ['worktree', 'list', '--porcelain'])).split('\n')) {
       const cur = list.at(-1)
-      if (line.startsWith('worktree ')) list.push({ path: line.slice(9), prunable: false })
+      if (line.startsWith('worktree ')) list.push({ path: fromGit(line.slice(9), this.platform), prunable: false })
       else if (cur && (line === 'prunable' || line.startsWith('prunable '))) cur.prunable = true
     }
     return list
@@ -212,7 +228,7 @@ export class GitClient {
   }
 
   async listChanges(worktree: string, base: string): Promise<ChangedFile[]> {
-    const top = (await this.run(worktree, ['rev-parse', '--show-toplevel'])).trim()
+    const top = fromGit((await this.run(worktree, ['rev-parse', '--show-toplevel'])).trim(), this.platform)
     const numstat = await this.run(top, ['diff', '--numstat', '-z', '--no-renames', base])
     const nameStatus = await this.run(top, ['diff', '--name-status', '-z', '--no-renames', base])
     const untracked = await this.run(top, ['ls-files', '--others', '--exclude-standard', '-z'])

@@ -1,6 +1,7 @@
 // The command palette's data: fuzzy ranking, result groups and the actions it offers. Pure (no DOM, no store).
 import { nextAttention, sidebarOrder } from '@shared/runtime'
 import type { AppSnapshot, FileEntry, HistoryHit, SessionView } from '@shared/types'
+import { shortcut } from '../platform'
 
 /** ⌘K searches everything; ⌘P only the active session's files. */
 export type PaletteMode = 'commands' | 'files'
@@ -27,6 +28,8 @@ export interface ActionContext {
   rightTab: 'files' | 'changes'
   /** False when this build doesn't look for updates. */
   canCheckUpdates: boolean
+  /** Default: this app's (shortcut labels say ⌘ on macOS, Ctrl+ on Windows). */
+  platform?: string
 }
 
 interface ItemBase { key: string; label: string; detail?: string; labelHits: number[]; detailHits?: number[] }
@@ -340,7 +343,7 @@ export function paletteActions(ctx: ActionContext): PaletteAction[] {
     const mine = f.id === sp?.id
     out.push({
       key: `new-session:${f.id}`, id: 'new-session', label: `New session in ${f.name}…`, subProjectId: f.id,
-      detail: snap.projects.find((p) => p.id === f.projectId)?.name, shortcut: mine ? '⌘N' : undefined,
+      detail: snap.projects.find((p) => p.id === f.projectId)?.name, shortcut: mine ? shortcut('N', ctx.platform) : undefined,
       keywords: 'start create agent', common: mine || snap.subProjects.length === 1
     })
   }
@@ -362,9 +365,9 @@ export function paletteActions(ctx: ActionContext): PaletteAction[] {
     out.push({ key: 'archived', id: 'archived', label: 'Archived sessions', keywords: 'history resume past', common: true })
   }
   if (nextAttention(sidebarOrder(snap), ctx.activeSessionId)) {
-    out.push({ key: 'next-attention', id: 'next-attention', label: 'Next session that needs you', shortcut: '⌘J', keywords: 'unread waiting', common: true })
+    out.push({ key: 'next-attention', id: 'next-attention', label: 'Next session that needs you', shortcut: shortcut('J', ctx.platform), keywords: 'unread waiting', common: true })
   }
-  out.push({ key: 'settings', id: 'settings', label: 'Settings…', shortcut: '⌘,', keywords: 'preferences font', common: true })
+  out.push({ key: 'settings', id: 'settings', label: 'Settings…', shortcut: shortcut(',', ctx.platform), keywords: 'preferences font', common: true })
   if (ctx.canCheckUpdates) out.push({ key: 'check-updates', id: 'check-updates', label: 'Check for updates', keywords: 'version release upgrade' })
   return out
 }

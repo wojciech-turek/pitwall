@@ -1,12 +1,15 @@
 import { rm } from 'node:fs/promises'
 import os from 'node:os'
-import { afterEach, beforeEach, describe, expect, test } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import type { AttachHandlers, SessionBackend } from '../../src/main/backend'
 import { exec } from '../../src/main/exec'
-import { PtyBridge } from '../../src/main/pty-bridge'
+import { MAX_TYPED, PtyBridge } from '../../src/main/pty-bridge'
 import { resolveShellEnv } from '../../src/main/shell-env'
 import { claudeTmuxName, Tmux } from '../../src/main/tmux'
+import { TmuxBackend } from '../../src/main/tmux-backend'
 import type { TermKind } from '../../src/shared/types'
 import { makeTestEnv, tmuxSocketPath } from '../helpers/env'
+import { WINDOWS } from '../helpers/processes'
 import { waitFor } from '../helpers/wait'
 
 let t: Awaited<ReturnType<typeof makeTestEnv>>
@@ -15,20 +18,22 @@ let data: string
 let exits: Array<[string, TermKind, number]>
 let inputs: Array<[string, TermKind, string]>
 
+// tmux (macOS). On Windows only the tests with a stand-in backend run (the app's host attaches asynchronously too).
 beforeEach(async () => {
+  if (WINDOWS) return
   t = await makeTestEnv()
   data = ''; exits = []; inputs = []
   await t.tmux.newSession({ name: claudeTmuxName('s1'), cwd: t.tmp, argv: ['cat'] })
   bridge = new PtyBridge({
-    tmux: t.tmux, env: t.env, ensureTarget: async () => {},
+    backend: t.backend, ensureTarget: async () => {},
     onData: (_i, _k, d) => { data += d },
     onExit: (i, k, c) => { exits.push([i, k, c]) },
     onUserInput: (i, k, d) => { inputs.push([i, k, d]) }
   })
 })
-afterEach(async () => { bridge.closeAll(); await t.cleanup() })
+afterEach(async () => { bridge?.closeAll(); await t?.cleanup() })
 
-describe('PtyBridge', () => {
+describe.skipIf(WINDOWS)('PtyBridge', () => {
   test('open → write → data comes back', async () => {
     await bridge.open('s1', 'claude', 100, 30)
     bridge.write('s1', 'claude', 'ping\r')
@@ -83,8 +88,8 @@ describe('PtyBridge', () => {
   })
 })
 
-describe('PtyBridge waiting on ensureTarget', () => {
-  // attachCommand runs right before pty.spawn, so recording it shows whether a pty was spawned.
+describe.skipIf(WINDOWS)('PtyBridge waiting on ensureTarget', () => {
+  // attachCommand runs right before pty.spawn (in TmuxBackend.attach), so recording it shows whether a pty was spawned.
   function spyBridge(ensureTarget: () => Promise<void>) {
     const attaches: string[] = []
     const targets: string[] = []
@@ -92,7 +97,7 @@ describe('PtyBridge waiting on ensureTarget', () => {
       attachCommand: (name: string) => { attaches.push(name); return t.tmux.attachCommand(name) }
     })
     const b = new PtyBridge({
-      tmux, env: t.env,
+      backend: new TmuxBackend(tmux, t.env),
       ensureTarget: async (id) => { targets.push(id); await ensureTarget() },
       onData: () => {}, onExit: () => {}, onUserInput: () => {}
     })
@@ -137,7 +142,114 @@ describe('PtyBridge waiting on ensureTarget', () => {
   })
 })
 
-describe('UTF-8 in a Finder-launched app', () => {
+describe('PtyBridge with a backend that attaches asynchronously', () => {
+  // TmuxBackend attaches at once; a backend that answers later must not leak a terminal or a late callback.
+  function slow(attach: Promise<void>) {
+    const closed: string[] = []
+    const got: string[] = []
+    const calls: string[] = []
+    let h: AttachHandlers | undefined
+    const backend = {
+      attach: async (name: string, _c: number, _r: number, handlers: AttachHandlers) => {
+        h = handlers
+        await attach
+        return {
+          write: (d: string) => { calls.push(`write ${d}`) },
+          resize: (c: number, r: number) => { calls.push(`resize ${c}x${r}`) },
+          close: () => { closed.push(name) }
+        }
+      }
+    } as unknown as SessionBackend
+    const b = new PtyBridge({
+      backend, ensureTarget: async () => {},
+      onData: (_i, _k, d) => { got.push(d) }, onExit: (_i, _k, c) => { got.push(`exit ${c}`) }, onUserInput: () => {}
+    })
+    return { b, closed, got, calls, handlers: () => waitFor(async () => h, 2000, 'attach called') }
+  }
+
+  test('input typed while attaching is kept up to MAX_TYPED; the excess is dropped, with a log line', async () => {
+    let arrive!: () => void
+    const { b, calls, handlers } = slow(new Promise((r) => { arrive = r }))
+    const opening = b.open('s1', 'claude', 100, 30)
+    await handlers()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      b.write('s1', 'claude', 'x'.repeat(MAX_TYPED - 1))
+      b.write('s1', 'claude', 'yz') // one fits, one doesn't
+      expect(warn).toHaveBeenCalledTimes(1)
+      b.write('s1', 'claude', 'clack')
+      expect(warn).toHaveBeenCalledTimes(1)
+    } finally {
+      warn.mockRestore()
+    }
+    arrive()
+    await opening
+    expect(calls).toHaveLength(1)
+    expect(calls[0]).toBe(`write ${'x'.repeat(MAX_TYPED - 1)}y`)
+    b.dispose()
+  })
+
+  test('the typed-input cap does not split a surrogate pair', async () => {
+    let arrive!: () => void
+    const { b, calls, handlers } = slow(new Promise((r) => { arrive = r }))
+    const opening = b.open('s1', 'claude', 100, 30)
+    await handlers()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      b.write('s1', 'claude', 'x'.repeat(MAX_TYPED - 1) + '\u{1F600}') // the emoji's high half would be the last kept unit
+    } finally {
+      warn.mockRestore()
+    }
+    arrive()
+    await opening
+    expect(calls).toEqual([`write ${'x'.repeat(MAX_TYPED - 1)}`])
+    b.dispose()
+  })
+
+  test('a resize and keys sent while attaching reach the attachment once it arrives (the last size only)', async () => {
+    let arrive!: () => void
+    const { b, calls, handlers } = slow(new Promise((r) => { arrive = r }))
+    const opening = b.open('s1', 'claude', 100, 30)
+    await handlers()
+    b.resize('s1', 'claude', 120, 40)
+    b.resize('s1', 'claude', 0, 41)
+    b.write('s1', 'claude', 'a')
+    b.write('s1', 'claude', 'b')
+    expect(calls).toEqual([])
+    arrive()
+    await opening
+    expect(calls).toEqual(['resize 1x41', 'write ab'])
+    b.resize('s1', 'claude', 130, 50)
+    b.write('s1', 'claude', 'c')
+    expect(calls).toEqual(['resize 1x41', 'write ab', 'resize 130x50', 'write c'])
+    b.dispose()
+  })
+
+  test('output before attach() returns is forwarded; a dispose meanwhile closes the attachment once it arrives', async () => {
+    let arrive!: () => void
+    const { b, closed, got, handlers } = slow(new Promise((r) => { arrive = r }))
+    const opening = b.open('s1', 'claude', 100, 30)
+    const h = await handlers()
+    h.onData('replay')
+    b.dispose()
+    h.onData('late')
+    h.onExit(0)
+    arrive()
+    await opening
+    expect(got).toEqual(['replay'])
+    expect(closed).toEqual([claudeTmuxName('s1')])
+  })
+
+  test('a failed attach rejects open()', async () => {
+    const { b, closed } = slow(Promise.reject(new Error('no host')))
+    await expect(b.open('s1', 'claude', 100, 30)).rejects.toThrow('no host')
+    b.write('s1', 'claude', 'x') // nothing registered: a no-op
+    b.dispose()
+    expect(closed).toEqual([])
+  })
+})
+
+describe.skipIf(WINDOWS)('UTF-8 in a Finder-launched app', () => {
   // Claude's TUI glyphs; a non-UTF-8 tmux client prints `A_ _ _ h_llo _` instead.
   const GLYPHS = 'A❯ ⏺ ⎿ héllo ❯'
   const FINDER = { PATH: '/usr/bin:/bin:/usr/sbin:/sbin', HOME: os.homedir() }
@@ -146,7 +258,7 @@ describe('UTF-8 in a Finder-launched app', () => {
   async function render(tmux: Tmux, env: Record<string, string>): Promise<string> {
     let out = ''
     const b = new PtyBridge({
-      tmux, env, ensureTarget: async () => {}, onData: (_i, _k, d) => { out += d }, onExit: () => {}, onUserInput: () => {}
+      backend: new TmuxBackend(tmux, env), ensureTarget: async () => {}, onData: (_i, _k, d) => { out += d }, onExit: () => {}, onUserInput: () => {}
     })
     try {
       await tmux.newSession({ name: claudeTmuxName('u'), cwd: t.tmp, argv: ['sh', '-c', `printf '%s\\n' '${GLYPHS}'; sleep 60`] })

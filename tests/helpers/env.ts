@@ -1,10 +1,15 @@
 import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { basename, delimiter, join, resolve } from 'node:path'
+import type { SessionBackend } from '../../src/main/backend'
 import { exec } from '../../src/main/exec'
+import { HostBackend } from '../../src/main/host-backend'
 import { resolvePaths, type AppPaths } from '../../src/main/paths'
 import { installResources } from '../../src/main/resources'
 import { Tmux } from '../../src/main/tmux'
+import { TmuxBackend } from '../../src/main/tmux-backend'
+import { hostLaunch, stopHost } from './host'
+import { killMentioning, WINDOWS } from './processes'
 import { tmuxSocketPath } from './tmux-socket'
 
 export { tmuxSocketPath }
@@ -17,7 +22,13 @@ export async function makeTestEnv(): Promise<{
   tmp: string
   paths: AppPaths
   env: Record<string, string>
+  /** Pitwall's tmux server (macOS; never started on Windows). */
   tmux: Tmux
+  /**
+   * Where sessions run, as the app sees them: that tmux server, or on Windows (no tmux) a Pitwall host for this data
+   * dir, started by the first session, as the app starts one.
+   */
+  backend: SessionBackend
   cleanup(): Promise<void>
 }> {
   const tmp = await realpath(await mkdtemp(join(tmpdir(), 'pitwall-env-')))
@@ -31,8 +42,9 @@ export async function makeTestEnv(): Promise<{
       PITWALL_WORKTREES_DIR: join(tmp, 'worktrees'),
       PITWALL_SSH_DIR: join(tmp, 'ssh'),
       PITWALL_TMUX_SOCKET: socket,
-      PITWALL_CLAUDE_BIN: join(fixtures, 'claude'),
-      PITWALL_GH_BIN: join(fixtures, 'gh')
+      // Windows has no sh: the Node stubs, through their .cmd shims.
+      PITWALL_CLAUDE_BIN: join(fixtures, process.platform === 'win32' ? 'claude.cmd' : 'claude'),
+      PITWALL_GH_BIN: join(fixtures, process.platform === 'win32' ? 'gh.cmd' : 'gh')
     },
     tmp
   )
@@ -40,18 +52,31 @@ export async function makeTestEnv(): Promise<{
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v
   delete env.TMUX
   delete env.TMUX_PANE
-  env.PATH = `${fixtures}:${env.PATH ?? '/usr/bin:/bin'}`
+  const pathKey = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH' // `Path` on Windows
+  env[pathKey] = `${fixtures}${delimiter}${env[pathKey] ?? '/usr/bin:/bin'}`
   env.HOME = tmp
   await installResources(paths)
   const tmux = new Tmux({ socket, confPath: paths.tmuxConf, env, exec })
+  // The host takes `env` as it is when the first session starts it (tests add STUB_* variables after this).
+  const { file, args } = hostLaunch(paths.dataDir)
+  const backend = WINDOWS
+    ? new HostBackend({ dataDir: paths.dataDir, appVersion: 'test', launch: { file, args, get env() { return env } } })
+    : new TmuxBackend(tmux, env)
   return {
     tmp,
     paths,
     env,
     tmux,
+    backend,
     async cleanup() {
-      await tmux.killServer().catch(() => {})
-      await rm(tmuxSocketPath(socket, env), { force: true })
+      if (WINDOWS) {
+        ;(backend as HostBackend).disconnect()
+        await stopHost(paths.dataDir) // the host and every session in it
+        await killMentioning(basename(tmp)) // anything else left that names this folder (an agent, a shell)
+      } else {
+        await tmux.killServer().catch(() => {})
+        await rm(tmuxSocketPath(socket, env), { force: true })
+      }
       await rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   }

@@ -33,12 +33,12 @@ test('mark as unread stays while visible and clears when opened', async () => {
   await page.getByTestId('start-session').click()
   await expect(page.getByTestId('new-session-dialog')).toHaveCount(0, { timeout: 30_000 })
   id = (await row().getAttribute('data-session-id'))!
-  await waitFor(async () => (await paneText(e.socket, id)).includes('STUB CLAUDE READY'), 15_000, 'ready')
+  await waitFor(async () => (await paneText(e, id)).includes('STUB CLAUDE READY'), 15_000, 'ready')
   await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].emit('focus'))
 
   await page.keyboard.type('hi')
   await page.keyboard.press('Enter')
-  await waitFor(async () => (await paneText(e.socket, id)).includes('echo: hi'), 15_000, 'echo: hi')
+  await waitFor(async () => (await paneText(e, id)).includes('echo: hi'), 15_000, 'echo: hi')
   await expect(row()).toHaveAttribute('data-status', 'read', { timeout: 15_000 })
   await page.waitForTimeout(500) // let the Stop event land
 
@@ -57,6 +57,21 @@ test('mark as unread stays while visible and clears when opened', async () => {
   await expect(row()).toHaveAttribute('data-status', 'read')
 })
 
+test('minimized with no blur (Windows can leave a minimized window focused): a finished reply is unread', async () => {
+  const emit = (event: string) => app!.evaluate(({ BrowserWindow }, ev) => { BrowserWindow.getAllWindows()[0].emit(ev) }, event)
+  await emit('focus')
+  await expect(row()).toHaveAttribute('data-status', 'read')
+  await emit('minimize')
+  await page.getByTestId('terminal-claude').click()
+  await page.keyboard.type('away')
+  await page.keyboard.press('Enter')
+  await waitFor(async () => (await paneText(e, id)).includes('echo: away'), 15_000, 'echo: away')
+  await expect(row()).toHaveAttribute('data-status', 'unread', { timeout: 15_000 })
+  await emit('restore')
+  await emit('focus')
+  await expect(row()).toHaveAttribute('data-status', 'read')
+})
+
 test('a muted project still shows what needs you', async () => {
   await expect(page.getByTestId('project-muted')).toHaveCount(0)
   await page.getByTestId('project-row').hover()
@@ -68,7 +83,7 @@ test('a muted project still shows what needs you', async () => {
   await page.getByTestId('terminal-claude').click()
   await page.keyboard.type('ask')
   await page.keyboard.press('Enter')
-  await waitFor(async () => (await paneText(e.socket, id)).includes('STUB ASKS PERMISSION'), 15_000, 'asked')
+  await waitFor(async () => (await paneText(e, id)).includes('STUB ASKS PERMISSION'), 15_000, 'asked')
   await expect(row()).toHaveAttribute('data-status', 'needs_you')
 
   await page.getByTestId('project-row').hover()

@@ -4,6 +4,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, test } from 'vitest'
 import { exec } from '../../src/main/exec'
 import { resolveShellEnv, utf8LangFor } from '../../src/main/shell-env'
+import { WINDOWS } from '../helpers/processes'
 
 // What a Dock/Finder launch hands the app: no LANG/LC_*, no CLAUDE* vars, a minimal PATH.
 const FINDER = { PATH: '/usr/bin:/bin:/usr/sbin:/sbin', HOME: os.homedir() }
@@ -24,7 +25,8 @@ async function fakeShell(exports: string): Promise<string> {
   return file
 }
 
-describe('resolveShellEnv', () => {
+// The login shell (zsh, sh): macOS only. Windows takes the app's own environment (windows-platform.test.ts).
+describe.skipIf(WINDOWS)('resolveShellEnv', () => {
   test('Finder-like minimal PATH still finds tmux', { timeout: 60_000 }, async () => {
     const real = (await exec('/bin/zsh', ['-ilc', 'command -v tmux'])).stdout.trim().split('\n').pop() ?? ''
     if (!real.startsWith('/')) return // no tmux on this machine's login shell

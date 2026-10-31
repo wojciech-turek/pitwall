@@ -2,7 +2,7 @@ import { realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import type { Session, StartProgress, StartResult } from '@shared/types'
 import { defaultBranchName, slugify } from '@shared/slug'
-import { uniquePath } from '../git'
+import { samePath, uniquePath } from '../git'
 import { sessionDir } from '../paths'
 import { claudeTmuxName } from '../tmux'
 import { checkIdentity, launchTmuxFor, msg, progressSteps, StepError, writeSessionFiles, type StarterDeps } from './starter'
@@ -60,7 +60,7 @@ async function doResume(
 ): Promise<StartResult> {
   const steps = progressSteps(requestId, onProgress)
   const { emit, run } = steps
-  const { git, paths, tmux } = deps
+  const { git, paths, backend } = deps
   const dir = sessionDir(paths, sessionId)
   const created = {
     repoRoot: undefined as string | undefined, worktree: undefined as string | undefined,
@@ -76,7 +76,7 @@ async function doResume(
       }
     }
     const { repoRoot, worktree, branch } = created
-    if (created.tmux) await attempt(() => tmux.killSession(claudeTmuxName(sessionId)))
+    if (created.tmux) await attempt(() => backend.killSession(claudeTmuxName(sessionId)))
     if (worktree && repoRoot) await attempt(() => git.removeWorktree(repoRoot, worktree, true))
     if (worktree) await attempt(() => rm(worktree, { recursive: true, force: true }))
     if (branch && repoRoot) await attempt(() => git.deleteBranch(repoRoot, branch))
@@ -107,13 +107,14 @@ async function doResume(
       await run('worktree', async () => {
         if (!(await isDir(root))) throw new Error(`The repo isn't there any more: ${root}`)
         const info = await git.detectFolder(root)
-        if (info.kind !== 'repo' || info.repoRoot !== root) throw new Error(`This folder isn't a git repo any more: ${root}`)
+        // (samePath: a repoRoot stored by an earlier Windows build may be spelled C:/… as git prints it.)
+        if (info.kind !== 'repo' || !samePath(info.repoRoot, root, deps.platform)) throw new Error(`This folder isn't a git repo any more: ${root}`)
         // A worktree folder deleted by hand keeps its branch and path taken until git forgets it. Forget only this
         // session's: a repo-wide prune would also drop the user's own worktrees on a disk that isn't mounted.
         const original = s.worktreePath ?? join(paths.worktreesRoot, slugify(sub.name), s.slug)
         const originalPaths = [original, await realPath(original)]
         for (const w of await git.listWorktrees(root)) {
-          if (w.prunable && originalPaths.includes(w.path)) await git.removeWorktree(root, w.path, true)
+          if (w.prunable && originalPaths.some((p) => samePath(p, w.path, deps.platform))) await git.removeWorktree(root, w.path, true)
         }
         let base: string | undefined
         let makeBranch = false // Pitwall makes the local branch now: a new one, or the old one from its pushed copy

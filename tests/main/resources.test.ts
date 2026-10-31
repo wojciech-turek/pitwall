@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { resolvePaths, type AppPaths } from '../../src/main/paths'
 import { installResources, resourcesDir } from '../../src/main/resources'
+import { WINDOWS } from '../helpers/processes'
 
 let tmp: string
 let paths: AppPaths
@@ -15,12 +16,26 @@ afterEach(async () => { await rm(tmp, { recursive: true, force: true }) })
 
 const launch = () => join(paths.binDir, 'pitwall-launch')
 
+const exists = (p: string) => stat(p).then(() => true, () => false)
+
 describe('installResources', () => {
   test('installs scripts executable and the tmux config', async () => {
-    await installResources(paths)
-    expect((await stat(launch())).mode & 0o777).toBe(0o755)
+    await installResources(paths, resourcesDir(), 'darwin')
+    if (!WINDOWS) expect((await stat(launch())).mode & 0o777).toBe(0o755) // (no POSIX modes on Windows)
     expect(await readFile(launch(), 'utf8')).toBe(await readFile(join(resourcesDir(), 'bin', 'pitwall-launch'), 'utf8'))
     expect(await readFile(paths.tmuxConf, 'utf8')).toContain('prefix None')
+  })
+
+  test('Windows has no tmux: the scripts, but no tmux config', async () => {
+    await installResources(paths, resourcesDir(), 'win32')
+    expect(await readFile(join(paths.binDir, 'pitwall-hook.ps1'), 'utf8'))
+      .toBe(await readFile(join(resourcesDir(), 'bin', 'pitwall-hook.ps1'), 'utf8'))
+    expect(await exists(paths.tmuxConf)).toBe(false)
+  })
+
+  test("this platform's default: a tmux config except on Windows", async () => {
+    await installResources(paths)
+    expect(await exists(paths.tmuxConf)).toBe(!WINDOWS)
   })
 
   test('identical files are not rewritten', async () => {
@@ -33,7 +48,8 @@ describe('installResources', () => {
     expect(after.mtimeMs).toBe(before.mtimeMs)
   })
 
-  test('a changed script is replaced by rename, never rewritten in place under a running reader', async () => {
+  // sh reads a running script as it goes; Windows runs no sh scripts (PowerShell reads a script whole first).
+  test.skipIf(WINDOWS)('a changed script is replaced by rename, never rewritten in place under a running reader', async () => {
     await installResources(paths)
     await writeFile(launch(), '#!/bin/sh\necho old version\n')
     const before = await stat(launch())

@@ -7,6 +7,7 @@ import { GitClient } from '../../src/main/git'
 import {
   formatAgentReference, listSessionFiles, readForEditor, resolveInside, writeFromEditor
 } from '../../src/main/files'
+import { WINDOWS } from '../helpers/processes'
 import { makeRepo } from '../helpers/repo'
 
 const dirs: string[] = []
@@ -26,12 +27,14 @@ describe('files', () => {
     await mkdir(join(root, 'src'))
     await writeFile(join(root, 'src/a.ts'), 'x')
     await writeFile(join(outside, 'secret'), 's')
-    await symlink(outside, join(root, 'link'))
-    await symlink(join(outside, 'secret'), join(root, 'src/leak'))
+    // Windows: a junction for the folder (needs no privilege); a file symlink needs Developer Mode or an admin.
+    await symlink(outside, join(root, 'link'), WINDOWS ? 'junction' : undefined)
+    const fileLink = await symlink(join(outside, 'secret'), join(root, 'src/leak'))
+      .then(() => true, (e: NodeJS.ErrnoException) => { if (WINDOWS && e.code === 'EPERM') return false; throw e })
     await expect(resolveInside(root, '../x')).rejects.toThrow('Path is outside the session folder')
     await expect(resolveInside(root, '/etc/passwd')).rejects.toThrow('Path is outside the session folder')
     await expect(resolveInside(root, 'link/secret')).rejects.toThrow('Path is outside the session folder')
-    await expect(resolveInside(root, 'src/leak')).rejects.toThrow('Path is outside the session folder')
+    if (fileLink) await expect(resolveInside(root, 'src/leak')).rejects.toThrow('Path is outside the session folder')
     expect(await resolveInside(root, 'src/a.ts')).toBe(join(root, 'src/a.ts'))
     // a not-yet-existing file inside the root is fine (writes)
     expect(await resolveInside(root, 'src/new.ts')).toBe(join(root, 'src/new.ts'))

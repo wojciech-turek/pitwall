@@ -2,6 +2,27 @@
 
 All notable changes to Pitwall are listed here, newest first. Pitwall shows these notes when an update is available, before you download it.
 
+## [0.3.0] - 2026-10-31
+
+### Added
+
+- **Windows (beta).** Pitwall runs on Windows 10 (version 1809 or later) and Windows 11, on x64 and ARM, with the same projects, worktrees, identities and live status as on a Mac. Download `Pitwall-0.3.0-x64-setup.exe`, or `Pitwall-0.3.0-arm64-setup.exe` for Windows on ARM. The installer isn't signed yet, so SmartScreen asks once per version: click **More info**, then **Run anyway**. It installs for your user only, with no administrator rights.
+- **Agents keep running on Windows too.** Windows has no tmux, so a small background process of Pitwall's own, the host, keeps the agents' terminals running while the app is closed, and Pitwall reattaches when you reopen it.
+- **Made for Windows:** Ctrl shortcuts (in a terminal, `Ctrl+Shift+K` and so on, so a plain `Ctrl+K` still reaches the program there), Windows notifications, a count on the taskbar button that flashes when a session needs you, and a PowerShell Shell tab.
+
+### Windows notes
+
+- Updating Pitwall on Windows stops running agents: the installer (and the uninstaller) asks first, then closes Pitwall and its background host, also when the host is all that's left running after you quit. Each agent resumes its conversation when you reopen Pitwall.
+- Status hooks run in Windows PowerShell, about half a second each, so tool calls feel a little slower than on a Mac.
+- If PowerShell scripts can't run (a Group Policy that blocks them, say), Claude still works, but the session's status doesn't update, and its header says so and why.
+- Teardown commands run in `cmd.exe`.
+- The README's **Windows (beta)** section has the requirements (Claude Code, Git for Windows), where things live and the known limitations.
+
+### Changed
+
+- **Archiving retries when a file is briefly in use** (a virus scan, the indexer, an editor) on every platform, and, if git has already let go of the worktree but a file in it stays in use, it finishes and tells you which folder to delete later.
+- **Archiving a folder's last session removes its now-empty folder** in `~/pitwall/worktrees` (only when nothing else is in it).
+
 ## [0.2.0] - 2026-10-30
 
 ### Added

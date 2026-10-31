@@ -2,8 +2,10 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { app, BrowserWindow, dialog, Menu, powerMonitor, shell } from 'electron'
 import { IPC } from '@shared/api'
+import { launcherChoice, sessionBackendKind, type SessionBackend } from './backend'
 import { exec } from './exec'
 import { historySources, SessionHistory } from './history'
+import { HostBackend } from './host-backend'
 import { buildMenuTemplate } from './menu'
 import { GitClient } from './git'
 import { ChangesService } from './changes'
@@ -11,6 +13,7 @@ import { PrPoller } from './pr'
 import { registerIpc } from './ipc'
 import { electronNotifier } from './notifier'
 import { resolvePaths, sessionDir } from './paths'
+import { appUserModelId } from './platform'
 import { ProjectService } from './projects'
 import { PtyBridge } from './pty-bridge'
 import { installResources, resourcesDir } from './resources'
@@ -19,13 +22,28 @@ import { KeyedMutex } from './sessions/mutex'
 import { resolveShellEnv } from './shell-env'
 import { Store } from './store'
 import { Tmux } from './tmux'
+import { TmuxBackend } from './tmux-backend'
 import { releasesUrl, UpdateChecker } from './updates'
 import { UsageTracker } from './usage'
+import { isViewing, viewingAfter, type ViewingEvent } from './viewing'
+import { windowChrome } from './window-chrome'
 import { APP_VERSION } from '@shared/version'
 
 // A dev build is unmistakable: its own name, and below its own Dock icon.
 const DEV = !app.isPackaged
 app.setName(DEV ? 'Pitwall Dev' : 'Pitwall')
+const WINDOWS = process.platform === 'win32'
+// Tests (PITWALL_SHOW_INACTIVE=1, set for every e2e launch): the app never takes the keyboard or shows up while
+// someone works at the machine. macOS: no Dock icon, never the active app; its window is invisible and lets clicks
+// through (tests drive it over the DevTools protocol, which needs neither).
+const QUIET = process.env.PITWALL_SHOW_INACTIVE === '1'
+const keepInBackground = (): void => {
+  if (!QUIET || process.platform !== 'darwin') return
+  try { app.setActivationPolicy('accessory') } catch { /* not yet allowed: whenReady sets it again */ }
+}
+keepInBackground()
+// Windows ties notifications and the taskbar button to this id; it must be set before any notification.
+if (WINDOWS) app.setAppUserModelId(appUserModelId(DEV))
 // A dev build keeps its own data, tmux socket and worktrees (see resolvePaths).
 const paths = resolvePaths(process.env, homedir(), { dev: DEV })
 app.setPath('userData', paths.dataDir)
@@ -43,6 +61,7 @@ let disposeChanges: (() => void) | null = null
 let disposePr: (() => void) | null = null
 let disposeUsage: (() => void) | null = null
 let disposeUpdates: (() => void) | null = null
+let refreshBadge: (() => void) | null = null
 
 const send = (channel: string, ...args: unknown[]): void => {
   if (win && !win.isDestroyed()) win.webContents.send(channel, ...args)
@@ -54,25 +73,43 @@ function createWindow(): void {
     height: 900,
     minWidth: 900,
     minHeight: 600,
-    titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 14, y: 14 },
+    ...windowChrome(process.platform),
+    // macOS: the bundle's icon (a dev run sets the Dock's below). Windows: the installed .exe's, or the dev one.
+    ...(WINDOWS && DEV ? { icon: join(resourcesDir(), 'icon-dev.png') } : {}),
     title: DEV ? 'Pitwall Dev' : 'Pitwall',
     backgroundColor: '#171615',
     show: false,
+    // Tests: invisible, but still painting (screenshots) and running timers as if it were in front.
+    ...(QUIET ? { opacity: 0 } : {}),
     webPreferences: {
       preload: join(import.meta.dirname, '../preload/index.cjs'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      ...(QUIET ? { backgroundThrottling: false } : {})
     }
   })
+  if (QUIET) w.setIgnoreMouseEvents(true)
   win = w
   winLoaded = false
   // The page's <title> must not override the window title.
   w.on('page-title-updated', (e) => e.preventDefault())
   // Tests open windows without taking the keyboard, so typing elsewhere during a run can't reach them.
-  w.once('ready-to-show', () => (process.env.PITWALL_SHOW_INACTIVE === '1' ? w.showInactive() : w.show()))
-  w.on('focus', () => manager?.setViewing(visibleIds, true))
-  w.on('blur', () => manager?.setViewing(visibleIds, false))
+  w.once('ready-to-show', () => {
+    if (QUIET) w.showInactive()
+    else w.show()
+    refreshBadge?.() // Windows: the waiting count is an overlay on this window's taskbar button
+  })
+  // Viewed while focused and neither minimized nor hidden: on Windows a minimize can come with no blur.
+  const viewing = (e: ViewingEvent): void => manager?.setViewing(visibleIds, viewingAfter(e, w))
+  w.on('focus', () => {
+    if (WINDOWS) w.flashFrame(false)
+    viewing('focus')
+  })
+  w.on('blur', () => viewing('blur'))
+  w.on('minimize', () => viewing('minimize'))
+  w.on('hide', () => viewing('hide'))
+  w.on('restore', () => viewing('restore'))
+  w.on('show', () => viewing('show'))
   // Nothing may replace the app's UI (a file dropped outside a terminal used to navigate to it). The one exception is
   // reloading the app's own page (the error screen's Reload button; location.reload() counts as a navigation).
   w.webContents.on('will-navigate', (e) => {
@@ -111,6 +148,10 @@ function createWindow(): void {
 function showAndFocus(): void {
   if (!win) createWindow()
   if (!win) return
+  if (QUIET) { // tests: never in front, never the keyboard
+    if (!win.isVisible()) win.showInactive()
+    return
+  }
   if (win.isMinimized()) win.restore()
   win.show()
   win.focus()
@@ -124,16 +165,37 @@ function focusSession(sessionId: string): void {
   else pendingFocusId = sessionId
 }
 
+/**
+ * tmux on Pitwall's private socket, or (PITWALL_SESSION_BACKEND=host) the Pitwall host: this executable run as Node
+ * on out/host/index.js, one per data dir, so a dev build and the installed app never share agents.
+ */
+function createBackend(env: Record<string, string>): SessionBackend {
+  if (sessionBackendKind(process.env) === 'tmux') {
+    return new TmuxBackend(new Tmux({ socket: paths.tmuxSocket, confPath: paths.tmuxConf, env, exec }), env)
+  }
+  return new HostBackend({
+    dataDir: paths.dataDir,
+    appVersion: APP_VERSION,
+    launch: {
+      file: process.execPath,
+      args: [join(import.meta.dirname, '../host/index.js'), '--data', paths.dataDir],
+      env: { ...env, ELECTRON_RUN_AS_NODE: '1' }
+    }
+  })
+}
+
 async function bootstrap(): Promise<void> {
   const home = homedir()
   const env = await resolveShellEnv()
   await installResources(paths)
   const store = await Store.open(paths.stateFile)
   const git = new GitClient(exec, env)
-  const tmux = new Tmux({ socket: paths.tmuxSocket, confPath: paths.tmuxConf, env, exec })
-  const notifier = electronNotifier(focusSession, paths.notificationsDisabled)
+  const backend = createBackend(env)
+  const notifier = electronNotifier(focusSession, paths.notificationsDisabled, { window: () => win, quiet: QUIET })
+  refreshBadge = () => notifier.refresh()
   const mutex = new KeyedMutex()
-  const mgr = new SessionManager({ store, paths, git, tmux, exec, env, home, mutex, notifier })
+  const launcher = launcherChoice(process.env)
+  const mgr = new SessionManager({ store, paths, git, backend, exec, env, home, mutex, notifier, launcher })
   manager = mgr
   await mgr.init()
 
@@ -148,7 +210,7 @@ async function bootstrap(): Promise<void> {
     }
   })
   bridge = new PtyBridge({
-    tmux, env,
+    backend,
     ensureTarget: (id, kind) => mgr.ensureTerminalTarget(id, kind),
     onData: (id, kind, data) => send(IPC.termData, id, kind, data),
     onExit: (id, kind, code) => send(IPC.termExit, id, kind, code),
@@ -185,13 +247,14 @@ async function bootstrap(): Promise<void> {
   disposeUpdates = () => { powerMonitor.removeListener('resume', onResume); updates.stop() }
   const history = new SessionHistory(() => historySources(mgr.snapshot(), home, env))
   disposeIpc = registerIpc({
-    manager: mgr, changes, store, git, tmux, projects, bridge, paths, exec, env, home, mutex, history, usage, updates, send, dev: DEV,
+    manager: mgr, changes, store, git, backend, projects, bridge, paths, exec, env, home, mutex, history, usage, updates, send, dev: DEV,
+    launcher,
     onViewing: (ids) => {
       visibleIds = ids
-      mgr.setViewing(ids, win?.isFocused() ?? false)
+      mgr.setViewing(ids, isViewing(win))
     }
   })
-  Menu.setApplicationMenu(Menu.buildFromTemplate(buildMenuTemplate((c) => send(IPC.menuCommand, c), !app.isPackaged)))
+  Menu.setApplicationMenu(Menu.buildFromTemplate(buildMenuTemplate((c) => send(IPC.menuCommand, c), !app.isPackaged, process.platform)))
   createWindow()
 }
 
@@ -209,8 +272,9 @@ if (!isPrimaryInstance) {
   })
 
   void app.whenReady().then(async () => {
-    // The packaged app gets its icon from the bundle; a dev run would show Electron's.
-    if (!app.isPackaged) {
+    keepInBackground()
+    // The packaged app gets its icon from the bundle; a dev run would show Electron's (tests show none).
+    if (!app.isPackaged && !QUIET) {
       try { app.dock?.setIcon(join(resourcesDir(), 'icon-dev.png')) } catch { /* cosmetic */ }
     }
     try {

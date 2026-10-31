@@ -2,7 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import { waitFor } from '../helpers/wait'
-import { launchApp, makeE2eEnv, paneText, tmux, type E2eEnv } from './helpers'
+import { clearLine, launchApp, makeE2eEnv, paneText, type E2eEnv } from './helpers'
 
 const PACKAGED = process.env.PACKAGED === '1'
 const SHOTS = process.env.PITWALL_E2E_SCREENS || join(process.cwd(), 'test-results/screens')
@@ -37,7 +37,7 @@ async function startSession(title: string): Promise<string> {
   await page.getByTestId('start-session').click()
   await expect(page.getByTestId('new-session-dialog')).toHaveCount(0, { timeout: 30_000 })
   const id = (await row(title).getAttribute('data-session-id'))!
-  await waitFor(async () => (await paneText(e.socket, id)).includes('STUB CLAUDE READY'), 15_000, `${title} ready`)
+  await waitFor(async () => (await paneText(e, id)).includes('STUB CLAUDE READY'), 15_000, `${title} ready`)
   return id
 }
 
@@ -57,11 +57,14 @@ async function dragOver(title: string, target: Locator, spot: Spot): Promise<voi
   await page.mouse.move(to.x, to.y, { steps: 8 })
 }
 
-/** Types a line wherever the keyboard focus is, and checks it reached the session's Claude. */
+/** Waits for the keyboard to be in the session's pane (it moves there a moment after the pane becomes active), types a
+ * line, and checks it reached the session's Claude. */
 async function typeTo(sessionId: string, text: string): Promise<void> {
+  await expect.poll(() => page.evaluate('document.activeElement?.closest("[data-testid=pane]")?.getAttribute("data-session-id") ?? null'))
+    .toBe(sessionId)
   await page.keyboard.type(text)
   await page.keyboard.press('Enter')
-  await waitFor(async () => (await paneText(e.socket, sessionId)).includes(`echo: ${text}`), 15_000, `echo: ${text}`)
+  await waitFor(async () => (await paneText(e, sessionId)).includes(`echo: ${text}`), 15_000, `echo: ${text}`)
 }
 
 const menu = (accel: string): Promise<void> => app!.evaluate(({ Menu }, a) => {
@@ -172,11 +175,12 @@ test.describe('split view', () => {
     await expect(preview()).toHaveCount(0)
     await expect(page.getByTestId('drop-layer')).toHaveCount(0) // layers exist only during a session drag
     await cdp.send('Input.dispatchDragEvent', { type: 'drop', x, y, data })
-    await waitFor(async () => (await paneText(e.socket, beta)).includes('dropped file.txt'), 10_000, 'dropped path in prompt')
+    // (Lines joined: the host's screen breaks a long line at the pane's width, as a narrow pane shows it.)
+    await waitFor(async () => (await paneText(e, beta)).replace(/\n/g, '').includes('dropped file.txt'), 10_000, 'dropped path in prompt')
     // dropping on a pane's terminal makes that pane active
     await expect(panes().nth(0)).toHaveAttribute('data-active', 'true')
     await cdp.detach()
-    await tmux(e.socket, 'send-keys', '-t', `=pw-${beta}:`, 'C-u') // leave an empty prompt
+    await clearLine(e, beta) // leave an empty prompt
   })
 
   test('⌘W on a Claude tab closes the active pane', async () => {

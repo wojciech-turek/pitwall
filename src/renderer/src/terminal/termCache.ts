@@ -5,6 +5,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { ClipboardAddon } from '@xterm/addon-clipboard'
 import type { TermKind } from '@shared/types'
 import { shouldPassToApp } from './keys'
+import { plainText } from './plain-text'
 import { TERMINAL_THEME } from './theme'
 import { DEFAULT_SETTINGS } from '@shared/types'
 
@@ -62,7 +63,7 @@ export function getTerminal(sessionId: string, kind: TermKind): Entry {
   term.loadAddon(fit)
   term.loadAddon(new WebLinksAddon((_e, uri) => { void window.pitwall.openExternal(uri).catch(() => {}) }))
   term.loadAddon(new ClipboardAddon())
-  term.attachCustomKeyEventHandler((e) => !shouldPassToApp(e))
+  term.attachCustomKeyEventHandler((e) => !shouldPassToApp(e, { hasSelection: term.hasSelection() }))
   const entry: Entry = { term, fit, opened: false, rendered: false, reopenOnKey: false }
   term.onData((data) => {
     if (entry.reopenOnKey) {
@@ -85,7 +86,7 @@ export async function openPty(sessionId: string, kind: TermKind, entry: Entry): 
   } catch (e) {
     entry.opened = false
     entry.reopenOnKey = true
-    const msg = (e instanceof Error ? e.message : String(e)).replace(/^Error invoking remote method '[^']*':\s*(Error:\s*)?/, '')
+    const msg = plainText((e instanceof Error ? e.message : String(e)).replace(/^Error invoking remote method '[^']*':\s*(Error:\s*)?/, ''))
     entry.term.write(`\r\n\x1b[31m${msg.replace(/\n/g, '\r\n')}\x1b[0m\r\n\x1b[90m[press any key to retry]\x1b[0m`)
   }
 }

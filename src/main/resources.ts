@@ -1,7 +1,8 @@
 import { existsSync } from 'node:fs'
-import { chmod, mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { renameOver } from './atomic'
 import type { AppPaths } from './paths'
 
 function moduleDir(): string {
@@ -36,17 +37,21 @@ async function installFile(src: string, dest: string, mode?: number): Promise<vo
     const tmp = `${dest}.${process.pid}.tmp`
     await writeFile(tmp, content)
     if (mode !== undefined) await chmod(tmp, mode)
-    await rename(tmp, dest)
+    await renameOver(tmp, dest) // Windows: a hook may be reading the old script right now
   } else if (mode !== undefined) {
     await chmod(dest, mode)
   }
 }
 
-export async function installResources(paths: AppPaths, fromDir: string = resourcesDir()): Promise<void> {
+/** The scripts into the data dir's bin, and the tmux config beside them (not on Windows, which has no tmux). */
+export async function installResources(
+  paths: AppPaths, fromDir: string = resourcesDir(), platform: NodeJS.Platform = process.platform
+): Promise<void> {
   await mkdir(paths.binDir, { recursive: true })
-  await mkdir(dirname(paths.tmuxConf), { recursive: true })
   for (const name of await readdir(join(fromDir, 'bin'))) {
     await installFile(join(fromDir, 'bin', name), join(paths.binDir, name), 0o755)
   }
+  if (platform === 'win32') return
+  await mkdir(dirname(paths.tmuxConf), { recursive: true })
   await installFile(join(fromDir, 'tmux.conf'), paths.tmuxConf)
 }

@@ -45,7 +45,7 @@ test('search an archived session by a word in its conversation, resume it, and t
   await page.getByTestId('start-session').click()
   await expect(page.getByTestId('new-session-dialog')).toHaveCount(0, { timeout: 30_000 })
   const id = (await page.getByTestId('session-row').getAttribute('data-session-id'))!
-  await waitFor(async () => (await paneText(e.socket, id)).includes('STUB CLAUDE READY'), 15_000, 'ready')
+  await waitFor(async () => (await paneText(e, id)).includes('STUB CLAUDE READY'), 15_000, 'ready')
 
   const s = (await state()).sessions.find((x) => x.id === id)!
   await writeTranscript(s.cwd, s.claudeSessionId, [
@@ -90,7 +90,7 @@ test('search an archived session by a word in its conversation, resume it, and t
   await expect(page.locator('[data-testid="pane"][data-active="true"]')).toHaveAttribute('data-session-id', id)
 
   await waitFor(async () => (await claudeLog()).includes(`--resume ${s.claudeSessionId}`), 15_000, 'claude --resume')
-  await waitFor(async () => (await paneText(e.socket, id)).includes('STUB CLAUDE READY'), 15_000, 'ready after resume')
+  await waitFor(async () => (await paneText(e, id)).includes('STUB CLAUDE READY'), 15_000, 'ready after resume')
   const back = (await state()).sessions.find((x) => x.id === id)!
   expect(back.archivedAt).toBeUndefined()
   expect(back.worktreePath).toBe(s.worktreePath)
@@ -99,7 +99,7 @@ test('search an archived session by a word in its conversation, resume it, and t
   await page.getByTestId('terminal-claude').click()
   await page.keyboard.type('still there?')
   await page.keyboard.press('Enter')
-  await waitFor(async () => (await paneText(e.socket, id)).includes('echo: still there?'), 15_000, 'echo after resume')
+  await waitFor(async () => (await paneText(e, id)).includes('echo: still there?'), 15_000, 'echo after resume')
   await shot(page, '21-resumed')
 })
 

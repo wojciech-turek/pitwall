@@ -76,7 +76,12 @@ async function parseShellEnv(shell: string, base: Record<string, string>, timeou
   }
 }
 
-/** Resolves the environment of the user's interactive login shell (Finder-launched apps get a minimal PATH). */
+/**
+ * Resolves the environment of the user's interactive login shell (Finder-launched apps get a minimal PATH).
+ * Windows has no login shell: an app started from the Start menu already has the user's environment, so it is used
+ * as it is. There the user's own CLAUDE_CODE_* settings (e.g. CLAUDE_CODE_GIT_BASH_PATH) arrive in that same
+ * environment, so the nested-Claude markers are dropped only when a parent Claude set them (CLAUDECODE).
+ */
 export async function resolveShellEnv(
   o: {
     shell?: string
@@ -84,8 +89,13 @@ export async function resolveShellEnv(
     timeoutMs?: number
     /** Test seam: the `defaults read -g AppleLocale` value. */
     appleLocale?: () => Promise<string | undefined>
+    platform?: NodeJS.Platform
   } = {}
 ): Promise<Record<string, string>> {
+  if ((o.platform ?? process.platform) === 'win32') {
+    const env = toRecord(o.base ?? process.env)
+    return Object.keys(env).some((k) => k.toUpperCase() === 'CLAUDECODE') ? withoutNestedClaude(env) : env
+  }
   // Nested-Claude markers are dropped before the shell runs, so only values the user's own rc files set survive.
   const base = withoutNestedClaude(toRecord(o.base ?? process.env))
   const shell = o.shell ?? process.env.SHELL ?? '/bin/zsh'

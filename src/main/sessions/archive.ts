@@ -1,12 +1,14 @@
-import { access, mkdir, rm } from 'node:fs/promises'
-import { join } from 'node:path'
+import { access, mkdir, realpath, rm, rmdir } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import type { ArchiveCheck, ArchiveResult, Session, SubProject } from '@shared/types'
+import { deleteEnv, mergeEnv } from '../../host/win-command'
+import { samePath } from '../git'
 import { buildSessionEnv, getGhToken, INHERITED_GH_TOKENS, withoutGhTokens } from '../identity'
 import { eventsFile, sessionDir } from '../paths'
 import type { PtyBridge } from '../pty-bridge'
 import { claudeTmuxName, shellTmuxName } from '../tmux'
 import type { SessionManager } from './manager'
-import { snapshotLeftovers, stopLeftovers } from './leftovers'
+import { snapshotLeftovers, stopLeftovers, type LeftoverOptions } from './leftovers'
 import { runTeardown } from './teardown'
 import { launchTmuxFor, writeSessionFiles, type StarterDeps } from './starter'
 
@@ -17,10 +19,65 @@ export interface ArchiveDeps extends StarterDeps {
   ptyBridge: PtyBridge
   /** Teardown time limit; default 2 minutes. */
   teardownTimeoutMs?: number
+  /** How leftover processes are listed and ended (a test seam). */
+  leftovers?: Pick<LeftoverOptions, 'ps' | 'end' | 'kill'>
+  /** Wait between tries of removing a worktree git couldn't remove (a test seam; default 400 ms, then 800). */
+  removeRetryMs?: number
 }
 
 const msg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 const exists = (p: string) => access(p).then(() => true, () => false)
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+
+type Removal = { ok: true; folderLeft: boolean } | { ok: false; error: unknown }
+
+/**
+ * `git worktree remove --force`, tried three times (a virus scanner or the indexer holding a file lets go quickly).
+ * On Windows a file or folder in use (an editor, a terminal cd'd there) makes git fail *after* it has unregistered
+ * the worktree and deleted the rest; git then knows no worktree there (later attempts say "not a working tree"). Then
+ * what's left of the folder is deleted as far as it can be, and archiving goes on: `folderLeft` says the folder is
+ * still there. Only a folder git had as this repo's worktree before the first attempt is ever deleted that way: a
+ * path git never registered (a repo of its own, say) is never removed by hand. Archiving checked for uncommitted
+ * work (and asked) before this, as it does before any removal. On macOS the same applies (retries are rarely needed).
+ */
+async function removeWorktree(repoRoot: string, path: string, deps: ArchiveDeps): Promise<Removal> {
+  const platform = deps.platform ?? process.platform
+  const real = await realpath(path).catch(() => path) // git records real paths (a worktree under a symlink)
+  // A listing that fails answers "not registered" before the attempts (nothing is deleted by hand) and "registered"
+  // after them (the old path: the agent goes back in).
+  const registered = (fallback: boolean): Promise<boolean> => deps.git.listWorktrees(repoRoot)
+    .then((ws) => ws.some((w) => samePath(w.path, path, platform) || samePath(w.path, real, platform)), () => fallback)
+  const wasRegistered = await registered(false)
+  let error: unknown
+  for (let i = 0; i < 3; i++) {
+    try {
+      await deps.git.removeWorktree(repoRoot, path, true)
+      return { ok: true, folderLeft: false }
+    } catch (e) {
+      error = e
+    }
+    if (wasRegistered && !(await registered(true))) {
+      await rm(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }).catch(() => undefined)
+      return { ok: true, folderLeft: await exists(path) }
+    }
+    if (i < 2) await sleep((deps.removeRetryMs ?? 400) * (i + 1))
+  }
+  return { ok: false, error }
+}
+
+/**
+ * A worktree lives in worktrees/<folder>/<session>. Once the last one there is gone, worktrees/<folder>/ is removed,
+ * but only when it is empty (rmdir, which never deletes anything with content) and only when it is directly inside
+ * Pitwall's worktrees folder (a session resumed elsewhere, or the worktrees folder itself, is never touched). Never
+ * throws: not empty, in use or already gone all leave it as it is.
+ */
+export async function removeEmptyWorktreesFolder(
+  worktreePath: string, worktreesRoot: string, platform: NodeJS.Platform
+): Promise<void> {
+  const folder = dirname(worktreePath)
+  if (!samePath(dirname(folder), worktreesRoot, platform)) return
+  await rmdir(folder).catch(() => undefined)
+}
 
 const EMPTY: ArchiveCheck = {
   uncommittedFiles: 0, unpushedCommits: 0, hasRemote: false, willDeleteBranch: false, willRemoveWorktree: false
@@ -43,7 +100,7 @@ async function applyGhAccount(env: Record<string, string>, account: string, dir:
     env.GH_TOKEN = token
     return
   }
-  for (const k of INHERITED_GH_TOKENS) delete env[k] // fail closed: no token of any kind
+  for (const k of INHERITED_GH_TOKENS) deleteEnv(env, k, deps.platform ?? process.platform) // fail closed: no token of any kind
   env.GH_CONFIG_DIR = join(dir, 'gh-unauthenticated')
   await mkdir(env.GH_CONFIG_DIR, { recursive: true })
 }
@@ -115,39 +172,52 @@ export async function archiveSession(
     }
 
     const panes = [
-      await deps.tmux.listPanePids(claudeTmuxName(s.id)),
-      await deps.tmux.listPanePids(shellTmuxName(s.id))
+      await deps.backend.processRoots(claudeTmuxName(s.id)),
+      await deps.backend.processRoots(shellTmuxName(s.id))
     ]
     const serverPid = panes.find((p) => p.serverPid)?.serverPid ?? null
-    const leftovers = await snapshotLeftovers(panes.flatMap((p) => p.panePids), serverPid)
+    const platform = deps.platform ?? process.platform
+    // The host says when it started each pane: on Windows a pane pid created at another time was reused since.
+    const paneStartedAt = new Map<number, number>()
+    for (const p of panes) {
+      p.panePids.forEach((pid, i) => {
+        const at = p.paneStarts?.[i]
+        if (typeof at === 'number' && Number.isFinite(at)) paneStartedAt.set(pid, at)
+      })
+    }
+    const leftoverOptions: LeftoverOptions = { platform, paneStartedAt, ...deps.leftovers }
+    const leftovers = await snapshotLeftovers(panes.flatMap((p) => p.panePids), serverPid, leftoverOptions)
     deps.ptyBridge.close(s.id, 'claude')
     deps.ptyBridge.close(s.id, 'shell')
     terminalsClosed = true
-    await deps.tmux.killSession(claudeTmuxName(s.id))
-    await deps.tmux.killSession(shellTmuxName(s.id))
+    await deps.backend.killSession(claudeTmuxName(s.id))
+    await deps.backend.killSession(shellTmuxName(s.id))
 
     const repoRoot = sp?.repoRoot
     if (sp?.teardownCommand?.trim() && !o.skipTeardown && (await exists(s.cwd))) {
       const project = deps.store.state.projects.find((p) => p.id === sp.projectId)
       if (project) {
         const dir = sessionDir(deps.paths, s.id)
-        const env: Record<string, string> = {
+        const env = mergeEnv(
           // With a project account, tokens inherited from the user's shell must not stand in for it; the
           // project's own extra variables (merged next) are kept.
-          ...(project.identity.ghAccount ? withoutGhTokens(deps.env) : deps.env),
-          ...buildSessionEnv({
-            project, session: s, rootPath: sp.repoRoot ?? sp.path, sessionDir: dir,
-            eventsFile: eventsFile(deps.paths, s.id), claudeBin: deps.paths.claudeBin, ghBin: deps.paths.ghBin,
-            home: deps.home
-          }),
-          PITWALL_WORKTREE_PATH: s.worktreePath ?? s.cwd,
-          PITWALL_BRANCH: s.branch ?? '',
-          PITWALL_SESSION_TITLE: s.title
-        }
+          project.identity.ghAccount ? withoutGhTokens(deps.env, platform) : deps.env,
+          {
+            ...buildSessionEnv({
+              project, session: s, rootPath: sp.repoRoot ?? sp.path, sessionDir: dir,
+              eventsFile: eventsFile(deps.paths, s.id), claudeBin: deps.paths.claudeBin, ghBin: deps.paths.ghBin,
+              home: deps.home, platform
+            }),
+            PITWALL_WORKTREE_PATH: s.worktreePath ?? s.cwd,
+            PITWALL_BRANCH: s.branch ?? '',
+            PITWALL_SESSION_TITLE: s.title
+          },
+          platform
+        )
         await applyGhAccount(env, project.identity.ghAccount, dir, deps)
-        const r = await runTeardown(sp.teardownCommand, { cwd: s.cwd, env, timeoutMs: deps.teardownTimeoutMs })
+        const r = await runTeardown(sp.teardownCommand, { cwd: s.cwd, env, timeoutMs: deps.teardownTimeoutMs, platform })
         if (r.timedOut || r.exitCode !== 0) {
-          await stopLeftovers(leftovers)
+          await stopLeftovers(leftovers, leftoverOptions)
           reattachable()
           return { ok: false, teardownFailed: r }
         }
@@ -155,11 +225,12 @@ export async function archiveSession(
         console.warn(`Teardown skipped for ${s.id}: project ${sp.projectId} not found.`)
       }
     }
-    await stopLeftovers(leftovers)
+    await stopLeftovers(leftovers, leftoverOptions)
+    let leftFolder: string | undefined
     if (check.willRemoveWorktree && repoRoot && s.worktreePath) {
-      try {
-        await deps.git.removeWorktree(repoRoot, s.worktreePath, true)
-      } catch (e) {
+      const removal = await removeWorktree(repoRoot, s.worktreePath, deps)
+      if (!removal.ok) {
+        // Still a worktree: the agent goes back into it.
         try {
           await writeSessionFiles(s, deps)
           await launchTmuxFor(s, deps)
@@ -167,8 +238,9 @@ export async function archiveSession(
           // best effort; the session stays active and reattaching relaunches it
         }
         reattachable()
-        return { ok: false, error: `Couldn't remove the worktree: ${msg(e)}` }
+        return { ok: false, error: `Couldn't remove the worktree: ${msg(removal.error)}` }
       }
+      if (removal.folderLeft) leftFolder = s.worktreePath
     }
     let branchDeleted = false
     if (check.willDeleteBranch && repoRoot && s.branch) {
@@ -181,13 +253,15 @@ export async function archiveSession(
     }
 
     deps.manager.dropSession(s.id)
-    await rm(sessionDir(deps.paths, s.id), { recursive: true, force: true })
+    // (Retried: on Windows a scanner may hold a file in Pitwall's own session folder for a moment.)
+    await rm(sessionDir(deps.paths, s.id), { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
     await deps.store.update((d) => {
       const x = d.sessions.find((y) => y.id === s.id)
       if (x) x.archivedAt = Date.now()
       if (x && branchDeleted) x.branchDeleted = true
     })
-    return { ok: true }
+    if (s.worktreePath) await removeEmptyWorktreesFolder(s.worktreePath, deps.paths.worktreesRoot, platform)
+    return leftFolder ? { ok: true, leftFolder } : { ok: true }
   } catch (e) {
     if (terminalsClosed) reattachable()
     return { ok: false, error: msg(e) }

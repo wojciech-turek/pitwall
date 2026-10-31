@@ -3,7 +3,7 @@ import { basename } from 'node:path'
 import type { AddFolderResult, ProjectInput } from '@shared/api'
 import type { GitIdentity, Project, RepoIdentity, SubProject } from '@shared/types'
 import type { Exec } from './exec'
-import type { GitClient } from './git'
+import { samePath, type GitClient } from './git'
 import {
   applyRepoIdentity, buildSshCommand, envVarNameError, identityMatches, readRepoIdentity, replaceRepoIdentity
 } from './identity'
@@ -149,7 +149,7 @@ export class ProjectService {
     const project = this.project(projectId)
     if (!project) return { status: 'error', message: 'Project not found.' }
     try {
-      const dup = store.state.subProjects.find((s) => s.path === path)
+      const dup = store.state.subProjects.find((s) => samePath(s.path, path))
       if (dup) {
         const owner = store.state.projects.find((p) => p.id === dup.projectId)
         return { status: 'error', message: `That folder is already added (in ${owner?.name ?? 'another project'}).` }

@@ -79,7 +79,8 @@ const api: PitwallApi = {
     } catch {
       return ''
     }
-  }
+  },
+  platform: process.platform
 }
 
 contextBridge.exposeInMainWorld('pitwall', api)

@@ -11,6 +11,7 @@ import { cleanIpcError } from '../state/errors'
 import { useAppInfo } from '../state/appInfo'
 import { checkForUpdatesNow } from '../state/updates'
 import { goToNextAttention } from '../state/menuCommands'
+import { modDown, shortcut } from '../platform'
 import { focusActivePane } from './PaneLayout'
 import { openInCursor } from './SessionHeader'
 import StatusDot from './StatusDot'
@@ -222,9 +223,10 @@ export default function CommandPalette({ snap, mode }: { snap: AppSnapshot; mode
   }
   const onKeyDown = (e: React.KeyboardEvent): void => {
     const ctrl = e.ctrlKey && !e.metaKey && !e.altKey
-    if (e.key === 'ArrowDown' || (ctrl && e.key === 'n')) { e.preventDefault(); move(1) }
-    else if (e.key === 'ArrowUp' || (ctrl && e.key === 'p')) { e.preventDefault(); move(-1) }
-    else if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); run(enterTarget(), e.metaKey) }
+    // Ctrl+N/P move here; they never reach the app's own shortcuts (new session, go to file on Windows).
+    if (e.key === 'ArrowDown' || (ctrl && e.key === 'n')) { e.preventDefault(); e.stopPropagation(); move(1) }
+    else if (e.key === 'ArrowUp' || (ctrl && e.key === 'p')) { e.preventDefault(); e.stopPropagation(); move(-1) }
+    else if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); run(enterTarget(), modDown(e)) }
     else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close() }
     else if (e.key === 'Tab') e.preventDefault()
   }
@@ -269,7 +271,7 @@ export default function CommandPalette({ snap, mode }: { snap: AppSnapshot; mode
                     data-path={item.kind === 'file' ? item.path : undefined}
                     data-action={item.kind === 'action' ? item.action.id : undefined}
                     onMouseMove={() => { if (i !== index) setSelectedKey(item.key) }}
-                    onClick={(e) => run(item, e.metaKey)}>
+                    onClick={(e) => run(item, modDown(e))}>
                     <ItemBody item={item} />
                   </div>
                 )
@@ -281,7 +283,7 @@ export default function CommandPalette({ snap, mode }: { snap: AppSnapshot; mode
         <div className="palette-foot">
           <span><kbd>↑</kbd><kbd>↓</kbd> move</span>
           <span><kbd>↵</kbd> open</span>
-          {canSplit && <span><kbd>⌘↵</kbd> split right</span>}
+          {canSplit && <span><kbd>{shortcut('↵')}</kbd> split right</span>}
           <span><kbd>esc</kbd> close</span>
         </div>
       </div>

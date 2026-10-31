@@ -52,9 +52,12 @@ function apply(rt: SessionRuntime, ev: HookEvent): SessionRuntime {
     case 'SessionEnd':
       return ev.reason === 'clear' || ev.reason === 'resume' ? rt : { ...clearNeeds(rt), activity: 'exited' }
     case 'pitwall:launch': {
-      const { exitCode: _x, ...rest } = clearNeeds(rt)
+      // A new run of Claude: its launcher reports its warnings again after this.
+      const { exitCode: _x, warnings: _w, ...rest } = clearNeeds(rt)
       return { ...rest, activity: 'starting' }
     }
+    case 'pitwall:warning':
+      return ev.msg ? { ...rt, warnings: { ...rt.warnings, [ev.kind || 'other']: ev.msg } } : rt
     case 'pitwall:exited': {
       const next: SessionRuntime = { ...clearNeeds(rt), activity: 'exited' }
       if (ev.code != null) next.exitCode = ev.code

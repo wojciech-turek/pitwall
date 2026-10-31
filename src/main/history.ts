@@ -196,7 +196,15 @@ interface Conversation { files: FileState[]; text: CappedText; plain: string; lo
 
 const EMPTY: Pick<Conversation, 'plain' | 'lower'> = { plain: '', lower: '' }
 
-interface Listing { mtimeMs: number; files: string[] }
+/** A folder's files, read at `readAt`, when the folder's mtime was `mtimeMs`. */
+interface Listing { mtimeMs: number; readAt: number; files: string[] }
+
+/**
+ * A listing is trusted while its folder's mtime is unchanged only if the folder had last changed this long before
+ * the listing was read: a file system's clock moves in steps (about 16 ms on Windows, 2 s on FAT), so a file added
+ * in the same step as the listing would leave the mtime as it was. A folder that changed more recently is read again.
+ */
+const RACY_MS = 2000
 
 export class SessionHistory {
   /** Bytes read from transcripts so far (lets tests check that unchanged files aren't read again). */
@@ -295,9 +303,10 @@ export class SessionHistory {
       return []
     }
     const cur = cache.get(dir)
-    if (cur && cur.mtimeMs === st.mtimeMs) return cur.files
+    if (cur && cur.mtimeMs === st.mtimeMs && cur.readAt - cur.mtimeMs > RACY_MS) return cur.files
+    const readAt = Date.now()
     const files = await read().catch(() => [])
-    cache.set(dir, { mtimeMs: st.mtimeMs, files })
+    cache.set(dir, { mtimeMs: st.mtimeMs, readAt, files })
     return files
   }
 

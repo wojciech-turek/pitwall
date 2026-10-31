@@ -35,5 +35,5 @@ export async function makeRepo(
     await git(root, 'remote', 'add', 'origin', remote)
     if (commits) await git(root, 'push', '-u', 'origin', 'main')
   }
-  return { root, remote, env, cleanup: () => rm(tmp, { recursive: true, force: true }) }
+  return { root, remote, env, cleanup: () => rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) }
 }

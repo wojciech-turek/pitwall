@@ -21,6 +21,12 @@ body { background: var(--bg-app); color: var(--text); font-family: var(--font-ui
 
 /* ---------- title bar ---------- */
 .titlebar { display: flex; align-items: center; justify-content: space-between; padding: 0 14px 0 82px; user-select: none; }
+/* Windows: no traffic lights on the left; Windows draws its window buttons over the right end (titleBarOverlay in
+   main/window-chrome.ts), so the counts stop short of them. */
+:root[data-platform="win32"] .titlebar {
+  padding-left: 14px;
+  padding-right: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, calc(100vw - 138px)) + 14px);
+}
 .titlebar-name { font-size: 12px; color: var(--text-faint); letter-spacing: .02em; }
 .titlebar-counts { display: flex; gap: 14px; font-size: 12px; color: var(--text-muted); -webkit-app-region: no-drag; }
 .count { display: inline-flex; align-items: center; gap: 6px; }

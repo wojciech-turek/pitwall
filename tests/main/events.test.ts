@@ -1,11 +1,17 @@
-import { describe, expect, test } from 'vitest'
-import { mkdtemp, writeFile, appendFile } from 'node:fs/promises'
+import { afterAll, describe, expect, test } from 'vitest'
+import { appendFile, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { appendEvent, EventTailer, parseEventLine } from '../../src/main/hooks/events'
 import type { HookEvent } from '../../src/shared/types'
 
-const tmp = async () => join(await mkdtemp(join(tmpdir(), 'pitwall-ev-')), 'events.jsonl')
+const made: string[] = []
+afterAll(async () => { for (const d of made) await rm(d, { recursive: true, force: true }) })
+const tmp = async () => {
+  const d = await mkdtemp(join(tmpdir(), 'pitwall-ev-'))
+  made.push(d)
+  return join(d, 'events.jsonl')
+}
 const ev = (t: number, e = 'Stop'): HookEvent => ({ c: 's', t, e })
 const until = async (cond: () => boolean, ms = 3000) => {
   const end = Date.now() + ms

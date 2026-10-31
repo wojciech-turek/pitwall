@@ -5,13 +5,16 @@ import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { exec } from '../../src/main/exec'
 import { GitClient } from '../../src/main/git'
+import { forwardSlashes } from '../../src/main/hooks/settings'
 import { sessionDir } from '../../src/main/paths'
 import { KeyedMutex } from '../../src/main/sessions/mutex'
 import { prepareNewSession, startSession, writeSessionFiles, type StarterDeps } from '../../src/main/sessions/starter'
 import { Store } from '../../src/main/store'
-import { claudeTmuxName, type Tmux } from '../../src/main/tmux'
+import type { SessionBackend } from '../../src/main/backend'
+import { claudeTmuxName } from '../../src/main/tmux'
 import type { NewSessionInput, Project, Session, StartProgress, SubProject } from '../../src/shared/types'
 import { makeTestEnv } from '../helpers/env'
+import { WINDOWS } from '../helpers/processes'
 import { makeRepo } from '../helpers/repo'
 import { waitFor } from '../helpers/wait'
 
@@ -48,7 +51,7 @@ afterEach(async () => {
 
 function mkDeps(over: Partial<StarterDeps> = {}, gitEnv: Record<string, string> = t.env): StarterDeps {
   return {
-    store, paths: t.paths, git: new GitClient(exec, gitEnv), tmux: t.tmux, exec, env: t.env, home: t.tmp,
+    store, paths: t.paths, git: new GitClient(exec, gitEnv), backend: t.backend, exec, env: t.env, home: t.tmp,
     mutex: new KeyedMutex(),
     ...over
   }
@@ -94,10 +97,17 @@ describe('startSession', () => {
     expect(await has(s.worktreePath!)).toBe(true)
     expect(s.baseBranch).toBe('main')
     expect(s.baseCommit).toMatch(/^[0-9a-f]{40}$/)
-    expect(await t.tmux.hasSession(claudeTmuxName(s.id))).toBe(true)
+    expect(await t.backend.hasSession(claudeTmuxName(s.id))).toBe(true)
     const envFile = join(sessionDir(t.paths, s.id), 'env.sh')
-    expect((await stat(envFile)).mode & 0o777).toBe(0o600)
+    if (!WINDOWS) expect((await stat(envFile)).mode & 0o777).toBe(0o600) // (no POSIX modes on Windows)
     expect(await readFile(envFile, 'utf8')).not.toContain('token-for')
+    // The same variables as JSON, for the host's launcher (Windows): owner-only, no token either.
+    const envJson = join(sessionDir(t.paths, s.id), 'env.json')
+    if (!WINDOWS) expect((await stat(envJson)).mode & 0o777).toBe(0o600)
+    const vars = JSON.parse(await readFile(envJson, 'utf8')) as Record<string, string>
+    expect(vars).toMatchObject({ PITWALL_SESSION_ID: s.id, GIT_AUTHOR_EMAIL: expect.any(String), PITWALL_GH_ACCOUNT: expect.any(String) })
+    expect(JSON.stringify(vars)).not.toContain('token-for')
+    expect(await readFile(envFile, 'utf8')).toContain(`export PITWALL_SESSION_ID='${s.id}'`)
     const steps = ['identity', 'worktree', 'files', 'tmux', 'claude']
     expect(progress.map((p) => `${p.step}:${p.state}`)).toEqual(steps.flatMap((x) => [`${x}:running`, `${x}:done`]))
     expect(progress.at(-1)?.message).toBe('Started — answer any prompt in the terminal')
@@ -145,7 +155,7 @@ describe('startSession', () => {
     const res = await start(input(sp))
     expect(res).toEqual({ ok: false, step: 'tmux', error: `Session folder not found: ${folder}` })
     expect(store.state.sessions).toEqual([])
-    expect(await t.tmux.listSessions()).toEqual([])
+    expect(await t.backend.listSessions()).toEqual([])
   })
 
   test('monorepo subfolder starts in matching subfolder', async () => {
@@ -186,9 +196,9 @@ describe('startSession', () => {
       newSession: async () => {
         throw new Error('boom')
       },
-      killSession: t.tmux.killSession.bind(t.tmux)
-    } as unknown as Tmux
-    deps = { ...deps, tmux: broken }
+      killSession: t.backend.killSession.bind(t.backend)
+    } as unknown as SessionBackend
+    deps = { ...deps, backend: broken }
     const res = await start(input(sp))
     expect(res).toEqual({ ok: false, step: 'tmux', error: 'boom' })
     expect(store.state.sessions).toEqual([])
@@ -314,7 +324,8 @@ describe('writeSessionFiles', () => {
   }
   const envSh = (s: Session) => readFile(join(sessionDir(t.paths, s.id), 'env.sh'), 'utf8')
 
-  test('hooks.json runs pitwall-statusline with the session folder', async () => {
+  // macOS's sh hooks (the platform's own; Windows' are below).
+  test.skipIf(WINDOWS)('hooks.json runs pitwall-statusline with the session folder', async () => {
     const s = await folderSession()
     await writeSessionFiles(s, deps)
     const settings = JSON.parse(await readFile(join(sessionDir(t.paths, s.id), 'hooks.json'), 'utf8'))
@@ -322,6 +333,38 @@ describe('writeSessionFiles', () => {
     expect(settings.statusLine).toEqual({ type: 'command', command: `'${bin}' '${sessionDir(t.paths, s.id)}'`, padding: 0 })
     expect(settings.hooks.Stop[0].hooks[0].command).toContain('pitwall-hook')
     expect(await envSh(s)).not.toContain('PITWALL_USER_STATUSLINE')
+  })
+
+  test('Windows: hooks in exec form (PowerShell by its full path, forward slashes), the status line for Git Bash and PowerShell', async () => {
+    const s = await folderSession()
+    deps = mkDeps({ platform: 'win32', env: { ...t.env, SystemRoot: 'C:\\WINDOWS' } })
+    await writeSessionFiles(s, deps)
+    const dir = sessionDir(t.paths, s.id)
+    const settings = JSON.parse(await readFile(join(dir, 'hooks.json'), 'utf8'))
+    for (const e of Object.keys(settings.hooks)) {
+      expect(settings.hooks[e]).toEqual([{ hooks: [{
+        type: 'command',
+        command: 'C:/WINDOWS/System32/WindowsPowerShell/v1.0/powershell.exe',
+        args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', forwardSlashes(join(t.paths.binDir, 'pitwall-hook.ps1')),
+          forwardSlashes(join(dir, 'events.jsonl')), s.id],
+        timeout: 30
+      }] }])
+    }
+    expect(settings.statusLine).toEqual({
+      type: 'command',
+      command: `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '${forwardSlashes(join(t.paths.binDir, 'pitwall-statusline.ps1'))}' '${forwardSlashes(dir)}'`,
+      padding: 0
+    })
+    const vars = JSON.parse(await readFile(join(dir, 'env.json'), 'utf8'))
+    expect(vars.PITWALL_GIT_BASH).toBeUndefined() // no user status line to chain
+    // A user status line is chained in Git Bash when Claude Code would find one (any program there stands in for it).
+    const bash = WINDOWS ? process.execPath : '/bin/sh'
+    await writeFile(join(s.cwd, '.claude', 'settings.json'), JSON.stringify({ statusLine: { type: 'command', command: '~/sl.sh' } }))
+    deps = mkDeps({ platform: 'win32', env: { ...t.env, CLAUDE_CODE_GIT_BASH_PATH: bash } })
+    await writeSessionFiles(s, deps)
+    expect(JSON.parse(await readFile(join(dir, 'env.json'), 'utf8'))).toMatchObject({
+      PITWALL_USER_STATUSLINE: '~/sl.sh', PITWALL_GIT_BASH: bash
+    })
   })
 
   test("the user's own status line (project settings, else the project's CLAUDE_CONFIG_DIR) is chained via env.sh", async () => {

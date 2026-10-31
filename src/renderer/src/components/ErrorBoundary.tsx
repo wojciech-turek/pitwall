@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
+import { isMac } from '../platform'
 
 /** Last line of defence: a render error shows what broke and a way back, instead of a blank window. */
 export default class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
@@ -18,7 +19,7 @@ export default class ErrorBoundary extends Component<{ children: ReactNode }, { 
     return (
       <div className="crash" role="alert" data-testid="error-boundary">
         <h1>Something went wrong</h1>
-        <p>Your agents are still running in tmux. Reloading the window reattaches them.</p>
+        <p>Your agents are still running {isMac() ? 'in tmux' : 'in the background'}. Reloading the window reattaches them.</p>
         <pre>{error.stack ?? error.message}</pre>
         <button className="btn primary" data-testid="error-reload" onClick={() => location.reload()}>Reload</button>
       </div>
