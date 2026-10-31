@@ -19,10 +19,13 @@ const repoRoot = process.cwd()
 export const SESSION_BACKEND: 'tmux' | 'host' =
   process.platform === 'win32' || process.env.PITWALL_SESSION_BACKEND === 'host' ? 'host' : 'tmux'
 
-/** The app `pnpm package` (macOS) or `pnpm package:win` (Windows, this machine's architecture) builds. */
-export const PACKAGED_EXE = WINDOWS
+/**
+ * The app `pnpm package` (macOS) or `pnpm package:win` (Windows, this machine's architecture) builds, or another build
+ * named by PITWALL_E2E_PACKAGED_EXE (the x64 one on Windows on ARM, which runs it emulated).
+ */
+export const PACKAGED_EXE = process.env.PITWALL_E2E_PACKAGED_EXE || (WINDOWS
   ? join(repoRoot, 'release', process.arch === 'arm64' ? 'win-arm64-unpacked' : 'win-unpacked', 'Pitwall.exe')
-  : join(repoRoot, 'release/mac-arm64/Pitwall.app/Contents/MacOS/Pitwall')
+  : join(repoRoot, 'release/mac-arm64/Pitwall.app/Contents/MacOS/Pitwall'))
 
 /** The key the app's shortcuts use with a letter: ⌘ on macOS, Ctrl on Windows. */
 export const MOD = WINDOWS ? 'Control' : 'Meta'
