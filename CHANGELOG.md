@@ -2,11 +2,16 @@
 
 All notable changes to Pitwall are listed here, newest first. Pitwall shows these notes when an update is available, before you download it.
 
-## [Unreleased]
+## [0.3.1] - 2026-11-01
 
 ### Added
 
 - **Continue a conversation**, from the clock button on a folder's row. It lists the folder's archived sessions and the Claude conversations you ran there outside Pitwall (with plain `claude`), newest first, and searches their titles and text. Picking an outside conversation continues it in a new session on a branch of its own, starting from the branch it was on (or main), and Claude remembers everything said. Continuing a conversation from outside Pitwall needs Claude Code 2.1.257 or newer. Changes you haven't committed in the folder stay there. If the conversation was used in the last few minutes, Pitwall asks first, since it may still be open in a terminal. Pitwall only reads Claude's conversation files, never changes them.
+- **The version in the title bar**, small and dim after the name, so you can always see which Pitwall you're on.
+
+### Fixed
+
+- **The terminal's last line is never cut off at the bottom.** At some window sizes the terminal fitted one row too many, and Claude's bottom line was clipped.
 
 ## [0.3.0] - 2026-10-31
 
