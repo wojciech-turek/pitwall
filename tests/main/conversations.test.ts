@@ -146,6 +146,16 @@ describe('listOutsideConversations', () => {
     expect(titles[4]).toHaveLength(120)
   })
 
+  test('titles lose control characters (ESC, NUL, DEL…), so none reaches a session title, --name or env.sh', async () => {
+    await convo(REPO, 1, chat(REPO, '\u001b[31mBuild\u001b[0m\u0000failed\u007f again\u0007'))
+    await convo(REPO, 2, [mode, ...chat(REPO, 'first message'), customTitle('Pasted\u001b[2K\u0000name')])
+    // Nothing left of a title but control characters: the next one is used.
+    await convo(REPO, 3, [mode, ...chat(REPO, 'the first message'), customTitle('\u001b\u0000\u007f')])
+    const titles = (await list()).items.map((x) => x.title).reverse()
+    expect(titles).toEqual(['[31mBuild [0m failed again', 'Pasted [2K name', 'the first message'])
+    for (const t of titles) expect(t).not.toMatch(/[\u0000-\u001f\u007f]/)
+  })
+
   test("branch is the latest recorded gitBranch; 'HEAD' counts as none", async () => {
     await convo(REPO, 1, [...chat(REPO, 'switched', 'main'), assistant('now on a feature', at(REPO, 'feature/x')), mode])
     await convo(REPO, 2, [...chat(REPO, 'detached', 'main'), assistant('detached now', at(REPO, 'HEAD'))])

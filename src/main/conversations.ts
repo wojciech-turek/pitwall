@@ -151,9 +151,12 @@ function within(p: string, root: string, platform: NodeJS.Platform): boolean {
   return rel === '' || (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel))
 }
 
-/** Collapsed to one line of at most MAX_TITLE characters. */
+/**
+ * Collapsed to one line of at most MAX_TITLE characters, without control characters (pasted terminal output has ESC;
+ * a NUL would stop Windows from starting Claude with the title as --name).
+ */
 function oneLine(s: string | undefined): string {
-  const t = (s ?? '').replace(/\s+/g, ' ').trim()
+  const t = (s ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim()
   if (t.length <= MAX_TITLE) return t
   let cut = t.slice(0, MAX_TITLE - 1)
   if (/[\uD800-\uDBFF]$/.test(cut)) cut = cut.slice(0, -1) // never half an emoji
