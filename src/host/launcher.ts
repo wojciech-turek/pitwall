@@ -9,7 +9,8 @@
  * - Claude starts with `--session-id` the first time (`started`), then `--resume`; a resume that fails before Claude
  *   reported SessionStart falls back to a new conversation (with the hooks off, one that has no transcript does);
  * - a conversation continued from outside Pitwall (`continue-note.txt`): every start of Claude rebuilds its system
- *   prompt for this folder, with the note, rather than reuse the recorded one (which names where it began);
+ *   prompt for this folder, with the note, rather than reuse the recorded one (which names where it began); and a
+ *   failed resume never falls back while its transcript exists (Claude's error stands; Enter resumes again);
  * - when Claude exits: "Press Enter to resume.", and Enter relaunches it. End of input (Ctrl+D) or Ctrl+C at that
  *   prompt ends the terminal, as they end the script's `read`.
  * Beyond the script: what it prints that matters (signed out of GitHub, setup failed, couldn't resume) is also logged
@@ -286,8 +287,11 @@ export class Launcher {
       this.logLaunch(env, 'resume')
       rc = await this.startClaude(['--resume', id, '--settings', settings], env)
       // Did that conversation start? SessionStart says so; with the hooks off there's none, so its transcript does.
+      // A conversation continued from outside Pitwall whose transcript exists counts as started: never start over it.
+      const continued = existsSync(this.file('continue-note.txt'))
       const started = async (): Promise<boolean> =>
-        hooks ? this.eventLines(env).slice(before).some(isSessionStart) : this.hasTranscript(env, id)
+        (hooks && this.eventLines(env).slice(before).some(isSessionStart)) ||
+        ((!hooks || continued) && (await this.hasTranscript(env, id)))
       if (rc !== 0 && !this.stopping && !(await started())) {
         this.logEvent(env, { e: 'pitwall:exited', code: rc })
         this.print(MESSAGES.resumeFailed())
@@ -463,7 +467,8 @@ export class Launcher {
 
   /**
    * Whether Claude has a transcript of this conversation (`<config dir>/projects/<any folder>/<id>.jsonl`), looked up
-   * read-only as the app's history does. Only asked when the hooks are off: then no SessionStart says it started.
+   * read-only as the app's history does. Only asked when the hooks are off (then no SessionStart says it started) or
+   * the conversation was continued from outside Pitwall.
    */
   private async hasTranscript(env: Record<string, string>, id: string): Promise<boolean> {
     const { platform } = this.o

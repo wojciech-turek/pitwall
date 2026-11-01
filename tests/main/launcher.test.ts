@@ -1,4 +1,4 @@
-import { chmod, mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { exec } from '../../src/main/exec'
@@ -129,28 +129,71 @@ describe('pitwall-launch', () => {
     expect(modes).toEqual(['new', 'resume', 'new'])
   })
 
-  test('a conversation continued from outside Pitwall (continue-note.txt): the first launch, a failed resume and the fallback all get --system-prompt-snapshot off and the note, whose path arrives whole', async () => {
-    await setup({ dir: join(t.tmp, `it's a "session" dir`, ID) })
-    const note = join(sd, 'continue-note.txt')
-    await writeFile(note, 'Work only here.\n')
-    const flag = join(t.tmp, 'resume-fail')
-    t.env.STUB_CLAUDE_RESUME_FAIL_FILE = flag
-    await start()
-    await waitCapture('STUB CLAUDE READY')
-    await t.tmux.sendKeys('pw-l', ['exit', 'Enter'])
-    await waitCapture('Press Enter to resume')
-    await writeFile(flag, '')
-    await t.tmux.sendKeys('pw-l', ['Enter'])
-    await waitCapture("Couldn't resume the previous conversation — starting a new one.")
-    await waitFor(async () => (await logLines()).filter((l) => l.startsWith('NOTE=')).length === 3, 8000, 'the fresh launch read the note')
-    const flags = `--system-prompt-snapshot off --append-system-prompt-file ${note}`
-    expect((await logLines()).filter((l) => l.startsWith('--'))).toEqual([
-      `--session-id ${ID} --settings ${sd}/hooks.json --name ${TITLE} ${flags}`,
-      `--resume ${ID} --settings ${sd}/hooks.json ${flags}`,
-      `--session-id ${ID} --settings ${sd}/hooks.json --name ${TITLE} ${flags}`
-    ])
-    // The stub read the file at the path it was given: one argument, quotes and spaces kept.
-    expect((await logLines()).filter((l) => l.startsWith('NOTE='))).toEqual(Array(3).fill('NOTE=Work only here.'))
+  describe('a conversation continued from outside Pitwall (continue-note.txt)', () => {
+    /** The project's own Claude config dir, which reaches the script through env.sh. */
+    const withConfigDir = (dir: string): Project => ({ ...project, extraEnv: [{ key: 'CLAUDE_CONFIG_DIR', value: dir }] })
+    /** A transcript as Claude keeps it: `<config dir>/projects/<folder>/<id>.jsonl` (only ever listed, never read). */
+    const transcript = async (configDir: string, id: string) => {
+      await mkdir(join(configDir, 'projects', '-x-repo'), { recursive: true })
+      await writeFile(join(configDir, 'projects', '-x-repo', `${id}.jsonl`), '{}\n')
+    }
+    /** Starts, exits, then fails the resume (exit 1, no SessionStart). */
+    const failResume = async () => {
+      const flag = join(t.tmp, 'resume-fail')
+      t.env.STUB_CLAUDE_RESUME_FAIL_FILE = flag
+      await start()
+      await waitCapture('STUB CLAUDE READY')
+      await t.tmux.sendKeys('pw-l', ['exit', 'Enter'])
+      await waitCapture('Press Enter to resume')
+      await writeFile(flag, '')
+      await t.tmux.sendKeys('pw-l', ['Enter'])
+      return flag
+    }
+
+    test("its transcript exists: a failed resume never starts a new conversation over it; Claude's error stands and Enter tries --resume again, every launch with --system-prompt-snapshot off and the note, whose path arrives whole", async () => {
+      const config = join(t.tmp, `it's a "claude" config`)
+      await setup({ dir: join(t.tmp, `it's a "session" dir`, ID), project: withConfigDir(config) })
+      await transcript(config, ID)
+      const note = join(sd, 'continue-note.txt')
+      await writeFile(note, 'Work only here.\n')
+      const flag = await failResume()
+      await waitCapture('Claude exited (code 1). Press Enter to resume.')
+      expect(await capture()).not.toContain("Couldn't resume the previous conversation")
+      await rm(flag)
+      await t.tmux.sendKeys('pw-l', ['Enter'])
+      await waitFor(async () => (await logLines()).filter((l) => l.startsWith('NOTE=')).length === 3, 8000, 'the second resume read the note')
+      const flags = `--system-prompt-snapshot off --append-system-prompt-file ${note}`
+      expect((await logLines()).filter((l) => l.startsWith('--'))).toEqual([
+        `--session-id ${ID} --settings ${sd}/hooks.json --name ${TITLE} ${flags}`,
+        `--resume ${ID} --settings ${sd}/hooks.json ${flags}`,
+        `--resume ${ID} --settings ${sd}/hooks.json ${flags}`
+      ])
+      // The stub read the file at the path it was given: one argument, quotes and spaces kept.
+      expect((await logLines()).filter((l) => l.startsWith('NOTE='))).toEqual(Array(3).fill('NOTE=Work only here.'))
+      await waitFor(async () => (await events()).filter((e) => e.e === 'pitwall:launch').length === 3, 8000, 'third launch')
+      const ev = (await events()).filter((e) => e.e === 'pitwall:launch' || e.e === 'pitwall:exited')
+      expect(ev.map((e) => [e.e, (e as { mode?: string }).mode ?? (e as { code?: number }).code])).toEqual([
+        ['pitwall:launch', 'new'], ['pitwall:exited', 0], ['pitwall:launch', 'resume'], ['pitwall:exited', 1], ['pitwall:launch', 'resume']
+      ])
+    })
+
+    test('no transcript of its id (after a /clear, say): a failed resume still starts a new conversation, with the note', async () => {
+      const config = join(t.tmp, 'claude config')
+      await setup({ project: withConfigDir(config) })
+      await transcript(config, 'the-id-before-clear')
+      await transcript(join(t.tmp, '.claude'), ID) // in HOME's config dir, not the session's: doesn't count
+      const note = join(sd, 'continue-note.txt')
+      await writeFile(note, 'Work only here.\n')
+      await failResume()
+      await waitCapture("Couldn't resume the previous conversation — starting a new one.")
+      await waitFor(async () => (await logLines()).filter((l) => l.startsWith('NOTE=')).length === 3, 8000, 'the fresh launch read the note')
+      const flags = `--system-prompt-snapshot off --append-system-prompt-file ${note}`
+      expect((await logLines()).filter((l) => l.startsWith('--'))).toEqual([
+        `--session-id ${ID} --settings ${sd}/hooks.json --name ${TITLE} ${flags}`,
+        `--resume ${ID} --settings ${sd}/hooks.json ${flags}`,
+        `--session-id ${ID} --settings ${sd}/hooks.json --name ${TITLE} ${flags}`
+      ])
+    })
   })
 
   test('relaunch re-reads env.sh and the token: an edited identity applies after exit + Enter', async () => {

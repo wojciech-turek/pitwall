@@ -38,6 +38,14 @@ start_claude() {
   "$PITWALL_CLAUDE_BIN" "$@"
 }
 
+# Whether Claude has a transcript of conversation $1 (<config dir>/projects/<any folder>/$1.jsonl); only lists folders.
+has_transcript() {
+  for f in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/projects/*/"$1".jsonl; do
+    [ -e "$f" ] && return 0
+  done
+  return 1
+}
+
 launch_new() {
   log_event "{\"c\":\"$PITWALL_SESSION_ID\",\"t\":$(now),\"e\":\"pitwall:launch\",\"mode\":\"new\"}"
   start_claude --session-id "$id" --settings "$dir/hooks.json" --name "$PITWALL_TITLE"
@@ -65,7 +73,10 @@ run_claude() (
     log_event "{\"c\":\"$PITWALL_SESSION_ID\",\"t\":$(now),\"e\":\"pitwall:launch\",\"mode\":\"resume\"}"
     start_claude --resume "$id" --settings "$dir/hooks.json"
     rc=$?
-    if [ "$rc" -ne 0 ] && ! tail -n +"$((before + 1))" "$PITWALL_EVENTS_FILE" 2>/dev/null | grep -q '"e":"SessionStart"'; then
+    # Failed before SessionStart: the conversation never started, so start a new one with this id. Never over a
+    # conversation continued from outside Pitwall whose transcript exists: Claude's error stands, Enter resumes again.
+    if [ "$rc" -ne 0 ] && ! tail -n +"$((before + 1))" "$PITWALL_EVENTS_FILE" 2>/dev/null | grep -q '"e":"SessionStart"' &&
+      ! { [ -e "$dir/continue-note.txt" ] && has_transcript "$id"; }; then
       log_event "{\"c\":\"$PITWALL_SESSION_ID\",\"t\":$(now),\"e\":\"pitwall:exited\",\"code\":$rc}"
       echo "Couldn't resume the previous conversation — starting a new one."
       launch_new
