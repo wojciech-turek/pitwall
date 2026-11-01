@@ -355,6 +355,9 @@ test.describe('dev build changes', () => {
     await menu('CmdOrCtrl+,')
     await expect(page.getByTestId('settings-version')).toHaveText(/^Pitwall \d+\.\d+\.\d+ \(dev build\)$/)
     await expect(page.getByTestId('titlebar-name')).toHaveText('Pitwall Dev')
+    // the version, quietly after the name, so you can always see which one you're on
+    const { version } = JSON.parse(await readFile('package.json', 'utf8')) as { version: string }
+    await expect(page.getByTestId('titlebar-version')).toHaveText(version)
     expect(await app!.evaluate(({ app }) => app.getName())).toBe('Pitwall Dev')
     await page.getByTestId('setting-size').fill('17')
     await page.getByTestId('settings-save').click()

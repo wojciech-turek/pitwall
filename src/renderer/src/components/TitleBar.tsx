@@ -17,6 +17,7 @@ export default function TitleBar({ sessions }: { sessions: SessionView[] }): Rea
   return (
     <div className="titlebar">
       <span className="titlebar-name" data-testid="titlebar-name">{info?.dev ? 'Pitwall Dev' : 'Pitwall'}</span>
+      {info && <span className="titlebar-version" data-testid="titlebar-version">{info.version}</span>}
       <div className="titlebar-right">
         <div className="titlebar-counts" data-testid="titlebar-counts"
           data-needs={c.needsYou} data-unread={c.unread} data-working={c.working}>

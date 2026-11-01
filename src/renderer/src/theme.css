@@ -28,6 +28,7 @@ body { background: var(--bg-app); color: var(--text); font-family: var(--font-ui
   padding-right: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, calc(100vw - 138px)) + 14px);
 }
 .titlebar-name { font-size: 12px; color: var(--text-faint); letter-spacing: .02em; }
+.titlebar-version { margin-left: 6px; margin-right: auto; font-size: 11px; color: var(--text-faint); opacity: .6; font-variant-numeric: tabular-nums; }
 .titlebar-counts { display: flex; gap: 14px; font-size: 12px; color: var(--text-muted); -webkit-app-region: no-drag; }
 .count { display: inline-flex; align-items: center; gap: 6px; }
 .count.zero { opacity: .4; }
