@@ -405,3 +405,52 @@ describe('SessionHistory', () => {
     expect(h.bytesRead).toBe(Buffer.byteLength(user('shared kestrel') + '\n'))
   })
 })
+
+describe('SessionHistory.searchFiles', () => {
+  const file = (name: string, lines: string[]) => transcript(join(tmp, '.claude'), '-x-repo', name, lines)
+
+  test('searchFiles matches titles first, then conversation text, with a snippet; forgets files no longer given', async () => {
+    const files = [
+      { key: 'conv', title: 'Other', path: await file('a', [user('we discussed the tax rounding bug'), assistant(text('Rounded.'))]) },
+      { key: 'title', title: 'Fix tax rounding', path: await file('b', [user('unrelated')]) },
+      { key: 'mixed', title: 'Tax', path: await file('c', [user('only rounding here')]) },
+      { key: 'none', title: 'Unrelated', path: await file('d', [user('nothing to see')]) },
+      { key: 'gone', title: 'A file that is gone', path: join(tmp, 'no-such.jsonl') }
+    ]
+    const h = new SessionHistory(() => [])
+    const taxRounding = [
+      { key: 'title', matchedIn: 'title', snippet: '' },
+      { key: 'conv', matchedIn: 'conversation', snippet: 'we discussed the tax rounding bug Rounded.' },
+      { key: 'mixed', matchedIn: 'conversation', snippet: 'only rounding here' }
+    ]
+    expect(await h.searchFiles('TAX rounding', files)).toEqual(taxRounding)
+    expect(await h.searchFiles('nothing', files)).toEqual([{ key: 'none', matchedIn: 'conversation', snippet: 'nothing to see' }])
+    expect(await h.searchFiles('   ', files)).toEqual([])
+    // Each file is read once; appended lines are read incrementally.
+    const read = h.bytesRead
+    expect(await h.searchFiles('tax rounding', files)).toEqual(taxRounding)
+    expect(h.bytesRead).toBe(read)
+    const more = user('later about pelicans') + '\n'
+    await appendFile(files[0].path, more)
+    expect(await h.searchFiles('pelicans', files)).toEqual([
+      { key: 'conv', matchedIn: 'conversation', snippet: 'we discussed the tax rounding bug Rounded. later about pelicans' }
+    ])
+    expect(h.bytesRead - read).toBeLessThan(Buffer.byteLength(more) + 100)
+    // Only the files given last are kept.
+    await h.searchFiles('pelicans', [files[1]])
+    expect(h.keptChars()).toBe(2 * 'unrelated'.length)
+    expect(await h.searchFiles('unrelated', [])).toEqual([])
+    expect(h.keptChars()).toBe(0)
+  })
+
+  test('searchFiles keeps at most 100,000 characters of each conversation: its start and its most recent part', async () => {
+    const filler = Array.from({ length: 1000 }, (_, i) => user(`filler ${i} ${'x'.repeat(400)}`))
+    const files = [{ key: 'big', title: 'Big', path: await file('big', [user('opening aardvark'), ...filler, user('closing zebra')]) }]
+    const h = new SessionHistory(() => [])
+    expect(await h.searchFiles('aardvark', files)).toHaveLength(1)
+    expect(await h.searchFiles('zebra', files)).toHaveLength(1)
+    expect(await h.searchFiles('filler 200 ', files)).toEqual([]) // kept by the 300,000 cap of sessions, not this one
+    expect(h.keptChars()).toBeLessThanOrEqual(2 * (100_000 + 10))
+    expect(h.keptChars()).toBeGreaterThan(100_000)
+  })
+})

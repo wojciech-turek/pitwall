@@ -102,6 +102,21 @@ export interface HistoryHit {
   updatedAt: number
 }
 
+/** A Claude conversation run in a folder outside Pitwall (with plain `claude`), found from its transcript. */
+export interface OutsideConversation {
+  /** Claude's conversation id: the transcript's file name without `.jsonl`. */
+  claudeId: string
+  /** The name given with /rename, else Claude's own title, else the first message typed; one line, ≤ 120 characters. */
+  title: string
+  /** The folder the conversation was started in, as recorded in the transcript. */
+  cwd: string
+  /** The git branch recorded last; absent if none was, or if it was a detached HEAD. */
+  branch?: string
+  /** The transcript's mtime (ms). */
+  updatedAt: number
+  transcriptPath: string
+}
+
 export interface ArchiveCheck {
   uncommittedFiles: number; unpushedCommits: number; hasRemote: boolean; branch?: string
   willDeleteBranch: boolean; willRemoveWorktree: boolean; worktreePath?: string
