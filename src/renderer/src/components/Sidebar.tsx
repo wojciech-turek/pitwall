@@ -2,7 +2,7 @@ import type { AppSnapshot, Project, SubProject } from '@shared/types'
 import ArchivedList from './ArchivedList'
 import SessionRow from './SessionRow'
 import Menu from './Menu'
-import { FolderPlusIcon, MutedBellIcon, PlusIcon } from './Icons'
+import { FolderPlusIcon, HistoryIcon, MutedBellIcon, PlusIcon } from './Icons'
 import { useUi } from '../state/ui'
 import { useToast } from '../state/toast'
 import { cleanIpcError } from '../state/errors'
@@ -37,6 +37,10 @@ export default function Sidebar({ snap, onSelect }: { snap: AppSnapshot; onSelec
         <span className="row-title">{sp.name}</span>
         {sp.kind === 'folder' && <span className="tag">no git</span>}
         <span className="row-actions">
+          <button className="icon-btn" data-testid="continue-conversation" title="Continue a conversation"
+            aria-label="Continue a conversation" onClick={() => openDialog({ type: 'conversations', subProjectId: sp.id })}>
+            <HistoryIcon />
+          </button>
           <button className="icon-btn" data-testid="new-session" title="New session" aria-label="New session"
             onClick={() => openDialog({ type: 'new-session', subProjectId: sp.id })}>
             <PlusIcon />

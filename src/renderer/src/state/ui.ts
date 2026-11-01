@@ -13,6 +13,7 @@ export type DialogState =
   | { type: 'new-session'; subProjectId: string }
   | { type: 'archive'; sessionId: string }
   | { type: 'resume'; sessionId: string }
+  | { type: 'conversations'; subProjectId: string }
   | { type: 'subproject-settings'; subProjectId: string }
   | { type: 'settings' }
   | { type: 'update' }
