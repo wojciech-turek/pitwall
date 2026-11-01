@@ -8,6 +8,8 @@
  * - the setup command runs once (`setup-done`), in sh (cmd.exe on Windows);
  * - Claude starts with `--session-id` the first time (`started`), then `--resume`; a resume that fails before Claude
  *   reported SessionStart falls back to a new conversation (with the hooks off, one that has no transcript does);
+ * - a conversation continued from outside Pitwall (`continue-note.txt`): every start of Claude rebuilds its system
+ *   prompt for this folder, with the note, rather than reuse the recorded one (which names where it began);
  * - when Claude exits: "Press Enter to resume.", and Enter relaunches it. End of input (Ctrl+D) or Ctrl+C at that
  *   prompt ends the terminal, as they end the script's `read`.
  * Beyond the script: what it prints that matters (signed out of GitHub, setup failed, couldn't resume) is also logged
@@ -282,7 +284,7 @@ export class Launcher {
     } else {
       const before = this.eventLines(env).length
       this.logLaunch(env, 'resume')
-      rc = await this.run(this.claudeBin(env), ['--resume', id, '--settings', settings], env)
+      rc = await this.startClaude(['--resume', id, '--settings', settings], env)
       // Did that conversation start? SessionStart says so; with the hooks off there's none, so its transcript does.
       const started = async (): Promise<boolean> =>
         hooks ? this.eventLines(env).slice(before).some(isSessionStart) : this.hasTranscript(env, id)
@@ -301,7 +303,14 @@ export class Launcher {
   private launchNew(id: string, settings: string, env: Record<string, string>): Promise<number> {
     this.logLaunch(env, 'new')
     const title = envValue(env, 'PITWALL_TITLE', this.o.platform) ?? ''
-    return this.run(this.claudeBin(env), ['--session-id', id, '--settings', settings, '--name', title], env)
+    return this.startClaude(['--session-id', id, '--settings', settings, '--name', title], env)
+  }
+
+  /** Claude with these arguments, and with a conversation continued from outside Pitwall, the note (as the script). */
+  private startClaude(args: string[], env: Record<string, string>): Promise<number> {
+    const note = this.file('continue-note.txt')
+    const continued = existsSync(note) ? ['--system-prompt-snapshot', 'off', '--append-system-prompt-file', note] : []
+    return this.run(this.claudeBin(env), [...args, ...continued], env)
   }
 
   /** pitwall:launch, then this run's warnings again (the app clears its banners at each launch). */

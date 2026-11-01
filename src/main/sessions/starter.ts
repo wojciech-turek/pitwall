@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { access, mkdir, rm, stat } from 'node:fs/promises'
+import { access, mkdir, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { writeFileAtomic } from '../atomic'
 import type { LauncherChoice, SessionBackend } from '../backend'
@@ -143,6 +143,22 @@ export async function writeSessionFiles(session: Session, deps: StarterDeps): Pr
   // Re-read: a /clear may have recorded a new conversation id while the files above were written.
   const claudeId = deps.store.state.sessions.find((x) => x.id === session.id)?.claudeSessionId ?? session.claudeSessionId
   await writeFileAtomic(join(dir, 'claude-id'), claudeId + '\n')
+  // Read by the launcher at every start of Claude (written again here, so it follows the session to a new folder).
+  if (session.continuedFrom) await writeFileAtomic(join(dir, 'continue-note.txt'), continueNote(session))
+}
+
+/**
+ * What Claude is told in a session that continues a conversation run outside Pitwall. Its recorded system prompt names
+ * the folder the conversation began in, so the launcher has Claude rebuild it for this session's folder, with this
+ * note. In a worktree: work there, and leave the folder it began in alone. In a folder without git the session runs in
+ * that folder (or the one around it), so there's nothing to keep out of.
+ */
+export function continueNote(s: Pick<Session, 'cwd' | 'worktreePath' | 'branch' | 'continuedFrom'>): string {
+  const from = s.continuedFrom ?? ''
+  if (!s.worktreePath) return `This conversation began in ${from}. It now continues in ${s.cwd}. Work only in ${s.cwd}.\n`
+  const on = s.branch ? `, on branch ${s.branch}` : ''
+  return `This conversation began in ${from}. It now continues in a separate git worktree at ${s.cwd}${on}. ` +
+    `Work only in ${s.cwd}: don't read from or change files under ${from}.\n`
 }
 
 /** tmux would silently start in $HOME instead; an agent must never run in the wrong folder. */
@@ -166,20 +182,24 @@ export async function launchTmuxFor(session: Session, deps: StarterDeps): Promis
   })
 }
 
+/** The lock starting a session in a folder takes: starts and resumes in one repo pick free folder and branch names. */
+export function startLockKey(deps: Pick<StarterDeps, 'store'>, subProjectId: string): string {
+  const sp = deps.store.state.subProjects.find((s) => s.id === subProjectId)
+  return sp ? (sp.repoRoot ?? sp.path) : subProjectId
+}
+
 export function startSession(
   input: NewSessionInput,
   deps: StarterDeps,
   onProgress: (p: StartProgress) => void
 ): Promise<StartResult> {
-  let key = input.subProjectId
-  const sp = deps.store.state.subProjects.find((s) => s.id === input.subProjectId)
-  if (sp) key = sp.repoRoot ?? sp.path
   return deps.mutex
-    .run(key, () => doStart(input, deps, onProgress))
+    .run(startLockKey(deps, input.subProjectId), () => startSessionLocked(input, deps, onProgress))
     .catch((e): StartResult => ({ ok: false, step: 'identity', error: msg(e) }))
 }
 
-async function doStart(
+/** startSession, for a caller that holds deps.mutex for startLockKey already. On failure nothing is left behind. */
+export async function startSessionLocked(
   input: NewSessionInput,
   deps: StarterDeps,
   onProgress: (p: StartProgress) => void
@@ -271,7 +291,7 @@ async function doStart(
       subProjectId: sub.id,
       title,
       slug,
-      claudeSessionId: randomUUID(),
+      claudeSessionId: input.continueClaudeId ?? randomUUID(),
       cwd,
       worktreePath,
       branch,
@@ -281,8 +301,13 @@ async function doStart(
       createdAt: Date.now(),
       lastViewedAt: Date.now()
     }
+    if (input.continueClaudeId && input.continuedFrom) session.continuedFrom = input.continuedFrom
 
-    await run('files', () => writeSessionFiles(session, deps))
+    await run('files', async () => {
+      await writeSessionFiles(session, deps)
+      // A conversation to continue exists already: the launcher resumes it (as after resuming an archived session).
+      if (input.continueClaudeId) await writeFile(join(dir, 'started'), '')
+    })
     await run('tmux', async () => {
       created.tmux = true
       await launchTmuxFor(session, deps)

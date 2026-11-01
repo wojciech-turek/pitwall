@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { Launcher, MESSAGES, SCRIPT_TROUBLE, WARNINGS, type FetchToken, type LauncherOptions, type ProbeRun, type PtyLike, type RunProbe } from '../../src/host/launcher'
+import { windowsCommand } from '../../src/host/win-command'
 
 class FakePty implements PtyLike {
   static next = 1000
@@ -354,6 +355,49 @@ describe('the host launcher', () => {
     expect(typeof p.args).toBe('string')
     expect(p.args).toMatch(/^\/d \/s \/c "C:\\stub\\claude\.cmd \^\^\^"--session-id\^\^\^" /)
     expect(p.env.GH_TOKEN).toBe('token-for-dev-work')
+  })
+})
+
+describe('a conversation continued from outside Pitwall (continue-note.txt)', () => {
+  const note = () => join(sd, 'continue-note.txt')
+  /** Claude rebuilds its system prompt for this folder, with the note, rather than reuse the recorded one. */
+  const flags = () => ['--system-prompt-snapshot', 'off', '--append-system-prompt-file', note()]
+
+  test('every launch gets --system-prompt-snapshot off and the note: the first, a resume and the fallback after a failed one', async () => {
+    writeFileSync(note(), 'Work only here.\n')
+    const settings = join(sd, 'hooks.json')
+    const l = launcher()
+    l.start()
+    await until(() => spawned.length === 1, 'claude started')
+    expect(lastPty().args).toEqual(['--session-id', ID, '--settings', settings, '--name', TITLE, ...flags()])
+    lastPty().exit(0)
+    await until(() => screen.includes('Press Enter'), 'prompt')
+    l.write('\r')
+    await until(() => spawned.length === 2, 'resumed')
+    expect(lastPty().args).toEqual(['--resume', ID, '--settings', settings, ...flags()])
+    lastPty().exit(1) // before any SessionStart: a new conversation over the same id
+    await until(() => spawned.length === 3, 'fresh launch')
+    expect(screen).toContain(MESSAGES.resumeFailed())
+    expect(lastPty().args).toEqual(['--session-id', ID, '--settings', settings, '--name', TITLE, ...flags()])
+  })
+
+  test('a session that already started resumes with them too', async () => {
+    writeFileSync(note(), 'Work only here.\n')
+    writeFileSync(join(sd, 'started'), '')
+    launcher().start()
+    await until(() => spawned.length === 1, 'resume')
+    expect(lastPty().args).toEqual(['--resume', ID, '--settings', join(sd, 'hooks.json'), ...flags()])
+  })
+
+  test("Windows: the flags and the note's path reach Claude through cmd.exe as arguments of their own", async () => {
+    writeFileSync(note(), 'Work only here.\n')
+    writeEnv({ ...baseVars(), PITWALL_CLAUDE_BIN: 'claude', PATH: 'C:\\stub' })
+    const isFile = (p: string) => p.toLowerCase() === 'c:\\stub\\claude.cmd'
+    const env = { Path: 'C:\\Windows', ComSpec: 'C:\\Windows\\system32\\cmd.exe' }
+    launcher({ platform: 'win32', env, isFile }).start()
+    await until(() => spawned.length === 1, 'claude')
+    const args = ['--session-id', ID, '--settings', join(sd, 'hooks.json'), '--name', TITLE, ...flags()]
+    expect(lastPty().args).toBe(windowsCommand('claude', args, { PATH: 'C:\\stub', ComSpec: env.ComSpec }, isFile).commandLine)
   })
 })
 

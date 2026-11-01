@@ -1,5 +1,10 @@
 #!/bin/sh
 # Stub Claude CLI for tests.
+# `claude --version` answers as Claude Code does ($STUB_CLAUDE_VERSION instead, when a test sets it), logging nothing.
+if [ "$1" = "--version" ]; then
+  echo "${STUB_CLAUDE_VERSION:-2.1.316 (Claude Code)}"
+  exit 0
+fi
 [ -n "$STUB_CLAUDE_LOG" ] && {
   echo "$*"
   echo "GH_TOKEN=$GH_TOKEN"
@@ -10,14 +15,17 @@
 # The whole environment Claude started with, when a test asks for it.
 [ -n "$STUB_CLAUDE_ENV_FILE" ] && env > "$STUB_CLAUDE_ENV_FILE"
 
-settings="" id="" prev=""
+settings="" id="" note="" prev=""
 for a in "$@"; do
   case "$prev" in
     --settings) settings="$a" ;;
     --session-id|--resume) id="$a" ;;
+    --append-system-prompt-file) note="$a" ;;
   esac
   prev="$a"
 done
+# Like Claude, reads the file given with --append-system-prompt-file; its text is logged as NOTE=.
+[ -n "$STUB_CLAUDE_LOG" ] && [ -n "$note" ] && printf 'NOTE=%s\n' "$(cat "$note")" >> "$STUB_CLAUDE_LOG"
 case " $* " in
   *" --resume "*)
     if [ "$STUB_CLAUDE_RESUME_FAIL" = "1" ] || { [ -n "$STUB_CLAUDE_RESUME_FAIL_FILE" ] && [ -e "$STUB_CLAUDE_RESUME_FAIL_FILE" ]; }; then exit 1; fi ;;

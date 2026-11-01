@@ -2,15 +2,17 @@ import { writeFileAtomic } from '../atomic'
 import { join } from 'node:path'
 import { countStatuses, displayStatus, initialRuntime, reduceRuntime } from '@shared/runtime'
 import type {
-  AppSnapshot, DisplayStatus, HookEvent, NewSessionDefaults, NewSessionInput, Session, SessionRuntime, SessionView,
-  StartProgress, StartResult, TermKind
+  AppSnapshot, ConversationList, ConversationMatch, DisplayStatus, HookEvent, NewSessionDefaults, NewSessionInput, Session,
+  SessionRuntime, SessionView, StartProgress, StartResult, TermKind
 } from '@shared/types'
 import { isFile } from '../exec'
+import { historySources, SessionHistory } from '../history'
 import { appendEvent, EventTailer } from '../hooks/events'
 import type { Notifier } from '../notifier'
 import { eventsFile, sessionDir } from '../paths'
 import { shellTabArgv } from '../platform'
 import { claudeTmuxName, shellTmuxName } from '../tmux'
+import { Conversations } from './continue'
 import { isAnswerInput } from './input'
 import { notificationBody } from './notify-text'
 import { resumeSession } from './resume'
@@ -18,7 +20,11 @@ import {
   assertSessionFolder, launchTmuxFor, prepareNewSession, startSession, usesHostLauncher, writeSessionFiles, type StarterDeps
 } from './starter'
 
-type Deps = StarterDeps & { notifier: Notifier; now?: () => number; firstEventTimeoutMs?: number }
+type Deps = StarterDeps & {
+  notifier: Notifier; now?: () => number; firstEventTimeoutMs?: number
+  /** Searches the folders' conversations; default: one of its own over this manager's sessions. */
+  history?: Pick<SessionHistory, 'search' | 'searchFiles'>
+}
 type Extras = Partial<Pick<SessionView, 'diffStat' | 'liveBranch'>>
 
 const FIRST_EVENT_TIMEOUT_MS = 20000
@@ -59,9 +65,12 @@ export class SessionManager {
   private viewing: { ids: Set<string>; focused: boolean } = { ids: new Set(), focused: false }
   private disposed = false
   private readonly now: () => number
+  private readonly conversations: Conversations
 
   constructor(private deps: Deps) {
     this.now = deps.now ?? Date.now
+    const history = deps.history ?? new SessionHistory(() => historySources(this.snapshot(), deps.home, deps.env))
+    this.conversations = new Conversations({ ...deps, history, now: this.now })
   }
 
   async init(): Promise<void> {
@@ -142,13 +151,24 @@ export class SessionManager {
   }
 
   async start(input: NewSessionInput, onProgress: (p: StartProgress) => void): Promise<StartResult> {
-    const res = await startSession(input, this.deps, onProgress)
-    if (res.ok) {
-      await this.track(res.sessionId)
-      this.publish()
-      void this.warnIfSilent(res.sessionId)
-    }
-    return res
+    return this.started(await startSession(input, this.deps, onProgress))
+  }
+
+  /** A folder's archived sessions and the Claude conversations run there outside Pitwall, newest first. */
+  listConversations(subProjectId: string): Promise<ConversationList> {
+    return this.conversations.list(subProjectId)
+  }
+
+  /** The folder's conversations whose title or text has every word of the query: title matches first, then the newest. */
+  searchConversations(subProjectId: string, query: string): Promise<ConversationMatch[]> {
+    return this.conversations.search(subProjectId, query)
+  }
+
+  /** Starts a session in the folder that continues a conversation run there outside Pitwall. */
+  async continueConversation(
+    subProjectId: string, claudeId: string, requestId: string, onProgress: (p: StartProgress) => void
+  ): Promise<StartResult> {
+    return this.started(await this.conversations.continue(subProjectId, claudeId, requestId, onProgress))
   }
 
   /** Brings an archived session back and tracks it like a newly started one. */
@@ -283,6 +303,16 @@ export class SessionManager {
   }
 
   // ---- internals ---------------------------------------------------------
+
+  /** A session that just started: tracked, published, and watched for Claude's first report. */
+  private async started(res: StartResult): Promise<StartResult> {
+    if (res.ok) {
+      await this.track(res.sessionId)
+      this.publish()
+      void this.warnIfSilent(res.sessionId)
+    }
+    return res
+  }
 
   /** Real Claude sits on a folder-trust prompt before any hook fires; say so if it stays silent. */
   private async warnIfSilent(id: string): Promise<void> {

@@ -16,7 +16,8 @@ const LIMIT = 200
 const HEAD = 256 * 1024
 const TAIL = 64 * 1024
 const MAX_TITLE = 120
-const CONVERSATION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+/** A Claude conversation id (a UUID), as its transcript is named. */
+export const CONVERSATION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 /** The name of the folder Claude keeps a cwd's transcripts in, under `projects/`. */
 export function claudeProjectDirName(cwd: string): string {

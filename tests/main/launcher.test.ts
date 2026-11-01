@@ -31,10 +31,11 @@ async function writeEnv(p: Project, setupCommand?: string, userStatusLine?: stri
   await writeFile(join(sd, 'env.sh'), renderEnvFile(env), { mode: 0o600 })
 }
 
-async function setup(extra: { setupCommand?: string; silent?: boolean; project?: Project; userStatusLine?: string } = {}) {
-  sd = sessionDir(t.paths, ID)
+async function setup(extra: { setupCommand?: string; silent?: boolean; project?: Project; userStatusLine?: string; dir?: string } = {}) {
+  sd = extra.dir ?? sessionDir(t.paths, ID)
   cwd = join(t.tmp, 'work dir')
   await mkdir(sd, { recursive: true })
+  await mkdir(sessionDir(t.paths, ID), { recursive: true }) // the events file's folder
   await mkdir(cwd, { recursive: true })
   await writeEnv(extra.project ?? project, extra.setupCommand, extra.userStatusLine)
   const hook = hookCommandFor(join(t.paths.binDir, 'pitwall-hook'), eventsFile(t.paths, ID), ID)
@@ -72,6 +73,7 @@ describe('pitwall-launch', () => {
     expect(lines[0]).toContain(`--session-id ${ID}`)
     expect(lines[0]).toContain(`--settings ${sd}/hooks.json`)
     expect(lines[0]).toContain(`--name ${TITLE}`)
+    expect(lines[0]).not.toContain('--system-prompt-snapshot') // only a conversation continued from outside Pitwall
     expect(lines).toContain('GH_TOKEN=token-for-dev-work')
     for (let i = 0; i < 3; i++) {
       const ps = (await exec('ps', ['-axww', '-o', 'args'])).stdout
@@ -125,6 +127,30 @@ describe('pitwall-launch', () => {
     expect(argv[2]).toContain(`--name ${TITLE}`)
     const modes = (await events()).filter((e) => e.e === 'pitwall:launch').map((e) => (e as { mode?: string }).mode)
     expect(modes).toEqual(['new', 'resume', 'new'])
+  })
+
+  test('a conversation continued from outside Pitwall (continue-note.txt): the first launch, a failed resume and the fallback all get --system-prompt-snapshot off and the note, whose path arrives whole', async () => {
+    await setup({ dir: join(t.tmp, `it's a "session" dir`, ID) })
+    const note = join(sd, 'continue-note.txt')
+    await writeFile(note, 'Work only here.\n')
+    const flag = join(t.tmp, 'resume-fail')
+    t.env.STUB_CLAUDE_RESUME_FAIL_FILE = flag
+    await start()
+    await waitCapture('STUB CLAUDE READY')
+    await t.tmux.sendKeys('pw-l', ['exit', 'Enter'])
+    await waitCapture('Press Enter to resume')
+    await writeFile(flag, '')
+    await t.tmux.sendKeys('pw-l', ['Enter'])
+    await waitCapture("Couldn't resume the previous conversation — starting a new one.")
+    await waitFor(async () => (await logLines()).filter((l) => l.startsWith('NOTE=')).length === 3, 8000, 'the fresh launch read the note')
+    const flags = `--system-prompt-snapshot off --append-system-prompt-file ${note}`
+    expect((await logLines()).filter((l) => l.startsWith('--'))).toEqual([
+      `--session-id ${ID} --settings ${sd}/hooks.json --name ${TITLE} ${flags}`,
+      `--resume ${ID} --settings ${sd}/hooks.json ${flags}`,
+      `--session-id ${ID} --settings ${sd}/hooks.json --name ${TITLE} ${flags}`
+    ])
+    // The stub read the file at the path it was given: one argument, quotes and spaces kept.
+    expect((await logLines()).filter((l) => l.startsWith('NOTE='))).toEqual(Array(3).fill('NOTE=Work only here.'))
   })
 
   test('relaunch re-reads env.sh and the token: an edited identity applies after exit + Enter', async () => {
