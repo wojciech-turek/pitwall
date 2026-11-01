@@ -86,4 +86,9 @@ describe('IPC from the renderer', () => {
     expect(await call(IPC.continueConversation, 'sp_1', 'c', 'r')).toEqual(ok)
     expect(manager.continueConversation).toHaveBeenCalledWith('sp_1', 'c', 'r', expect.any(Function))
   })
+
+  test('forgetConversationText (the dialog closed) drops the conversation text its searches kept', async () => {
+    await call(IPC.forgetConversationText)
+    expect(history.forgetFiles).toHaveBeenCalledTimes(1)
+  })
 })

@@ -67,6 +67,8 @@ export interface PitwallApi {
   listConversations(subProjectId: string): Promise<ConversationList>
   /** Those of them whose title or conversation has every word of the query: title matches first, then the newest. */
   searchConversations(subProjectId: string, query: string): Promise<ConversationMatch[]>
+  /** The dialog closed: drop the conversation text its searches kept in memory (and stop one still reading). */
+  forgetConversationText(): Promise<void>
   /**
    * Starts a session in the folder that continues a conversation run there outside Pitwall (an `outside` item's id);
    * progress arrives on onStartProgress.
@@ -135,6 +137,7 @@ export const IPC = {
   resumeSession: 'pitwall:resumeSession',
   listConversations: 'pitwall:listConversations',
   searchConversations: 'pitwall:searchConversations',
+  forgetConversationText: 'pitwall:forgetConversationText',
   continueConversation: 'pitwall:continueConversation',
   openExternal: 'pitwall:openExternal',
   openInCursor: 'pitwall:openInCursor',

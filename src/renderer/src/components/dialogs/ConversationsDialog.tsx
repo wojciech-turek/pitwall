@@ -57,6 +57,9 @@ export default function ConversationsDialog({ subProjectId }: { subProjectId: st
     return () => { live = false; clearTimeout(timer) }
   }, [subProjectId, q])
 
+  // Closed: the text the searches kept in the main process goes now, not at its next search.
+  useEffect(() => () => { window.pitwall.forgetConversationText().catch(() => {}) }, [])
+
   useEffect(() => window.pitwall.onStartProgress((p) => {
     if (p.requestId !== requestId.current) return
     setSteps((cur) => ({ ...cur, [p.step]: { state: p.state, message: p.message } }))

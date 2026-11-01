@@ -34,7 +34,7 @@ export interface IpcDeps {
   env: Record<string, string>
   home: string
   mutex: KeyedMutex
-  history: Pick<SessionHistory, 'search'>
+  history: Pick<SessionHistory, 'search' | 'forgetFiles'>
   usage: Pick<UsageTracker, 'current' | 'onChange'>
   updates: Pick<UpdateChecker, 'state' | 'checkNow' | 'onChange' | 'hasFeed'>
   /** True for an unpackaged (dev) run. */
@@ -115,6 +115,7 @@ export function registerIpc(d: IpcDeps): () => void {
     typeof id === 'string' ? manager.listConversations(id) : { items: [], truncated: false })
   handle(IPC.searchConversations, (id: unknown, query: unknown) =>
     typeof id === 'string' && typeof query === 'string' ? manager.searchConversations(id, query) : [])
+  handle(IPC.forgetConversationText, () => d.history.forgetFiles())
   handle(IPC.continueConversation, (id: unknown, claudeId: unknown, requestId: unknown): Promise<StartResult> | StartResult =>
     typeof id === 'string' && typeof claudeId === 'string' && typeof requestId === 'string'
       ? manager.continueConversation(id, claudeId, requestId, (p) => send(IPC.startProgress, p))

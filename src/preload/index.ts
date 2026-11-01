@@ -64,6 +64,7 @@ const api: PitwallApi = {
   resumeSession: (id, requestId) => ipcRenderer.invoke(IPC.resumeSession, id, requestId),
   listConversations: (id) => ipcRenderer.invoke(IPC.listConversations, id),
   searchConversations: (id, query) => ipcRenderer.invoke(IPC.searchConversations, id, query),
+  forgetConversationText: () => ipcRenderer.invoke(IPC.forgetConversationText),
   continueConversation: (id, claudeId, requestId) => ipcRenderer.invoke(IPC.continueConversation, id, claudeId, requestId),
   openExternal: (url) => ipcRenderer.invoke(IPC.openExternal, url),
   openInCursor: (id) => ipcRenderer.invoke(IPC.openInCursor, id),

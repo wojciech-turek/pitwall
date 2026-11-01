@@ -15,6 +15,8 @@ export type { HistoryHit }
 export const TEXT_CAP = 300_000
 /** Text kept per transcript searched with `searchFiles`. */
 const FILE_TEXT_CAP = 100_000
+/** How long that text is kept after the last `searchFiles` (the dialog that searched has likely closed). */
+export const FILES_IDLE_MS = 2 * 60_000
 const MAX_QUERY = 256
 const MAX_TERMS = 16
 const MAX_HITS = 50
@@ -227,6 +229,11 @@ export class SessionHistory {
   private roots = new Map<string, Listing>()
   private folders = new Map<string, Listing>()
   private warming: Promise<void> | null = null
+  /** Bumped by every searchFiles and forgetFiles: an older searchFiles then stops reading. */
+  private filesRound = 0
+  /** The transcripts the latest searchFiles was given: only their text is kept. */
+  private filesWanted = new Set<string>()
+  private filesIdle: NodeJS.Timeout | null = null
 
   constructor(private readonly sources: () => HistorySource[]) {}
 
@@ -259,26 +266,42 @@ export class SessionHistory {
 
   /**
    * Like `search`, over the transcripts given (in their order: title matches first). A title match isn't read, and
-   * its snippet is ''. Text is kept for the files given last only, up to FILE_TEXT_CAP each.
+   * its snippet is ''. Text is kept for the files given last only, up to FILE_TEXT_CAP each, until FILES_IDLE_MS
+   * after the last search. A search overtaken by a newer one (or by forgetFiles) stops reading and answers [].
    */
   async searchFiles(query: string, files: { key: string; title: string; path: string }[]): Promise<FileHit[]> {
-    const paths = new Set(files.map((f) => f.path))
-    for (const p of this.files.conversations.keys()) if (!paths.has(p)) this.files.conversations.delete(p)
-    const terms = queryTerms(query)
-    if (terms.length === 0) return []
-    const inTitle: FileHit[] = []
-    const inText: FileHit[] = []
-    for (const f of files) {
-      const title = f.title.toLowerCase()
-      if (terms.every((t) => title.includes(t))) {
-        inTitle.push({ key: f.key, matchedIn: 'title', snippet: '' })
-        continue
+    const round = this.newFilesRound(files.map((f) => f.path))
+    try {
+      const terms = queryTerms(query)
+      if (terms.length === 0) return []
+      const inTitle: FileHit[] = []
+      const inText: FileHit[] = []
+      for (const f of files) {
+        const title = f.title.toLowerCase()
+        if (terms.every((t) => title.includes(t))) {
+          inTitle.push({ key: f.key, matchedIn: 'title', snippet: '' })
+          continue
+        }
+        const conv = await this.indexed(this.files, f.path, [f.path])
+        if (round !== this.filesRound) {
+          this.keepWantedFiles() // that read may have kept a file the newer round doesn't want
+          return []
+        }
+        if (!terms.every((t) => title.includes(t) || conv.lower.includes(t))) continue
+        inText.push({ key: f.key, matchedIn: 'conversation', snippet: snippet(conv, terms) })
       }
-      const conv = await this.indexed(this.files, f.path, [f.path])
-      if (!terms.every((t) => title.includes(t) || conv.lower.includes(t))) continue
-      inText.push({ key: f.key, matchedIn: 'conversation', snippet: snippet(conv, terms) })
+      return [...inTitle, ...inText]
+    } finally {
+      if (round === this.filesRound && this.filesWanted.size > 0) {
+        this.filesIdle = setTimeout(() => this.forgetFiles(), FILES_IDLE_MS)
+        this.filesIdle.unref() // never keeps the app running
+      }
     }
-    return [...inTitle, ...inText]
+  }
+
+  /** Drops the text kept for searchFiles, and stops one still reading (the dialog that searched has closed). */
+  forgetFiles(): void {
+    this.newFilesRound([])
   }
 
   /** Characters of conversation text held in memory (the text and its lowercase copy). */
@@ -286,6 +309,19 @@ export class SessionHistory {
     let n = 0
     for (const h of [this.sessions, this.files]) for (const c of h.conversations.values()) n += c.text.size + c.lower.length
     return n
+  }
+
+  /** A new round of searchFiles over `paths`: older rounds stop, other files' text goes, the idle timer is stopped. */
+  private newFilesRound(paths: string[]): number {
+    this.filesWanted = new Set(paths)
+    this.keepWantedFiles()
+    if (this.filesIdle) clearTimeout(this.filesIdle)
+    this.filesIdle = null
+    return ++this.filesRound
+  }
+
+  private keepWantedFiles(): void {
+    for (const p of this.files.conversations.keys()) if (!this.filesWanted.has(p)) this.files.conversations.delete(p)
   }
 
   /** Drops what's kept for sessions that are gone. */
