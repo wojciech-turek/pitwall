@@ -1,5 +1,5 @@
 import type {
-  AppSettings, AppSnapshot, ArchiveCheck, ArchiveResult, ChangedFile, ClaudeUsage, EnvVar, FileContent, FileEntry, GhAccount, GitIdentity, HistoryHit, NewSessionDefaults, NewSessionInput, Project, RepoIdentity,
+  AppSettings, AppSnapshot, ArchiveCheck, ArchiveResult, ChangedFile, ClaudeUsage, ConversationList, ConversationMatch, EnvVar, FileContent, FileEntry, GhAccount, GitIdentity, HistoryHit, NewSessionDefaults, NewSessionInput, Project, RepoIdentity,
   StartProgress, StartResult, SubProject, TermKind, UpdateState
 } from './types'
 
@@ -60,6 +60,20 @@ export interface PitwallApi {
   searchSessions(query: string): Promise<HistoryHit[]>
   /** Brings an archived session back and continues its conversation; progress arrives on onStartProgress. */
   resumeSession(sessionId: string, requestId: string): Promise<StartResult>
+  /**
+   * A folder's archived sessions and the Claude conversations run there outside Pitwall (the 200 most recent), newest
+   * first; sessions open now aren't listed.
+   */
+  listConversations(subProjectId: string): Promise<ConversationList>
+  /** Those of them whose title or conversation has every word of the query: title matches first, then the newest. */
+  searchConversations(subProjectId: string, query: string): Promise<ConversationMatch[]>
+  /** The dialog closed: drop the conversation text its searches kept in memory (and stop one still reading). */
+  forgetConversationText(): Promise<void>
+  /**
+   * Starts a session in the folder that continues a conversation run there outside Pitwall (an `outside` item's id);
+   * progress arrives on onStartProgress.
+   */
+  continueConversation(subProjectId: string, claudeId: string, requestId: string): Promise<StartResult>
   openExternal(url: string): Promise<void>
   openInCursor(sessionId: string): Promise<{ ok: boolean; message?: string }>
   setSettings(s: AppSettings): Promise<void>
@@ -121,6 +135,10 @@ export const IPC = {
   archiveSession: 'pitwall:archiveSession',
   searchSessions: 'pitwall:searchSessions',
   resumeSession: 'pitwall:resumeSession',
+  listConversations: 'pitwall:listConversations',
+  searchConversations: 'pitwall:searchConversations',
+  forgetConversationText: 'pitwall:forgetConversationText',
+  continueConversation: 'pitwall:continueConversation',
   openExternal: 'pitwall:openExternal',
   openInCursor: 'pitwall:openInCursor',
   setSettings: 'pitwall:setSettings',

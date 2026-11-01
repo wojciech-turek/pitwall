@@ -34,7 +34,7 @@ export interface IpcDeps {
   env: Record<string, string>
   home: string
   mutex: KeyedMutex
-  history: Pick<SessionHistory, 'search'>
+  history: Pick<SessionHistory, 'search' | 'forgetFiles'>
   usage: Pick<UsageTracker, 'current' | 'onChange'>
   updates: Pick<UpdateChecker, 'state' | 'checkNow' | 'onChange' | 'hasFeed'>
   /** True for an unpackaged (dev) run. */
@@ -73,7 +73,9 @@ export function registerIpc(d: IpcDeps): () => void {
   handle(IPC.removeSubProject, (id: string) => projects.removeSubProject(id))
   handle(IPC.updateSubProject, (id: string, patch: { setupCommand?: string; teardownCommand?: string }) => projects.updateSubProject(id, patch))
   handle(IPC.prepareNewSession, (id: string) => manager.prepareNew(id))
-  handle(IPC.startSession, (i: NewSessionInput) => manager.start(i, (p) => send(IPC.startProgress, p)))
+  // Only continueConversation continues an outside conversation: it checks it and keeps Claude to the worktree.
+  handle(IPC.startSession, (i: NewSessionInput) =>
+    manager.start({ ...i, continueClaudeId: undefined, continuedFrom: undefined }, (p) => send(IPC.startProgress, p)))
   handle(IPC.renameSession, (id: string, title: string) => manager.rename(id, title))
   handle(IPC.setProjectMuted, (id: string, muted: boolean) => projects.setProjectMuted(id, muted === true))
   handle(IPC.markSessionUnread, (id: string) => manager.markUnread(id))
@@ -108,6 +110,15 @@ export function registerIpc(d: IpcDeps): () => void {
   handle(IPC.resumeSession, (id: unknown, requestId: unknown): Promise<StartResult> | StartResult =>
     typeof id === 'string' && typeof requestId === 'string'
       ? manager.resume(id, requestId, (p) => send(IPC.startProgress, p))
+      : { ok: false, step: 'identity', error: 'Invalid request.' })
+  handle(IPC.listConversations, (id: unknown) =>
+    typeof id === 'string' ? manager.listConversations(id) : { items: [], truncated: false })
+  handle(IPC.searchConversations, (id: unknown, query: unknown) =>
+    typeof id === 'string' && typeof query === 'string' ? manager.searchConversations(id, query) : [])
+  handle(IPC.forgetConversationText, () => d.history.forgetFiles())
+  handle(IPC.continueConversation, (id: unknown, claudeId: unknown, requestId: unknown): Promise<StartResult> | StartResult =>
+    typeof id === 'string' && typeof claudeId === 'string' && typeof requestId === 'string'
+      ? manager.continueConversation(id, claudeId, requestId, (p) => send(IPC.startProgress, p))
       : { ok: false, step: 'identity', error: 'Invalid request.' })
   handle(IPC.openExternal, async (url: string) => {
     // Only web links; never let the renderer open file: or custom-scheme URLs.

@@ -22,6 +22,11 @@ export interface Session {
   pastClaudeIds?: string[]
   /** Archiving deleted the session's branch: resuming makes a new one rather than use another branch of that name. */
   branchDeleted?: boolean
+  /**
+   * The folder its Claude conversation began in, when that was run outside Pitwall and continued here. Every launch
+   * then has Claude rebuild its system prompt for this session's folder, with a note (continue-note.txt).
+   */
+  continuedFrom?: string
 }
 export interface AppSettings {
   monoFont: string; monoFontSize: number
@@ -81,6 +86,12 @@ export type StartStep = 'identity' | 'worktree' | 'files' | 'tmux' | 'claude'
 export interface StartProgress { requestId: string; step: StartStep; state: 'running' | 'done' | 'failed' | 'warning'; message?: string }
 export interface NewSessionInput {
   requestId: string; subProjectId: string; title: string; branchMode: 'new' | 'existing'; branch: string; baseBranch?: string
+  /**
+   * Continue this Claude conversation (run outside Pitwall) rather than start one, and the folder it began in. Only
+   * continueConversation sets these, after checking them; the renderer's startSession never passes them on.
+   */
+  continueClaudeId?: string
+  continuedFrom?: string
 }
 export type StartResult = { ok: true; sessionId: string } | { ok: false; step: StartStep; error: string }
 export interface NewSessionDefaults {
@@ -100,6 +111,42 @@ export interface HistoryHit {
   snippet: string
   /** Latest event of a running session, or when it was archived (ms). */
   updatedAt: number
+}
+
+/** A Claude conversation run in a folder outside Pitwall (with plain `claude`), found from its transcript. */
+export interface OutsideConversation {
+  /** Claude's conversation id: the transcript's file name without `.jsonl`. */
+  claudeId: string
+  /** The name given with /rename, else Claude's own title, else the first message typed; one line, ≤ 120 characters. */
+  title: string
+  /** The folder the conversation was started in, as recorded in the transcript. */
+  cwd: string
+  /** The git branch recorded last; absent if none was, or if it was a detached HEAD. */
+  branch?: string
+  /** The transcript's mtime (ms). */
+  updatedAt: number
+  transcriptPath: string
+}
+
+/** A row of "Continue a conversation": an archived Pitwall session of the folder, or a conversation run outside Pitwall. */
+export interface ConversationItem {
+  kind: 'archived' | 'outside'
+  /** archived: the Pitwall session's id; outside: the Claude conversation's id. */
+  id: string
+  title: string
+  /** archived: when it was archived (else created); outside: the transcript's mtime (ms). */
+  updatedAt: number
+  branch?: string
+  /** outside only: used in the last 5 minutes, so it may still be open in a terminal. */
+  recentlyActive?: boolean
+}
+/** Newest first; `truncated` when there were more than the 200 most recent outside conversations. */
+export interface ConversationList { items: ConversationItem[]; truncated: boolean }
+/** A row of the folder's conversations that matches a search: title matches first, then the newest. */
+export interface ConversationMatch {
+  kind: 'archived' | 'outside'; id: string; matchedIn: 'title' | 'conversation'
+  /** About 60 characters either side of the first match in the conversation ('' if none, or not read). */
+  snippet: string
 }
 
 export interface ArchiveCheck {

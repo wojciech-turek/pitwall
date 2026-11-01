@@ -195,7 +195,9 @@ async function bootstrap(): Promise<void> {
   refreshBadge = () => notifier.refresh()
   const mutex = new KeyedMutex()
   const launcher = launcherChoice(process.env)
-  const mgr = new SessionManager({ store, paths, git, backend, exec, env, home, mutex, notifier, launcher })
+  // Searches every session's conversation (⌘K) and a folder's (Continue a conversation).
+  const history = new SessionHistory(() => historySources(mgr.snapshot(), home, env))
+  const mgr = new SessionManager({ store, paths, git, backend, exec, env, home, mutex, notifier, launcher, history })
   manager = mgr
   await mgr.init()
 
@@ -245,7 +247,6 @@ async function bootstrap(): Promise<void> {
   const onResume = (): void => updates.start()
   powerMonitor.on('resume', onResume)
   disposeUpdates = () => { powerMonitor.removeListener('resume', onResume); updates.stop() }
-  const history = new SessionHistory(() => historySources(mgr.snapshot(), home, env))
   disposeIpc = registerIpc({
     manager: mgr, changes, store, git, backend, projects, bridge, paths, exec, env, home, mutex, history, usage, updates, send, dev: DEV,
     launcher,

@@ -1,9 +1,10 @@
+import { statSync } from 'node:fs'
 import { appendFile, mkdir, mkdtemp, realpath, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, test } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import {
-  CappedText, historySources, lineText, queryTerms, SessionHistory, TEXT_CAP, type HistorySource
+  CappedText, FILES_IDLE_MS, historySources, lineText, queryTerms, SessionHistory, TEXT_CAP, type HistorySource
 } from '../../src/main/history'
 import type { AppSnapshot, Project, Session, SessionView, SubProject } from '../../src/shared/types'
 import { WINDOWS } from '../helpers/processes'
@@ -403,5 +404,103 @@ describe('SessionHistory', () => {
     expect(a).toHaveLength(1)
     expect(b).toHaveLength(1)
     expect(h.bytesRead).toBe(Buffer.byteLength(user('shared kestrel') + '\n'))
+  })
+})
+
+describe('SessionHistory.searchFiles', () => {
+  const file = (name: string, lines: string[]) => transcript(join(tmp, '.claude'), '-x-repo', name, lines)
+
+  test('searchFiles matches titles first, then conversation text, with a snippet; forgets files no longer given', async () => {
+    const files = [
+      { key: 'conv', title: 'Other', path: await file('a', [user('we discussed the tax rounding bug'), assistant(text('Rounded.'))]) },
+      { key: 'title', title: 'Fix tax rounding', path: await file('b', [user('unrelated')]) },
+      { key: 'mixed', title: 'Tax', path: await file('c', [user('only rounding here')]) },
+      { key: 'none', title: 'Unrelated', path: await file('d', [user('nothing to see')]) },
+      { key: 'gone', title: 'A file that is gone', path: join(tmp, 'no-such.jsonl') }
+    ]
+    const h = new SessionHistory(() => [])
+    const taxRounding = [
+      { key: 'title', matchedIn: 'title', snippet: '' },
+      { key: 'conv', matchedIn: 'conversation', snippet: 'we discussed the tax rounding bug Rounded.' },
+      { key: 'mixed', matchedIn: 'conversation', snippet: 'only rounding here' }
+    ]
+    expect(await h.searchFiles('TAX rounding', files)).toEqual(taxRounding)
+    expect(await h.searchFiles('nothing', files)).toEqual([{ key: 'none', matchedIn: 'conversation', snippet: 'nothing to see' }])
+    expect(await h.searchFiles('   ', files)).toEqual([])
+    // Each file is read once; appended lines are read incrementally.
+    const read = h.bytesRead
+    expect(await h.searchFiles('tax rounding', files)).toEqual(taxRounding)
+    expect(h.bytesRead).toBe(read)
+    const more = user('later about pelicans') + '\n'
+    await appendFile(files[0].path, more)
+    expect(await h.searchFiles('pelicans', files)).toEqual([
+      { key: 'conv', matchedIn: 'conversation', snippet: 'we discussed the tax rounding bug Rounded. later about pelicans' }
+    ])
+    expect(h.bytesRead - read).toBeLessThan(Buffer.byteLength(more) + 100)
+    // Only the files given last are kept.
+    await h.searchFiles('pelicans', [files[1]])
+    expect(h.keptChars()).toBe(2 * 'unrelated'.length)
+    expect(await h.searchFiles('unrelated', [])).toEqual([])
+    expect(h.keptChars()).toBe(0)
+  })
+
+  test('searchFiles keeps at most 100,000 characters of each conversation: its start and its most recent part', async () => {
+    const filler = Array.from({ length: 1000 }, (_, i) => user(`filler ${i} ${'x'.repeat(400)}`))
+    const files = [{ key: 'big', title: 'Big', path: await file('big', [user('opening aardvark'), ...filler, user('closing zebra')]) }]
+    const h = new SessionHistory(() => [])
+    expect(await h.searchFiles('aardvark', files)).toHaveLength(1)
+    expect(await h.searchFiles('zebra', files)).toHaveLength(1)
+    expect(await h.searchFiles('filler 200 ', files)).toEqual([]) // kept by the 300,000 cap of sessions, not this one
+    expect(h.keptChars()).toBeLessThanOrEqual(2 * (100_000 + 10))
+    expect(h.keptChars()).toBeGreaterThan(100_000)
+  })
+
+  /** Transcripts with one message each, `needle in <name>` and some padding. */
+  const needles = (...names: string[]) => Promise.all(names.map(async (n) =>
+    ({ key: n, title: n, path: await file(n, [user(`needle in ${n} ${'x'.repeat(1000)}`)]) })))
+  const bytes = (...fs: { path: string }[]) => fs.reduce((n, f) => n + statSync(f.path).size, 0)
+
+  test('a search overtaken by a newer one stops reading after the file it was on, and keeps none of its text', async () => {
+    const mine = await needles('a', 'b', 'c')
+    const other = [{ key: 'd', title: 'd', path: await file('d', [user('needle in d')]) }]
+    const h = new SessionHistory(() => [])
+    const older = h.searchFiles('needle', mine) // reading a when the newer one starts
+    expect(await h.searchFiles('needle', other)).toEqual([{ key: 'd', matchedIn: 'conversation', snippet: 'needle in d' }])
+    expect(await older).toEqual([]) // its asker has moved on
+    expect(h.keptChars()).toBe(2 * 'needle in d'.length)
+    expect(h.bytesRead).toBe(bytes(mine[0], other[0])) // b and c were never read
+  })
+
+  test('forgetFiles (the dialog closed) frees the text, and a search still running then stops and keeps nothing', async () => {
+    const files = await needles('a', 'b')
+    const h = new SessionHistory(() => [])
+    await h.searchFiles('needle', files)
+    expect(h.keptChars()).toBeGreaterThan(0)
+    h.forgetFiles()
+    expect(h.keptChars()).toBe(0)
+    const read = h.bytesRead
+    const running = h.searchFiles('needle', files)
+    h.forgetFiles()
+    expect(await running).toEqual([])
+    expect(h.keptChars()).toBe(0)
+    expect(h.bytesRead - read).toBe(bytes(files[0]))
+  })
+
+  test('the text is dropped two minutes after the last search', async () => {
+    const files = await needles('a')
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const h = new SessionHistory(() => [])
+      await h.searchFiles('needle', files)
+      vi.advanceTimersByTime(FILES_IDLE_MS - 1000)
+      await h.searchFiles('needle a', files) // starts the two minutes again
+      vi.advanceTimersByTime(FILES_IDLE_MS - 1)
+      expect(h.keptChars()).toBeGreaterThan(0)
+      vi.advanceTimersByTime(1)
+      expect(h.keptChars()).toBe(0)
+      expect(FILES_IDLE_MS).toBe(2 * 60_000)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

@@ -10,6 +10,12 @@ import { createInterface } from 'node:readline'
 const env = process.env
 const args = process.argv.slice(2)
 
+// `claude --version` answers as Claude Code does ($STUB_CLAUDE_VERSION instead, when a test sets it), logging nothing.
+if (args[0] === '--version') {
+  console.log(env.STUB_CLAUDE_VERSION || '2.1.316 (Claude Code)')
+  process.exit(0)
+}
+
 if (env.STUB_CLAUDE_LOG) {
   appendFileSync(env.STUB_CLAUDE_LOG, [
     args.join(' '),
@@ -26,9 +32,21 @@ if (env.STUB_CLAUDE_ENV_FILE) {
 
 let settings = ''
 let id = ''
+let note = ''
 for (let i = 0; i + 1 < args.length; i++) {
   if (args[i] === '--settings') settings = args[i + 1]
   if (args[i] === '--session-id' || args[i] === '--resume') id = args[i + 1]
+  if (args[i] === '--append-system-prompt-file') note = args[i + 1]
+}
+// Like Claude, reads the file given with --append-system-prompt-file; its text is logged as NOTE=.
+if (env.STUB_CLAUDE_LOG && note) {
+  let text
+  try {
+    text = readFileSync(note, 'utf8').replace(/\n+$/, '')
+  } catch (e) {
+    text = String(e)
+  }
+  appendFileSync(env.STUB_CLAUDE_LOG, `NOTE=${text}\n`)
 }
 if (args.includes('--resume')) {
   if (env.STUB_CLAUDE_RESUME_FAIL === '1' || (env.STUB_CLAUDE_RESUME_FAIL_FILE && existsSync(env.STUB_CLAUDE_RESUME_FAIL_FILE))) process.exit(1)

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { Launcher, MESSAGES, SCRIPT_TROUBLE, WARNINGS, type FetchToken, type LauncherOptions, type ProbeRun, type PtyLike, type RunProbe } from '../../src/host/launcher'
+import { windowsCommand } from '../../src/host/win-command'
 
 class FakePty implements PtyLike {
   static next = 1000
@@ -354,6 +355,79 @@ describe('the host launcher', () => {
     expect(typeof p.args).toBe('string')
     expect(p.args).toMatch(/^\/d \/s \/c "C:\\stub\\claude\.cmd \^\^\^"--session-id\^\^\^" /)
     expect(p.env.GH_TOKEN).toBe('token-for-dev-work')
+  })
+})
+
+describe('a conversation continued from outside Pitwall (continue-note.txt)', () => {
+  const note = () => join(sd, 'continue-note.txt')
+  /** Claude rebuilds its system prompt for this folder, with the note, rather than reuse the recorded one. */
+  const flags = () => ['--system-prompt-snapshot', 'off', '--append-system-prompt-file', note()]
+
+  /** The session's own Claude config dir (env.json), as a project's CLAUDE_CONFIG_DIR sets it. */
+  const config = () => join(dir, `it's a "claude" config`)
+  /** A transcript as Claude keeps it: `<config dir>/projects/<folder>/<id>.jsonl` (only ever listed, never read). */
+  const transcript = (configDir: string, id: string) => {
+    mkdirSync(join(configDir, 'projects', '-x-repo'), { recursive: true })
+    writeFileSync(join(configDir, 'projects', '-x-repo', `${id}.jsonl`), '{}\n')
+  }
+
+  test("every launch gets --system-prompt-snapshot off and the note; its transcript exists, so a failed resume never starts a new conversation over it: Claude's error stands and Enter resumes again", async () => {
+    writeFileSync(note(), 'Work only here.\n')
+    writeEnv({ ...baseVars(), CLAUDE_CONFIG_DIR: config() })
+    transcript(config(), ID)
+    const settings = join(sd, 'hooks.json')
+    const l = launcher()
+    l.start()
+    await until(() => spawned.length === 1, 'claude started')
+    expect(lastPty().args).toEqual(['--session-id', ID, '--settings', settings, '--name', TITLE, ...flags()])
+    lastPty().exit(0)
+    await until(() => screen.includes('Press Enter'), 'prompt')
+    l.write('\r')
+    await until(() => spawned.length === 2, 'resumed')
+    expect(lastPty().args).toEqual(['--resume', ID, '--settings', settings, ...flags()])
+    lastPty().exit(1) // before any SessionStart
+    await until(() => screen.includes(MESSAGES.exited(1)), 'prompt after the failed resume')
+    expect(spawned).toHaveLength(2)
+    expect(screen).not.toContain(MESSAGES.resumeFailed())
+    expect(eventList().map((e) => [e.e, e.mode ?? e.code])).toEqual([
+      ['pitwall:launch', 'new'], ['pitwall:exited', 0], ['pitwall:launch', 'resume'], ['pitwall:exited', 1]
+    ])
+    l.write('\r')
+    await until(() => spawned.length === 3, 'resumed again')
+    expect(lastPty().args).toEqual(['--resume', ID, '--settings', settings, ...flags()])
+  })
+
+  test('no transcript of its id (after a /clear, say): a failed resume still starts a new conversation, with the note', async () => {
+    writeFileSync(note(), 'Work only here.\n')
+    writeEnv({ ...baseVars(), CLAUDE_CONFIG_DIR: config() })
+    transcript(config(), 'the-id-before-clear')
+    transcript(join(dir, '.claude'), ID) // in HOME's config dir, not the session's: doesn't count
+    writeFileSync(join(sd, 'started'), '')
+    launcher().start()
+    await until(() => spawned.length === 1, 'resume')
+    lastPty().exit(1)
+    await until(() => spawned.length === 2, 'fresh launch')
+    expect(screen).toContain(MESSAGES.resumeFailed())
+    expect(lastPty().args).toEqual(['--session-id', ID, '--settings', join(sd, 'hooks.json'), '--name', TITLE, ...flags()])
+  })
+
+  test('a session that already started resumes with them too', async () => {
+    writeFileSync(note(), 'Work only here.\n')
+    writeFileSync(join(sd, 'started'), '')
+    launcher().start()
+    await until(() => spawned.length === 1, 'resume')
+    expect(lastPty().args).toEqual(['--resume', ID, '--settings', join(sd, 'hooks.json'), ...flags()])
+  })
+
+  test("Windows: the flags and the note's path reach Claude through cmd.exe as arguments of their own", async () => {
+    writeFileSync(note(), 'Work only here.\n')
+    writeEnv({ ...baseVars(), PITWALL_CLAUDE_BIN: 'claude', PATH: 'C:\\stub' })
+    const isFile = (p: string) => p.toLowerCase() === 'c:\\stub\\claude.cmd'
+    const env = { Path: 'C:\\Windows', ComSpec: 'C:\\Windows\\system32\\cmd.exe' }
+    launcher({ platform: 'win32', env, isFile }).start()
+    await until(() => spawned.length === 1, 'claude')
+    const args = ['--session-id', ID, '--settings', join(sd, 'hooks.json'), '--name', TITLE, ...flags()]
+    expect(lastPty().args).toBe(windowsCommand('claude', args, { PATH: 'C:\\stub', ComSpec: env.ComSpec }, isFile).commandLine)
   })
 })
 

@@ -6,12 +6,17 @@ import { claudeConfigDir } from './identity'
 export type { HistoryHit }
 
 /**
- * Search over Pitwall sessions' titles and their Claude conversations. Reads Claude's transcripts
- * (`<config dir>/projects/<folder>/<conversation id>.jsonl`) and never writes there.
+ * Search over Pitwall sessions' titles and their Claude conversations, and over transcripts the caller names
+ * (conversations run outside Pitwall). Reads Claude's transcripts (`<config dir>/projects/<folder>/<conversation id>.jsonl`)
+ * and never writes there.
  */
 
 /** Text kept per session (characters), across all its conversations: the start and the most recent part. */
 export const TEXT_CAP = 300_000
+/** Text kept per transcript searched with `searchFiles`. */
+const FILE_TEXT_CAP = 100_000
+/** How long that text is kept after the last `searchFiles` (the dialog that searched has likely closed). */
+export const FILES_IDLE_MS = 2 * 60_000
 const MAX_QUERY = 256
 const MAX_TERMS = 16
 const MAX_HITS = 50
@@ -196,6 +201,14 @@ interface Conversation { files: FileState[]; text: CappedText; plain: string; lo
 
 const EMPTY: Pick<Conversation, 'plain' | 'lower'> = { plain: '', lower: '' }
 
+/** Conversations held in memory by key, the reads running for them, and the text each may keep. */
+interface Held { conversations: Map<string, Conversation>; reading: Map<string, Promise<Conversation | null>>; cap: number }
+
+const held = (cap: number): Held => ({ conversations: new Map(), reading: new Map(), cap })
+
+/** A transcript named to `searchFiles` that matches. */
+export interface FileHit { key: string; matchedIn: 'title' | 'conversation'; snippet: string }
+
 /** A folder's files, read at `readAt`, when the folder's mtime was `mtimeMs`. */
 interface Listing { mtimeMs: number; readAt: number; files: string[] }
 
@@ -209,11 +222,18 @@ const RACY_MS = 2000
 export class SessionHistory {
   /** Bytes read from transcripts so far (lets tests check that unchanged files aren't read again). */
   bytesRead = 0
-  private conversations = new Map<string, Conversation>()
-  private indexing = new Map<string, Promise<Conversation | null>>()
+  /** By session id. */
+  private sessions = held(TEXT_CAP)
+  /** By transcript path. */
+  private files = held(FILE_TEXT_CAP)
   private roots = new Map<string, Listing>()
   private folders = new Map<string, Listing>()
   private warming: Promise<void> | null = null
+  /** Bumped by every searchFiles and forgetFiles: an older searchFiles then stops reading. */
+  private filesRound = 0
+  /** The transcripts the latest searchFiles was given: only their text is kept. */
+  private filesWanted = new Set<string>()
+  private filesIdle: NodeJS.Timeout | null = null
 
   constructor(private readonly sources: () => HistorySource[]) {}
 
@@ -244,17 +264,70 @@ export class SessionHistory {
     return hits.slice(0, limit)
   }
 
+  /**
+   * Like `search`, over the transcripts given (in their order: title matches first). A title match isn't read, and
+   * its snippet is ''. Text is kept for the files given last only, up to FILE_TEXT_CAP each, until FILES_IDLE_MS
+   * after the last search. A search overtaken by a newer one (or by forgetFiles) stops reading and answers [].
+   */
+  async searchFiles(query: string, files: { key: string; title: string; path: string }[]): Promise<FileHit[]> {
+    const round = this.newFilesRound(files.map((f) => f.path))
+    try {
+      const terms = queryTerms(query)
+      if (terms.length === 0) return []
+      const inTitle: FileHit[] = []
+      const inText: FileHit[] = []
+      for (const f of files) {
+        const title = f.title.toLowerCase()
+        if (terms.every((t) => title.includes(t))) {
+          inTitle.push({ key: f.key, matchedIn: 'title', snippet: '' })
+          continue
+        }
+        const conv = await this.indexed(this.files, f.path, [f.path])
+        if (round !== this.filesRound) {
+          this.keepWantedFiles() // that read may have kept a file the newer round doesn't want
+          return []
+        }
+        if (!terms.every((t) => title.includes(t) || conv.lower.includes(t))) continue
+        inText.push({ key: f.key, matchedIn: 'conversation', snippet: snippet(conv, terms) })
+      }
+      return [...inTitle, ...inText]
+    } finally {
+      if (round === this.filesRound && this.filesWanted.size > 0) {
+        this.filesIdle = setTimeout(() => this.forgetFiles(), FILES_IDLE_MS)
+        this.filesIdle.unref() // never keeps the app running
+      }
+    }
+  }
+
+  /** Drops the text kept for searchFiles, and stops one still reading (the dialog that searched has closed). */
+  forgetFiles(): void {
+    this.newFilesRound([])
+  }
+
   /** Characters of conversation text held in memory (the text and its lowercase copy). */
   keptChars(): number {
     let n = 0
-    for (const c of this.conversations.values()) n += c.text.size + c.lower.length
+    for (const h of [this.sessions, this.files]) for (const c of h.conversations.values()) n += c.text.size + c.lower.length
     return n
+  }
+
+  /** A new round of searchFiles over `paths`: older rounds stop, other files' text goes, the idle timer is stopped. */
+  private newFilesRound(paths: string[]): number {
+    this.filesWanted = new Set(paths)
+    this.keepWantedFiles()
+    if (this.filesIdle) clearTimeout(this.filesIdle)
+    this.filesIdle = null
+    return ++this.filesRound
+  }
+
+  private keepWantedFiles(): void {
+    for (const p of this.files.conversations.keys()) if (!this.filesWanted.has(p)) this.files.conversations.delete(p)
   }
 
   /** Drops what's kept for sessions that are gone. */
   private forgetOthers(sources: HistorySource[]): void {
     const ids = new Set(sources.map((s) => s.session.id))
-    for (const id of this.conversations.keys()) if (!ids.has(id)) this.conversations.delete(id)
+    for (const id of this.sessions.conversations.keys()) if (!ids.has(id)) this.sessions.conversations.delete(id)
   }
 
   /** Index every transcript in the background, so the first real search is quick. */
@@ -311,34 +384,39 @@ export class SessionHistory {
   }
 
   /** All of a session's conversations, earlier ones first, read up to date. Never throws. */
-  private async conversation(s: Session, located: Map<string, string[]> | undefined): Promise<Pick<Conversation, 'plain' | 'lower'>> {
+  private conversation(s: Session, located: Map<string, string[]> | undefined): Promise<Pick<Conversation, 'plain' | 'lower'>> {
     const ids = [...(s.pastClaudeIds ?? []), s.claudeSessionId].filter((x, i, a) => x && a.indexOf(x) === i)
     const paths = ids.flatMap((id) => [...(located?.get(`${id}.jsonl`) ?? [])].sort())
-    let running = this.indexing.get(s.id)
+    return this.indexed(this.sessions, s.id, paths)
+  }
+
+  /** The transcripts at `paths` as one conversation, read up to date, sharing a read already running. Never throws. */
+  private async indexed(h: Held, key: string, paths: string[]): Promise<Pick<Conversation, 'plain' | 'lower'>> {
+    let running = h.reading.get(key)
     if (!running) {
-      running = this.refresh(s.id, paths)
+      running = this.refresh(h, key, paths)
         .catch(() => {
-          this.conversations.delete(s.id)
+          h.conversations.delete(key)
           return null
         })
-        .finally(() => { this.indexing.delete(s.id) })
-      this.indexing.set(s.id, running)
+        .finally(() => { h.reading.delete(key) })
+      h.reading.set(key, running)
     }
     return (await running) ?? EMPTY
   }
 
   /**
    * Reads what changed since the last time: new files, and new lines of the last one read. Anything else (a file
-   * rewritten, removed or reordered) reads the session's transcripts again from the start.
+   * rewritten, removed or reordered) reads the transcripts again from the start.
    */
-  private async refresh(id: string, paths: string[]): Promise<Conversation> {
+  private async refresh(h: Held, id: string, paths: string[]): Promise<Conversation> {
     const found: { path: string; size: number; mtimeMs: number }[] = []
     for (const path of paths) {
       const st = await stat(path).catch(() => null)
       if (st?.isFile()) found.push({ path, size: st.size, mtimeMs: st.mtimeMs })
     }
     const same = (f: FileState, x: (typeof found)[number]) => f.path === x.path && f.size === x.size && f.mtimeMs === x.mtimeMs
-    const cur = this.conversations.get(id)
+    const cur = h.conversations.get(id)
     if (cur && cur.files.length === found.length && cur.files.every((f, i) => same(f, found[i]))) return cur
 
     let conv: Conversation | null = null
@@ -356,8 +434,8 @@ export class SessionHistory {
       }
     }
     // Drop the entry while it's being updated: a failed read must never leave half-added text behind.
-    this.conversations.delete(id)
-    if (!conv) conv = { files: [], text: new CappedText(), plain: '', lower: '' }
+    h.conversations.delete(id)
+    if (!conv) conv = { files: [], text: new CappedText(h.cap), plain: '', lower: '' }
     for (let i = from; i < found.length; i++) {
       // Let terminal output and IPC through between files: indexing many transcripts must not stall the app.
       await new Promise<void>((resolve) => setImmediate(resolve))
@@ -381,7 +459,7 @@ export class SessionHistory {
       conv.plain = plain
       conv.lower = plain.toLowerCase()
     }
-    this.conversations.set(id, conv)
+    h.conversations.set(id, conv)
     return conv
   }
 

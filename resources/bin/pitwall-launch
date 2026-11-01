@@ -29,9 +29,26 @@ now() { echo $(($(date +%s) * 1000)); }
 log_event() { printf '%s\n' "$1" >> "$PITWALL_EVENTS_FILE"; }
 event_lines() { if [ -f "$PITWALL_EVENTS_FILE" ]; then wc -l < "$PITWALL_EVENTS_FILE" | tr -d ' '; else echo 0; fi; }
 
+# Claude with the given arguments. A conversation continued from outside Pitwall (continue-note.txt): Claude rebuilds
+# its system prompt for this folder, with the note, rather than reuse the recorded one (which names where it began).
+start_claude() {
+  if [ -e "$dir/continue-note.txt" ]; then
+    set -- "$@" --system-prompt-snapshot off --append-system-prompt-file "$dir/continue-note.txt"
+  fi
+  "$PITWALL_CLAUDE_BIN" "$@"
+}
+
+# Whether Claude has a transcript of conversation $1 (<config dir>/projects/<any folder>/$1.jsonl); only lists folders.
+has_transcript() {
+  for f in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/projects/*/"$1".jsonl; do
+    [ -e "$f" ] && return 0
+  done
+  return 1
+}
+
 launch_new() {
   log_event "{\"c\":\"$PITWALL_SESSION_ID\",\"t\":$(now),\"e\":\"pitwall:launch\",\"mode\":\"new\"}"
-  "$PITWALL_CLAUDE_BIN" --session-id "$id" --settings "$dir/hooks.json" --name "$PITWALL_TITLE"
+  start_claude --session-id "$id" --settings "$dir/hooks.json" --name "$PITWALL_TITLE"
 }
 
 # One launch or resume; exits with claude's code. A subshell, so nothing from a previous env.sh lingers.
@@ -54,9 +71,12 @@ run_claude() (
   else
     before=$(event_lines)
     log_event "{\"c\":\"$PITWALL_SESSION_ID\",\"t\":$(now),\"e\":\"pitwall:launch\",\"mode\":\"resume\"}"
-    "$PITWALL_CLAUDE_BIN" --resume "$id" --settings "$dir/hooks.json"
+    start_claude --resume "$id" --settings "$dir/hooks.json"
     rc=$?
-    if [ "$rc" -ne 0 ] && ! tail -n +"$((before + 1))" "$PITWALL_EVENTS_FILE" 2>/dev/null | grep -q '"e":"SessionStart"'; then
+    # Failed before SessionStart: the conversation never started, so start a new one with this id. Never over a
+    # conversation continued from outside Pitwall whose transcript exists: Claude's error stands, Enter resumes again.
+    if [ "$rc" -ne 0 ] && ! tail -n +"$((before + 1))" "$PITWALL_EVENTS_FILE" 2>/dev/null | grep -q '"e":"SessionStart"' &&
+      ! { [ -e "$dir/continue-note.txt" ] && has_transcript "$id"; }; then
       log_event "{\"c\":\"$PITWALL_SESSION_ID\",\"t\":$(now),\"e\":\"pitwall:exited\",\"code\":$rc}"
       echo "Couldn't resume the previous conversation — starting a new one."
       launch_new
