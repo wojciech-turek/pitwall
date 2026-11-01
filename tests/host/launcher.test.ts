@@ -363,8 +363,8 @@ describe('a conversation continued from outside Pitwall (continue-note.txt)', ()
   /** Claude rebuilds its system prompt for this folder, with the note, rather than reuse the recorded one. */
   const flags = () => ['--system-prompt-snapshot', 'off', '--append-system-prompt-file', note()]
 
-  /** The session's own Claude config dir (env.json), as a project's CLAUDE_CONFIG_DIR sets it. */
-  const config = () => join(dir, `it's a "claude" config`)
+  /** The session's own Claude config dir (env.json), as a project's CLAUDE_CONFIG_DIR sets it (Windows allows no `"` in names). */
+  const config = () => join(dir, process.platform === 'win32' ? `it's a 'claude' config` : `it's a "claude" config`)
   /** A transcript as Claude keeps it: `<config dir>/projects/<folder>/<id>.jsonl` (only ever listed, never read). */
   const transcript = (configDir: string, id: string) => {
     mkdirSync(join(configDir, 'projects', '-x-repo'), { recursive: true })
