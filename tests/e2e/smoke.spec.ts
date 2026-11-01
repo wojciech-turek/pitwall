@@ -122,6 +122,27 @@ test.describe('dev build', () => {
     expect(await sessionNames(e)).toContain(`pw-${sessionId}`)
   })
 
+  test("the terminal's rows and columns fit inside its frame at any window size (no clipped last line)", async () => {
+    await page.getByTestId('session-row').click()
+    await expect(page.getByTestId('terminal-claude')).toBeVisible()
+    // How far the terminal's text area reaches past its frame's inner edge (≤ 0: it fits).
+    const overflow = (): Promise<{ bottom: number; right: number }> => page.evaluate(`(() => {
+      const host = document.querySelector('[data-testid="terminal-claude"]')
+      const h = host.getBoundingClientRect(), cs = getComputedStyle(host)
+      const s = host.querySelector('.xterm-screen').getBoundingClientRect()
+      return { bottom: s.bottom - (h.bottom - parseFloat(cs.paddingBottom)), right: s.right - (h.right - parseFloat(cs.paddingRight)) }
+    })()`)
+    // One height per pixel across a whole text row: wherever the frame's padding would leave room for "one more row".
+    for (let height = 880; height < 900; height++) {
+      await app!.evaluate(({ BrowserWindow }, hh) => BrowserWindow.getAllWindows()[0].setContentSize(1400, hh), height)
+      await page.waitForTimeout(120) // the terminal refits 50 ms after a resize
+      const o = await overflow()
+      expect(o.bottom, `last row past the frame at height ${height}`).toBeLessThanOrEqual(0.5)
+      expect(o.right, `last column past the frame at height ${height}`).toBeLessThanOrEqual(0.5)
+    }
+    await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1400, 900))
+  })
+
   test('files tab: open a file, edit, save, send to agent', async () => {
     await page.getByTestId('session-row').click()
     await page.getByTestId('file-README.md').click()

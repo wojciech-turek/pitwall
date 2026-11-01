@@ -61,6 +61,10 @@ export default function TerminalView({ sessionId, kind, fontFamily, fontSize }: 
   }
 
   return (
-    <div className="terminal-host" ref={host} data-testid={`terminal-${kind}`} onDragOver={onDragOver} onDrop={onDrop} />
+    // The padding is on the outer frame; the terminal measures the inner box (xterm's fit reads its parent's CSS
+    // height, which with border-box includes padding: on a padded parent it fitted a row too many, cut off at the bottom).
+    <div className="terminal-host" data-testid={`terminal-${kind}`} onDragOver={onDragOver} onDrop={onDrop}>
+      <div className="terminal-fit" ref={host} />
+    </div>
   )
 }
