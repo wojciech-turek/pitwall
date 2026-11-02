@@ -2,6 +2,13 @@
 
 All notable changes to Pitwall are listed here, newest first. Pitwall shows these notes when an update is available, before you download it.
 
+## [0.3.2] - 2026-11-02
+
+### Fixed
+
+- **No black strip under the terminal's last line.** 0.3.1's fix for the clipped last line left a thin black bar below it; it's the terminal's own colour now.
+- **Windows: a teardown command that runs too long is reported as stopped only once it is.** Before, the archive dialog could say so a few seconds early, while the command was still being stopped.
+
 ## [0.3.1] - 2026-11-01
 
 ### Added
