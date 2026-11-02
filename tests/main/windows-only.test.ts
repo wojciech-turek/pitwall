@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { exec } from '../../src/main/exec'
-import { snapshotLeftovers, stopLeftovers } from '../../src/main/sessions/leftovers'
+import { snapshotLeftovers, stopLeftovers, stopProcessTree } from '../../src/main/sessions/leftovers'
 import { runTeardown } from '../../src/main/sessions/teardown'
 import { waitFor } from '../helpers/wait'
 
@@ -75,6 +75,22 @@ describe.skipIf(process.platform !== 'win32')('on Windows', () => {
     expect(r.timedOut).toBe(true)
     const child = Number(await readFile(pidFile, 'utf8'))
     await waitFor(async () => !alive(child), 10_000, 'the teardown\'s child ended')
+  })
+
+  test('a teardown that runs too long is reported only once it is stopped, as timed out', async () => {
+    let stopped = false
+    const r = await runTeardown('node -e "setInterval(() => {}, 1000)"', {
+      cwd: dir, env: process.env as Record<string, string>, timeoutMs: 1000,
+      // As slow as Windows PowerShell's first runs on a fresh machine. The shell exits while this waits: that exit is
+      // the kill's, not the command's.
+      stopTree: async (pid, startedAt) => {
+        await stopProcessTree(pid, startedAt)
+        await new Promise((res) => setTimeout(res, 3000))
+        stopped = true
+      }
+    })
+    expect(stopped).toBe(true)
+    expect(r).toMatchObject({ timedOut: true, exitCode: null })
   })
 
   test('leftovers: a pane of this "host" and everything below it are found by creation time and ended; nothing else', async () => {

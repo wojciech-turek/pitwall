@@ -36,8 +36,8 @@ export function teardownSpawn(
 /**
  * Runs a shell command (sh; cmd.exe on Windows) in its own process group. Keeps only the last 4 KB of combined
  * output. On timeout the whole group is killed (Windows: the command and what it started, each checked by creation
- * time). Resolves as soon as the shell exits or the limit hits, even if a background child still holds the output
- * pipes.
+ * time) and the result comes once that's done, so "stopped" is true when the caller hears it. Otherwise resolves as
+ * soon as the shell exits, even if a background child still holds the output pipes.
  */
 export function runTeardown(
   command: string,
@@ -72,17 +72,21 @@ export function runTeardown(
       const output = Buffer.concat([tail]).subarray(-KEEP_BYTES).toString('utf8') + extra
       resolve({ ...r, output })
     }
-    const killGroup = (): void => {
+    const killGroup = async (): Promise<void> => {
       if (!child.pid) return
-      if (platform === 'win32') return void (o.stopTree ?? stopProcessTree)(child.pid, startedAt)
+      if (platform === 'win32') return (o.stopTree ?? stopProcessTree)(child.pid, startedAt)
       try { process.kill(-child.pid, 'SIGKILL') } catch { /* already gone */ }
     }
+    let timedOut = false
     const timer = setTimeout(() => {
-      killGroup()
-      finish({ exitCode: null, timedOut: true })
+      timedOut = true
+      // Windows: stopping takes two PowerShell runs (seconds on a cold machine). Report only once it's done.
+      void killGroup().catch(() => undefined).then(() => finish({ exitCode: null, timedOut: true }))
     }, o.timeoutMs ?? TEARDOWN_LIMIT_MS)
     child.on('error', (e) => finish({ exitCode: null, timedOut: false }, `\n${e.message}`))
-    // Let the last output chunks arrive before reading the tail.
-    child.on('exit', (code, signal) => setTimeout(() => finish({ exitCode: code ?? (signal ? null : 0), timedOut: false }), 50))
+    // Let the last output chunks arrive before reading the tail. (After the limit, the shell's exit is the kill's.)
+    child.on('exit', (code, signal) => {
+      if (!timedOut) setTimeout(() => finish({ exitCode: code ?? (signal ? null : 0), timedOut: false }), 50)
+    })
   })
 }
