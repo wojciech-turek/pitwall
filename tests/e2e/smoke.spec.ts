@@ -140,6 +140,12 @@ test.describe('dev build', () => {
       expect(o.bottom, `last row past the frame at height ${height}`).toBeLessThanOrEqual(0.5)
       expect(o.right, `last column past the frame at height ${height}`).toBeLessThanOrEqual(0.5)
     }
+    // What's left under the last row (less than a row) is the terminal's own background, never xterm's default black.
+    const below = await page.evaluate(`(() => {
+      const host = document.querySelector('[data-testid="terminal-claude"]')
+      return getComputedStyle(host.querySelector('.xterm-viewport')).backgroundColor
+    })()`)
+    expect(below).not.toBe('rgb(0, 0, 0)')
     await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1400, 900))
   })
 

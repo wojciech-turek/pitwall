@@ -151,6 +151,8 @@ input:focus, select:focus { border-color: var(--accent); }
 .terminal-host { flex: 1; min-width: 0; min-height: 0; padding: 6px 0 4px 10px; }
 .terminal-fit { width: 100%; height: 100%; overflow: hidden; }
 .terminal-host .xterm { height: 100%; }
+/* xterm 6 paints the theme background only over whole rows; below the last row its viewport would show xterm.css's black. */
+.terminal-host .xterm-viewport { background-color: transparent; }
 
 /* ---------- split panes ---------- */
 .pane-layout { flex: 1; min-width: 0; min-height: 0; display: flex; }
