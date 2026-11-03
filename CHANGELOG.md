@@ -2,6 +2,12 @@
 
 All notable changes to Pitwall are listed here, newest first. Pitwall shows these notes when an update is available, before you download it.
 
+## [0.3.3] - 2026-11-03
+
+### Changed
+
+- **Folders and sessions are easier to tell apart in the sidebar.** Each folder has a folder icon, and its sessions hang off a thin line beneath it, so an idle session no longer looks like another folder.
+
 ## [0.3.2] - 2026-11-02
 
 ### Fixed
