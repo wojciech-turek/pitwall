@@ -1,6 +1,6 @@
 :root {
   --bg-app:#171615; --bg-sidebar:#1c1b1a; --bg-panel:#1f1e1c; --bg-elevated:#262523; --bg-hover:#2b2a27; --bg-selected:#33312e;
-  --border:#2e2c29; --text:#e8e6e3; --text-muted:#9c9893; --text-faint:#6b6762; --accent:#d9a66b;
+  --border:#2e2c29; --tree-line:#3e3b37; --text:#e8e6e3; --text-muted:#9c9893; --text-faint:#6b6762; --accent:#d9a66b;
   --st-working:#5b9cf5; --st-needs:#f0a34b; --st-unread:#5cc28a; --st-read:#6b6762; --st-exited:#e5675c;
   --diff-add:#5cc28a; --diff-del:#e5675c; --diff-add-bg:rgba(92,194,138,.13); --diff-del-bg:rgba(229,103,92,.13);
   --usage-ok:var(--accent); --usage-warn:var(--st-needs); --usage-high:var(--st-exited); --usage-track:rgba(255,255,255,.08);
@@ -51,10 +51,17 @@ body { background: var(--bg-app); color: var(--text); font-family: var(--font-ui
 .project-row .row-muted { flex: 1 1 0; }
 .project-muted { flex: none; display: inline-flex; width: 14px; height: 14px; color: var(--text-faint); }
 .project-muted svg { width: 100%; height: 100%; }
-.sub-row { margin-left: 8px; color: var(--text-muted); }
+.sub-row { margin-left: 8px; color: var(--text-muted); gap: 6px; }
 .sub-row .row-title { flex: 0 1 auto; }
 .sub-row .tag { flex: 1 1 0; }
-.session-row { margin-left: 8px; padding-left: 22px; color: var(--text); }
+.session-row { margin-left: 8px; padding-left: 42px; color: var(--text); }
+/* Folder rows carry a folder icon; their sessions hang off a tree line that drops from under the icon,
+   with a tick to each status dot. Dots sit under the folder name (x 36), titles at x 50. */
+.folder-icon { flex: none; color: var(--text-faint); }
+.sub-group { position: relative; }
+.sub-group:has(.session-row)::before { content: ''; position: absolute; z-index: 1; pointer-events: none; left: 22px; top: 22px; bottom: 14px; width: 1px; background: var(--tree-line); }
+.session-row > .status-dot { left: 28px; }
+.session-row::after { content: ''; position: absolute; left: 14px; top: 50%; width: 11px; height: 1px; background: var(--tree-line); pointer-events: none; }
 .tag { font-size: 10.5px; color: var(--text-faint); border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; line-height: 15px; white-space: nowrap; align-self: center; flex: none; }
 .row-actions { display: flex; align-items: center; gap: 2px; margin-left: auto; opacity: 0; }
 .row:hover .row-actions, .row-actions:focus-within, .menu.open { opacity: 1; }

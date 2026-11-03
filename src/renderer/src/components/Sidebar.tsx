@@ -2,7 +2,7 @@ import type { AppSnapshot, Project, SubProject } from '@shared/types'
 import ArchivedList from './ArchivedList'
 import SessionRow from './SessionRow'
 import Menu from './Menu'
-import { FolderPlusIcon, HistoryIcon, MutedBellIcon, PlusIcon } from './Icons'
+import { FolderIcon, FolderPlusIcon, HistoryIcon, MutedBellIcon, PlusIcon } from './Icons'
 import { useUi } from '../state/ui'
 import { useToast } from '../state/toast'
 import { cleanIpcError } from '../state/errors'
@@ -34,6 +34,7 @@ export default function Sidebar({ snap, onSelect }: { snap: AppSnapshot; onSelec
   const subRow = (sp: SubProject, projectName: string): React.JSX.Element => (
     <div key={sp.id} className="sub-group">
       <div className="row sub-row" data-testid="subproject-row" data-name={sp.name} title={sp.path}>
+        <FolderIcon />
         <span className="row-title">{sp.name}</span>
         {sp.kind === 'folder' && <span className="tag">no git</span>}
         <span className="row-actions">
