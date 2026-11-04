@@ -79,6 +79,7 @@ export function registerIpc(d: IpcDeps): () => void {
   handle(IPC.renameSession, (id: string, title: string) => manager.rename(id, title))
   handle(IPC.setProjectMuted, (id: string, muted: boolean) => projects.setProjectMuted(id, muted === true))
   handle(IPC.markSessionUnread, (id: string) => manager.markUnread(id))
+  handle(IPC.setSessionPinned, (id: string, pinned: boolean) => manager.setPinned(id, pinned === true))
   on(IPC.sessionOpened, (id: unknown) => { if (typeof id === 'string') manager.sessionOpened(id) })
   handle(IPC.termOpen, (id: string, kind: TermKind, cols: number, rows: number) => bridge.open(id, kind, cols, rows))
   const sessionFolder = (id: string): { cwd: string; kind: 'repo' | 'folder' } => {

@@ -22,6 +22,8 @@ export interface Session {
   createdAt: number; lastViewedAt: number; archivedAt?: number; lastMessage?: string; pr?: PrInfo
   /** Set by "Mark as unread"; cleared when the user opens the session. */
   markedUnread?: boolean
+  /** Pinned by the user: listed first in its folder. */
+  pinned?: boolean
   /** Earlier Claude conversation ids (before a /clear), oldest first; searched with the current one. */
   pastClaudeIds?: string[]
   /** Archiving deleted the session's branch: resuming makes a new one rather than use another branch of that name. */

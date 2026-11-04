@@ -104,6 +104,11 @@ export function countStatuses(sessions: { status: DisplayStatus }[]): { needsYou
   return c
 }
 
+/** Order of sessions within a folder: pinned ones first, then oldest first. */
+export function bySessionOrder(a: Pick<SessionView, 'createdAt' | 'pinned'>, b: Pick<SessionView, 'createdAt' | 'pinned'>): number {
+  return Number(b.pinned === true) - Number(a.pinned === true) || a.createdAt - b.createdAt
+}
+
 export function sidebarOrder(s: Pick<AppSnapshot, 'projects' | 'subProjects' | 'sessions'>): SessionView[] {
   const out: SessionView[] = []
   const projects = [...s.projects].sort((a, b) => a.createdAt - b.createdAt)
@@ -112,7 +117,7 @@ export function sidebarOrder(s: Pick<AppSnapshot, 'projects' | 'subProjects' | '
       .filter((sp) => sp.projectId === p.id)
       .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()))
     for (const sp of subs) {
-      out.push(...s.sessions.filter((x) => x.subProjectId === sp.id).sort((a, b) => a.createdAt - b.createdAt))
+      out.push(...s.sessions.filter((x) => x.subProjectId === sp.id).sort(bySessionOrder))
     }
   }
   return out

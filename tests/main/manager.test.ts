@@ -576,6 +576,20 @@ describe('muted projects and mark as unread', () => {
     expect('exitCode' in byId('c')).toBe(false)
   })
 
+  test('pin and unpin: saved on the session and shown in the snapshot; archived or unknown sessions are left alone', async () => {
+    await addSession('a')
+    await addSession('b', { archivedAt: 5 })
+    const m = await ready()
+    await m.setPinned('a', true)
+    expect(store.state.sessions[0].pinned).toBe(true)
+    expect(m.snapshot().sessions[0].pinned).toBe(true)
+    await m.setPinned('a', false)
+    expect('pinned' in store.state.sessions[0]).toBe(false)
+    await m.setPinned('b', true)
+    expect(store.state.sessions[1].pinned).toBeUndefined()
+    await m.setPinned('nope', true) // no throw
+  })
+
   test('marking a session that is not read is a no-op', async () => {
     await addSession('a', {}, [{ e: 'UserPromptSubmit', t: 2000 }])
     const m = await ready()

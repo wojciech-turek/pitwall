@@ -68,3 +68,7 @@ export const CrossMarkIcon = (): React.JSX.Element => (
 export const PendingMarkIcon = (): React.JSX.Element => (
   <svg {...base}><circle cx="8" cy="8" r="4" /></svg>
 )
+
+export const PinIcon = (): React.JSX.Element => (
+  <svg {...base} strokeLinejoin="round"><path d="M5.5 2.5h5M6.5 2.5v4L4.5 9h7l-2-2.5v-4M8 9v4.5" transform="rotate(30 8 8)" /></svg>
+)

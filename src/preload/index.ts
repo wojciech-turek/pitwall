@@ -44,6 +44,7 @@ const api: PitwallApi = {
   renameSession: (id, title) => ipcRenderer.invoke(IPC.renameSession, id, title),
   setProjectMuted: (id, muted) => ipcRenderer.invoke(IPC.setProjectMuted, id, muted),
   markSessionUnread: (id) => ipcRenderer.invoke(IPC.markSessionUnread, id),
+  setSessionPinned: (id, pinned) => ipcRenderer.invoke(IPC.setSessionPinned, id, pinned),
   sessionOpened: (id) => ipcRenderer.send(IPC.sessionOpened, id),
   setViewing: (ids) => ipcRenderer.send(IPC.setViewing, ids),
   termOpen: (id, kind, cols, rows) => ipcRenderer.invoke(IPC.termOpen, id, kind, cols, rows),

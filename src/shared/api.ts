@@ -35,6 +35,8 @@ export interface PitwallApi {
   setProjectMuted(projectId: string, muted: boolean): Promise<void>
   /** Shows a read session as unread until the user opens it. No-op for any other status. */
   markSessionUnread(sessionId: string): Promise<void>
+  /** Pins a session to the top of its folder, or unpins it. */
+  setSessionPinned(sessionId: string, pinned: boolean): Promise<void>
   /** The user opened the session (sidebar, pane click); clears "marked as unread". */
   sessionOpened(sessionId: string): void
   setViewing(sessionIds: string[]): void
@@ -119,6 +121,7 @@ export const IPC = {
   renameSession: 'pitwall:renameSession',
   setProjectMuted: 'pitwall:setProjectMuted',
   markSessionUnread: 'pitwall:markSessionUnread',
+  setSessionPinned: 'pitwall:setSessionPinned',
   sessionOpened: 'pitwall:sessionOpened',
   setViewing: 'pitwall:setViewing',
   termOpen: 'pitwall:termOpen',

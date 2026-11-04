@@ -284,7 +284,8 @@ body.pane-resizing-column, body.pane-resizing-column * { cursor: row-resize !imp
 .mark-pass { color: var(--st-unread); }
 .mark-fail { color: var(--st-exited); }
 .mark-pending { color: var(--st-needs); }
-
+.pin-mark { flex: none; display: inline-flex; color: var(--text-faint); }
+.pin-mark svg { width: 12px; height: 12px; }
 .banner.pr-merged { display: flex; align-items: center; gap: 10px; background: rgba(163,113,247,.1); border: 1px solid rgba(163,113,247,.3); color: #cbb3f5; }
 .banner.pr-merged span { flex: 1; }
 

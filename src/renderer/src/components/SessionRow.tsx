@@ -3,6 +3,7 @@ import type { SessionView } from '@shared/types'
 import { LineCounts } from './ChangesTab'
 import PrBadge from './PrBadge'
 import StatusIcon from './StatusIcon'
+import { PinIcon } from './Icons'
 import Menu from './Menu'
 import HoverCard, { useHoverCard } from './HoverCard'
 import { useUi } from '../state/ui'
@@ -85,11 +86,16 @@ export default function SessionRow({ session, onSelect, projectName, subProjectN
       ) : (
         <span className="row-title">{session.title}</span>
       )}
+      {!editing && session.pinned && <span className="pin-mark" data-testid="pin-mark" title="Pinned"><PinIcon /></span>}
       {!editing && session.pr && <PrBadge pr={session.pr} />}
       {!editing && counts && <LineCounts additions={counts.additions} deletions={counts.deletions} />}
       {!editing && (
         <span className="row-actions">
           <Menu testId="session-menu" items={[
+            {
+              label: session.pinned ? 'Unpin' : 'Pin to top', testId: 'session-pin',
+              onClick: () => void window.pitwall.setSessionPinned(session.id, !session.pinned)
+            },
             ...(session.status === 'read'
               ? [{ label: 'Mark as unread', testId: 'session-mark-unread', onClick: () => void window.pitwall.markSessionUnread(session.id) }]
               : []),

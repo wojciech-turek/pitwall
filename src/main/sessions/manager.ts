@@ -207,6 +207,18 @@ export class SessionManager {
     })
   }
 
+  /** Pin a session to the top of its folder, or unpin it. */
+  async setPinned(sessionId: string, pinned: boolean): Promise<void> {
+    const s = this.session(sessionId)
+    if (!s || s.archivedAt !== undefined) return
+    await this.deps.store.update((d) => {
+      const x = d.sessions.find((y) => y.id === sessionId)
+      if (!x) return
+      if (pinned) x.pinned = true
+      else delete x.pinned
+    })
+  }
+
   /** The user opened the session (not just saw it in a pane). */
   sessionOpened(sessionId: string): void {
     this.clearMarkedUnread(sessionId)

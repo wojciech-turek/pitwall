@@ -192,4 +192,16 @@ describe('selectors', () => {
     })
     expect(out.map((x) => x.id)).toEqual(['s1', 's2', 's4', 's3'])
   })
+
+  test('sidebarOrder: pinned sessions come first within their folder, then by creation', () => {
+    const s = (id: string, subProjectId: string, createdAt: number, pinned?: boolean) =>
+      ({ id, subProjectId, createdAt, ...(pinned ? { pinned } : {}) }) as any
+    const out = sidebarOrder({
+      projects: [{ id: 'p1', createdAt: 1 } as any],
+      subProjects: [{ id: 'a', projectId: 'p1', name: 'a' } as any, { id: 'b', projectId: 'p1', name: 'b' } as any],
+      sessions: [s('a1', 'a', 1), s('a2', 'a', 2, true), s('a3', 'a', 3), s('a4', 'a', 4, true), s('b1', 'b', 1), s('b2', 'b', 2, true)]
+    })
+    // A pinned session never leaves its folder: b2 stays under b.
+    expect(out.map((x) => x.id)).toEqual(['a2', 'a4', 'a1', 'a3', 'b2', 'b1'])
+  })
 })

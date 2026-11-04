@@ -25,6 +25,7 @@ let manager: {
   listConversations: ReturnType<typeof vi.fn>
   searchConversations: ReturnType<typeof vi.fn>
   continueConversation: ReturnType<typeof vi.fn>
+  setPinned: ReturnType<typeof vi.fn>
 }
 let history: { search: ReturnType<typeof vi.fn>; forgetFiles: ReturnType<typeof vi.fn> }
 
@@ -41,7 +42,8 @@ beforeEach(() => {
     start: vi.fn(async () => ok),
     listConversations: vi.fn(async () => ({ items: [{ kind: 'outside', id: 'c', title: 'T', updatedAt: 1 }], truncated: false })),
     searchConversations: vi.fn(async () => [{ kind: 'outside', id: 'c', matchedIn: 'title', snippet: '' }]),
-    continueConversation: vi.fn(async () => ok)
+    continueConversation: vi.fn(async () => ok),
+    setPinned: vi.fn(async () => {})
   }
   history = { search: vi.fn(async () => []), forgetFiles: vi.fn() }
   registerIpc({
@@ -90,5 +92,12 @@ describe('IPC from the renderer', () => {
   test('forgetConversationText (the dialog closed) drops the conversation text its searches kept', async () => {
     await call(IPC.forgetConversationText)
     expect(history.forgetFiles).toHaveBeenCalledTimes(1)
+  })
+
+  test('setSessionPinned pins only on a literal true', async () => {
+    await call(IPC.setSessionPinned, 's_1', true)
+    await call(IPC.setSessionPinned, 's_1', 'yes')
+    await call(IPC.setSessionPinned, 's_1', false)
+    expect(manager.setPinned.mock.calls).toEqual([['s_1', true], ['s_1', false], ['s_1', false]])
   })
 })
