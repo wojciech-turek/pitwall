@@ -2,10 +2,11 @@
 
 All notable changes to Pitwall are listed here, newest first. Pitwall shows these notes when an update is available, before you download it.
 
-## [0.3.4] - 2026-11-04
+## [0.3.5] - 2026-11-04
 
 ### Added
 
+- **A red dot on Pitwall's Dock icon** whenever a session needs you or has an unread reply, gone once you've caught up. It's part of the icon itself, so it shows even if Pitwall's badges are turned off in System Settings → Notifications (when they're on, the count badge sits on top of it). Muted projects don't count.
 - **Pin a session to the top of its folder.** "Pin to top" in a session's ⋯ menu keeps the ones you come back to for small jobs at the top, marked with a pin. "Unpin" puts it back in place.
 - **Resize the sidebar** by dragging its right edge, anywhere from 200 to 480 pixels wide. Pitwall remembers the width; double-click the edge to go back to the default.
 
