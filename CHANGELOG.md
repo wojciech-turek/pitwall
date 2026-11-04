@@ -2,6 +2,12 @@
 
 All notable changes to Pitwall are listed here, newest first. Pitwall shows these notes when an update is available, before you download it.
 
+## [0.3.5] - 2026-11-04
+
+### Added
+
+- **Sounds when a session needs you or finishes.** Turn on "Play a sound when a session needs you or finishes" in Settings, or "Turn sounds on" in the command palette (⌘K). A rising chime means Claude has stopped on a question or a permission; a softer note means it has finished and its reply is waiting. Turning sounds on plays both once so you know them. There's no sound for the session you're looking at or from a muted project, and several sessions changing at once make one sound. Pitwall plays them itself, so you hear them even when notifications are silenced or Focus is on; its notifications stay silent while sounds are on, so you never hear two. Sounds are off until you turn them on.
+
 ## [0.3.4] - 2026-11-04
 
 ### Added
