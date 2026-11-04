@@ -1,6 +1,6 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { app, BrowserWindow, dialog, Menu, powerMonitor, shell } from 'electron'
+import { app, BrowserWindow, dialog, Menu, nativeImage, powerMonitor, shell } from 'electron'
 import { IPC } from '@shared/api'
 import { launcherChoice, sessionBackendKind, type SessionBackend } from './backend'
 import { exec } from './exec'
@@ -191,7 +191,14 @@ async function bootstrap(): Promise<void> {
   const store = await Store.open(paths.stateFile)
   const git = new GitClient(exec, env)
   const backend = createBackend(env)
-  const notifier = electronNotifier(focusSession, paths.notificationsDisabled, { window: () => win, quiet: QUIET })
+  const notifier = electronNotifier(focusSession, paths.notificationsDisabled, {
+    window: () => win, quiet: QUIET,
+    // The red dot is drawn on the icon the Dock shows: the bundle's (the same artwork), or a dev run's own.
+    dockIcon: () => {
+      const icon = nativeImage.createFromPath(join(resourcesDir(), app.isPackaged ? 'icon.png' : 'icon-dev.png'))
+      return icon.isEmpty() ? null : icon
+    }
+  })
   refreshBadge = () => notifier.refresh()
   const mutex = new KeyedMutex()
   const launcher = launcherChoice(process.env)

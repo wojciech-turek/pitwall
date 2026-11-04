@@ -1,6 +1,6 @@
 /**
- * The taskbar overlay badge on Windows (macOS shows the count on the Dock icon instead): a red disc with the count in
- * white, 1–9 or "9+". Drawn here as a raw bitmap (premultiplied BGRA, what nativeImage.createFromBitmap takes), so no
+ * The taskbar overlay badge on Windows (macOS shows the count on the Dock icon instead, plus withDot below): a red
+ * disc with the count in white, 1–9 or "9+". Drawn here as a raw bitmap (premultiplied BGRA, what nativeImage.createFromBitmap takes), so no
  * image files or libraries are needed. Pure, for tests.
  */
 
@@ -85,4 +85,39 @@ export function badgeBitmap(count: number, size = 32): { width: number; height: 
     }
   })
   return { width: size, height: size, data }
+}
+
+/** macOS's system red (#ff3b30), as B, G, R. */
+export const DOT_RED = [0x30, 0x3b, 0xff] as const
+
+/**
+ * The Dock icon with a red dot over its top-right corner, where macOS draws its own badge (which then covers it).
+ * Drawn into the icon itself, it shows even when the user has turned off Pitwall's badges in System Settings →
+ * Notifications. `base` is premultiplied BGRA (nativeImage.toBitmap()); a new buffer is returned.
+ */
+export function withDot(base: { width: number; height: number; data: Buffer }): Buffer {
+  const { width: w, height: h } = base
+  const out = Buffer.from(base.data)
+  const cx = w * 0.84
+  const cy = h * 0.16
+  const r = w * 0.12
+  for (let y = Math.max(0, Math.floor(cy - r)); y < Math.min(h, Math.ceil(cy + r)); y++) {
+    for (let x = Math.max(0, Math.floor(cx - r)); x < Math.min(w, Math.ceil(cx + r)); x++) {
+      // Anti-aliased by 4×4 supersampling, then laid over the icon (premultiplied source-over).
+      let inside = 0
+      for (let sy = 0; sy < 4; sy++) {
+        for (let sx = 0; sx < 4; sx++) {
+          const dx = x + (sx + 0.5) / 4 - cx
+          const dy = y + (sy + 0.5) / 4 - cy
+          if (dx * dx + dy * dy <= r * r) inside++
+        }
+      }
+      if (inside === 0) continue
+      const a = inside / 16
+      const i = (y * w + x) * 4
+      for (let c = 0; c < 3; c++) out[i + c] = Math.round(DOT_RED[c] * a + out[i + c] * (1 - a))
+      out[i + 3] = Math.round(255 * a + out[i + 3] * (1 - a))
+    }
+  }
+  return out
 }

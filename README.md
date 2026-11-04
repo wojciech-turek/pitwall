@@ -18,7 +18,7 @@ Like a pit wall in a race, you watch every car at once and only radio in when on
 ## The problems it solves
 
 **You lose track of your agents.** With five agents running in three repos, you keep cycling through terminal tabs to see which one is done, which one is stuck on a permission prompt, and which one you haven't read yet.
-→ Every session shows a live status: **Working**, **Needs you**, **Unread** or **Read**. The title bar counts them, macOS notifications and the Dock badge tell you when something changes, and **⌘J** jumps to the next session that needs you.
+→ Every session shows a live status: **Working**, **Needs you**, **Unread** or **Read**. The title bar counts them, macOS notifications and a red dot on Pitwall's Dock icon tell you when something changes, and **⌘J** jumps to the next session that needs you.
 
 **Work and personal accounts get mixed up.** An agent pushes with the wrong SSH key, `gh` opens a PR from the wrong account, or commits go out with your personal email.
 → Each **project** has its own identity: SSH key, GitHub account, and commit name and email. Every git and `gh` command in that project's sessions uses them. Pitwall never runs `gh auth switch` and never touches your global git or SSH config.
