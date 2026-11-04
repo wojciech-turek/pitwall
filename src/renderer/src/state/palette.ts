@@ -9,7 +9,7 @@ export type ItemKind = 'session' | 'action' | 'file' | 'history'
 
 export type ActionId =
   | 'new-session' | 'archive' | 'mark-unread' | 'mute' | 'unmute' | 'close-pane' | 'open-in-cursor'
-  | 'show-files' | 'show-changes' | 'archived' | 'next-attention' | 'settings' | 'check-updates' | 'sounds-on' | 'sounds-off'
+  | 'show-files' | 'show-changes' | 'archived' | 'next-attention' | 'settings' | 'check-updates'
 
 export interface PaletteAction {
   key: string; id: ActionId; label: string
@@ -22,7 +22,7 @@ export interface PaletteAction {
 }
 
 export interface ActionContext {
-  snap: Pick<AppSnapshot, 'projects' | 'subProjects' | 'sessions' | 'archived' | 'settings'>
+  snap: Pick<AppSnapshot, 'projects' | 'subProjects' | 'sessions' | 'archived'>
   activeSessionId: string | null
   paneCount: number
   rightTab: 'files' | 'changes'
@@ -368,10 +368,6 @@ export function paletteActions(ctx: ActionContext): PaletteAction[] {
     out.push({ key: 'next-attention', id: 'next-attention', label: 'Next session that needs you', shortcut: shortcut('J', ctx.platform), keywords: 'unread waiting', common: true })
   }
   out.push({ key: 'settings', id: 'settings', label: 'Settings…', shortcut: shortcut(',', ctx.platform), keywords: 'preferences font', common: true })
-  const when = 'When a session needs you or finishes'
-  out.push(snap.settings.sounds
-    ? { key: 'sounds-off', id: 'sounds-off', label: 'Turn sounds off', detail: when, keywords: 'mute quiet silence chime audio notification' }
-    : { key: 'sounds-on', id: 'sounds-on', label: 'Turn sounds on', detail: when, keywords: 'chime audio alert notification' })
   if (ctx.canCheckUpdates) out.push({ key: 'check-updates', id: 'check-updates', label: 'Check for updates', keywords: 'version release upgrade' })
   return out
 }

@@ -1,6 +1,6 @@
 {
   "name": "pitwall",
-  "version": "0.3.5",
+  "version": "0.3.4",
   "private": true,
   "type": "module",
   "description": "An app for running many Claude Code agents in parallel (macOS; Windows in beta), each in its own worktree with the right git identity",

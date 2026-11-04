@@ -18,13 +18,13 @@ function parseState(text: string): PersistedState {
     subProjects: Array.isArray(raw.subProjects) ? raw.subProjects : [],
     sessions: Array.isArray(raw.sessions) ? raw.sessions : [],
     // A state file from before the update check has no checkForUpdates: checking is on.
-    settings: { ...settings, checkForUpdates: settings.checkForUpdates !== false, sounds: settings.sounds === true }
+    settings: { ...settings, checkForUpdates: settings.checkForUpdates !== false }
   }
 }
 
 /**
  * Settings the renderer asked to save, made valid. A field it left out or got wrong keeps the current value
- * (fonts: the default), so saving the fonts never turns update checks or sounds on or off.
+ * (fonts: the default), so saving the fonts never turns update checks back on or off.
  */
 export function settingsFrom(input: unknown, current: AppSettings): AppSettings {
   const s = input && typeof input === 'object' ? (input as Record<string, unknown>) : {}
@@ -32,8 +32,7 @@ export function settingsFrom(input: unknown, current: AppSettings): AppSettings 
   const size = Number(s.monoFontSize)
   const monoFontSize = Number.isFinite(size) ? Math.min(32, Math.max(8, Math.round(size))) : DEFAULT_SETTINGS.monoFontSize
   const checkForUpdates = typeof s.checkForUpdates === 'boolean' ? s.checkForUpdates : current.checkForUpdates !== false
-  const sounds = typeof s.sounds === 'boolean' ? s.sounds : current.sounds === true
-  return { monoFont, monoFontSize, checkForUpdates, sounds }
+  return { monoFont, monoFontSize, checkForUpdates }
 }
 
 async function tryLoad(file: string): Promise<PersistedState | 'missing' | 'corrupt'> {

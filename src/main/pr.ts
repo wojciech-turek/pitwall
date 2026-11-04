@@ -169,9 +169,7 @@ export class PrPoller {
     // A muted project's PR badge still updates; it just doesn't notify.
     const muted = store.state.projects.find((p) => p.id === sub.projectId)?.muted === true
     if (before && before.state !== 'MERGED' && pr.state === 'MERGED' && !muted) {
-      // Sounds on: Pitwall's sounds are for needing you and finishing; this one makes none, not even the system's.
-      const silent = store.state.settings.sounds ? { silent: true } : {}
-      notifier.notify({ sessionId, title: `PR #${pr.number} merged`, body: `Archive "${s.title}"?`, ...silent })
+      notifier.notify({ sessionId, title: `PR #${pr.number} merged`, body: `Archive "${s.title}"?` })
     }
   }
 }

@@ -29,9 +29,8 @@ describe('platform helpers', () => {
         { id: 'a', subProjectId: 'f', title: 'A', slug: 'a', claudeSessionId: 'c', cwd: '/r', branchCreatedByPitwall: false, createdAt: 1, lastViewedAt: 0, status: 'read' },
         { id: 'b', subProjectId: 'f', title: 'B', slug: 'b', claudeSessionId: 'd', cwd: '/r', branchCreatedByPitwall: false, createdAt: 2, lastViewedAt: 0, status: 'needs_you' }
       ],
-      archived: [],
-      settings: { monoFont: '', monoFontSize: 13, checkForUpdates: true, sounds: false }
-    } as unknown as Pick<AppSnapshot, 'projects' | 'subProjects' | 'sessions' | 'archived' | 'settings'>
+      archived: []
+    } as unknown as Pick<AppSnapshot, 'projects' | 'subProjects' | 'sessions' | 'archived'>
     const labels = (p?: string) => paletteActions({ snap, activeSessionId: 'a', paneCount: 1, rightTab: 'files', canCheckUpdates: false, platform: p })
       .filter((a) => a.shortcut).map((a) => a.shortcut)
     expect(labels()).toEqual(['⌘N', '⌘J', '⌘,'])

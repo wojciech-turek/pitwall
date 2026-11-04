@@ -29,7 +29,6 @@ function onFocusSession(cb: (id: string) => void): () => void {
 const api: PitwallApi = {
   getSnapshot: () => ipcRenderer.invoke(IPC.getSnapshot),
   onSnapshot: (cb) => subscribe(IPC.snapshot, cb),
-  onPlaySound: (cb) => subscribe(IPC.playSound, cb),
   listSshKeys: () => ipcRenderer.invoke(IPC.listSshKeys),
   listGhAccounts: () => ipcRenderer.invoke(IPC.listGhAccounts),
   createProject: (i) => ipcRenderer.invoke(IPC.createProject, i),

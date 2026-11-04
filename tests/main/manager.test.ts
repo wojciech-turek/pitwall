@@ -22,7 +22,7 @@ const INERT = WINDOWS ? [process.execPath, '-e', 'setInterval(() => {}, 1e5)'] :
 let t: Awaited<ReturnType<typeof makeTestEnv>>
 let store: Store
 let managers: SessionManager[]
-let notes: Parameters<Notifier['notify']>[0][]
+let notes: { sessionId: string; title: string; body: string }[]
 let badges: number[]
 let notifier: Notifier
 
@@ -135,30 +135,6 @@ describe('SessionManager', () => {
     await waitFor(async () => notes.length === 2)
     expect(notes.find((n) => n.sessionId === 'a')?.body).toBe('Has a question for you')
     expect(notes.find((n) => n.sessionId === 'b')?.body).toBe('Needs you')
-    expect(m).toBeTruthy()
-  })
-
-  test('sounds on: each notification asks for the sound of what happened', async () => {
-    await store.update((d) => { d.settings.sounds = true })
-    await addSession('a')
-    await addSession('b')
-    const m = await ready()
-    await ev('a', { e: 'PermissionRequest', tool: 'AskUserQuestion' })
-    await ev('b', { e: 'UserPromptSubmit' })
-    await waitStatus(m, 'b', 'working')
-    await new Promise((r) => setTimeout(r, 5))
-    await ev('b', { e: 'Stop', msg: 'done' })
-    await waitFor(async () => notes.length === 2)
-    expect(notes.find((n) => n.sessionId === 'a')?.sound).toBe('needs_you')
-    expect(notes.find((n) => n.sessionId === 'b')?.sound).toBe('done')
-  })
-
-  test('sounds off: no sound is asked for', async () => {
-    await addSession('a')
-    const m = await ready()
-    await ev('a', { e: 'PermissionRequest', tool: 'Bash' })
-    await waitFor(async () => notes.length === 1)
-    expect('sound' in notes[0]).toBe(false)
     expect(m).toBeTruthy()
   })
 

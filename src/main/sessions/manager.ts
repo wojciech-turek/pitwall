@@ -473,8 +473,7 @@ export class SessionManager {
     this.deps.notifier.notify({
       sessionId: s.id,
       title: `${s.title} · ${project?.name ?? ''}`,
-      body: notificationBody(status, rt),
-      ...(this.deps.store.state.settings.sounds ? { sound: status === 'needs_you' ? 'needs_you' : 'done' } as const : {})
+      body: notificationBody(status, rt)
     })
     if (status === 'needs_you') this.deps.notifier.attention?.()
   }

@@ -350,7 +350,7 @@ body.pane-resizing-column, body.pane-resizing-column * { cursor: row-resize !imp
 .dialog .form + .dialog-actions { margin-top: 16px; }
 
 /* ---------- settings: updates ---------- */
-.settings-section { display: flex; flex-direction: column; gap: 6px; padding-top: 12px; border-top: 1px solid var(--border); }
+.settings-updates { display: flex; flex-direction: column; gap: 6px; padding-top: 12px; border-top: 1px solid var(--border); }
 .form label.check-row { flex-direction: row; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text); cursor: pointer; }
 input[type="checkbox"] { flex: none; width: 14px; height: 14px; margin: 0; padding: 0; accent-color: var(--accent); cursor: pointer; }
 .settings-note { margin: 0 0 0 22px; font-size: 11.5px; line-height: 1.45; color: var(--text-faint); }
