@@ -10,6 +10,7 @@ import { useToast } from '../state/toast'
 import { cleanIpcError } from '../state/errors'
 import { useAppInfo } from '../state/appInfo'
 import { checkForUpdatesNow } from '../state/updates'
+import { previewSounds } from '../state/soundPlayer'
 import { goToNextAttention } from '../state/menuCommands'
 import { modDown, shortcut } from '../platform'
 import { focusActivePane } from './PaneLayout'
@@ -19,7 +20,7 @@ import { ChevronIcon, FileIcon, HistoryIcon } from './Icons'
 
 const SEARCH_DELAY_MS = 150
 const NO_SNAP: AppSnapshot = {
-  projects: [], subProjects: [], sessions: [], archived: [], settings: { monoFont: '', monoFontSize: 13, checkForUpdates: false }
+  projects: [], subProjects: [], sessions: [], archived: [], settings: { monoFont: '', monoFontSize: 13, checkForUpdates: false, sounds: false }
 }
 const NO_ACTIONS: PaletteAction[] = []
 const MAX_FILES_NOTE = 'Showing the first 20,000 files.'
@@ -189,6 +190,17 @@ export default function CommandPalette({ snap, mode }: { snap: AppSnapshot; mode
         ui.setArchivedOpen(true)
         requestAnimationFrame(() => document.querySelector<HTMLInputElement>('[data-testid="archived-search"]')?.focus())
         return
+      case 'sounds-on': case 'sounds-off': {
+        close()
+        const on = a.id === 'sounds-on'
+        window.pitwall.setSettings({ ...snap.settings, sounds: on })
+          .then(() => {
+            useToast.getState().show(on ? 'Sounds on' : 'Sounds off')
+            if (on) previewSounds()
+          })
+          .catch(toastError)
+        return
+      }
       case 'check-updates': {
         close()
         const toast = useToast.getState().show

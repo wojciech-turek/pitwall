@@ -43,16 +43,22 @@ describe('Store', () => {
 
   test('settings persist', async () => {
     const s = await Store.open(f)
-    await s.update((d) => { d.settings = { monoFont: 'Menlo', monoFontSize: 15, checkForUpdates: false } })
+    await s.update((d) => { d.settings = { monoFont: 'Menlo', monoFontSize: 15, checkForUpdates: false, sounds: true } })
     const s2 = await Store.open(f)
-    expect(s2.state.settings).toEqual({ monoFont: 'Menlo', monoFontSize: 15, checkForUpdates: false })
+    expect(s2.state.settings).toEqual({ monoFont: 'Menlo', monoFontSize: 15, checkForUpdates: false, sounds: true })
   })
 
   test('a state file from before the update check means checking is on', async () => {
     await writeFile(f, JSON.stringify({ version: 1, projects: [], subProjects: [], sessions: [], settings: { monoFont: 'Menlo', monoFontSize: 15 } }))
     const s = await Store.open(f)
-    expect(s.state.settings).toEqual({ monoFont: 'Menlo', monoFontSize: 15, checkForUpdates: true })
+    expect(s.state.settings).toEqual({ monoFont: 'Menlo', monoFontSize: 15, checkForUpdates: true, sounds: false })
     expect(DEFAULT_SETTINGS.checkForUpdates).toBe(true)
+  })
+
+  test('sounds are off until the user turns them on (a state file from before them too)', async () => {
+    expect(DEFAULT_SETTINGS.sounds).toBe(false)
+    await writeFile(f, JSON.stringify({ version: 1, projects: [], subProjects: [], sessions: [], settings: { monoFont: 'Menlo', monoFontSize: 15, checkForUpdates: true } }))
+    expect((await Store.open(f)).state.settings.sounds).toBe(false)
   })
 
   test('corrupt file falls back to .bak', async () => {
@@ -159,13 +165,13 @@ test('newId format', () => {
 })
 
 describe('settingsFrom (what the renderer may save)', () => {
-  const current = { monoFont: 'Menlo', monoFontSize: 15, checkForUpdates: false }
+  const current = { monoFont: 'Menlo', monoFontSize: 15, checkForUpdates: false, sounds: true }
 
   test('takes valid fields, trimming and clamping', () => {
-    expect(settingsFrom({ monoFont: ' Iosevka ', monoFontSize: 40.4, checkForUpdates: true }, current))
-      .toEqual({ monoFont: 'Iosevka', monoFontSize: 32, checkForUpdates: true })
-    expect(settingsFrom({ monoFont: 'Iosevka', monoFontSize: 2, checkForUpdates: false }, DEFAULT_SETTINGS))
-      .toEqual({ monoFont: 'Iosevka', monoFontSize: 8, checkForUpdates: false })
+    expect(settingsFrom({ monoFont: ' Iosevka ', monoFontSize: 40.4, checkForUpdates: true, sounds: false }, current))
+      .toEqual({ monoFont: 'Iosevka', monoFontSize: 32, checkForUpdates: true, sounds: false })
+    expect(settingsFrom({ monoFont: 'Iosevka', monoFontSize: 2, checkForUpdates: false, sounds: true }, DEFAULT_SETTINGS))
+      .toEqual({ monoFont: 'Iosevka', monoFontSize: 8, checkForUpdates: false, sounds: true })
   })
 
   test('saving fonts alone keeps the update setting', () => {
@@ -174,9 +180,15 @@ describe('settingsFrom (what the renderer may save)', () => {
     expect(settingsFrom({ monoFont: 'Iosevka', monoFontSize: 14 }, { monoFont: 'x', monoFontSize: 13 } as never).checkForUpdates).toBe(true)
   })
 
+  test('saving the other settings keeps sounds as they were', () => {
+    expect(settingsFrom({ monoFont: 'Iosevka', monoFontSize: 14 }, current).sounds).toBe(true)
+    expect(settingsFrom({ monoFont: 'Iosevka', monoFontSize: 14, sounds: 'loud' }, current).sounds).toBe(true)
+    expect(settingsFrom({ monoFont: 'Iosevka', monoFontSize: 14 }, { monoFont: 'x', monoFontSize: 13 } as never).sounds).toBe(false)
+  })
+
   test('invalid fonts fall back to the defaults', () => {
-    expect(settingsFrom(null, current)).toEqual({ ...DEFAULT_SETTINGS, checkForUpdates: false })
+    expect(settingsFrom(null, current)).toEqual({ ...DEFAULT_SETTINGS, checkForUpdates: false, sounds: true })
     expect(settingsFrom({ monoFont: '   ', monoFontSize: 'big' }, current))
-      .toEqual({ monoFont: DEFAULT_SETTINGS.monoFont, monoFontSize: DEFAULT_SETTINGS.monoFontSize, checkForUpdates: false })
+      .toEqual({ monoFont: DEFAULT_SETTINGS.monoFont, monoFontSize: DEFAULT_SETTINGS.monoFontSize, checkForUpdates: false, sounds: true })
   })
 })

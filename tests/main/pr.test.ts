@@ -8,7 +8,8 @@ import type { AppPaths } from '../../src/main/paths'
 import type { SessionManager } from '../../src/main/sessions/manager'
 import type { Store } from '../../src/main/store'
 import type { GitClient } from '../../src/main/git'
-import type { HookEvent, PersistedState, Session } from '../../src/shared/types'
+import { DEFAULT_SETTINGS, type HookEvent, type PersistedState, type Session } from '../../src/shared/types'
+import type { Notifier } from '../../src/main/notifier'
 import { waitFor } from '../helpers/wait'
 
 const GH = resolve(__dirname, '../fixtures/bin/gh')
@@ -80,7 +81,7 @@ describe('fetchPr', () => {
   })
 })
 
-function setup(o: { remote?: boolean; ghAccount?: string; pr?: Session['pr']; archived?: boolean; muted?: boolean } = {}) {
+function setup(o: { remote?: boolean; ghAccount?: string; pr?: Session['pr']; archived?: boolean; muted?: boolean; sounds?: boolean } = {}) {
   const calls: { args: string[]; env?: Record<string, string> }[] = []
   let json: unknown[] = []
   let ghFails = false
@@ -101,7 +102,8 @@ function setup(o: { remote?: boolean; ghAccount?: string; pr?: Session['pr']; ar
       createdAt: 0, ...(o.muted ? { muted: true } : {})
     }],
     subProjects: [{ id: 'sp', projectId: 'p', name: 'n', path: '/w', kind: 'repo', createdAt: 0 }],
-    sessions: [mk('s1'), mk('s2')]
+    sessions: [mk('s1'), mk('s2')],
+    settings: { ...DEFAULT_SETTINGS, sounds: o.sounds === true }
   } as unknown as PersistedState
   const store = {
     state,
@@ -113,8 +115,8 @@ function setup(o: { remote?: boolean; ghAccount?: string; pr?: Session['pr']; ar
     snapshot: () => ({ sessions: [] })
   } as unknown as SessionManager
   const git = { hasRemote: async () => o.remote ?? true } as unknown as GitClient
-  const notes: { sessionId: string; title: string; body: string }[] = []
-  const notifier = { notify: (n: { sessionId: string; title: string; body: string }) => { notes.push(n) }, setBadge: () => {} }
+  const notes: Parameters<Notifier['notify']>[0][] = []
+  const notifier: Notifier = { notify: (n) => { notes.push(n) }, setBadge: () => {} }
   const poller = new PrPoller({
     store, manager, git, exec: fakeExec, env: { PATH: '/x' }, paths: { ghBin: 'gh' } as AppPaths,
     notifier, intervalMs: 60_000, debounceMs: 20
@@ -187,7 +189,7 @@ describe('PrPoller', () => {
     await waitFor(async () => t.state.sessions[1].pr)
     t.poller.stop()
     expect(t.notes).toHaveLength(1)
-    expect(t.notes[0]).toMatchObject({ sessionId: 's1', title: 'PR #5 merged', body: 'Archive "T s1"?' })
+    expect(t.notes[0]).toEqual({ sessionId: 's1', title: 'PR #5 merged', body: 'Archive "T s1"?' }) // the system's sound, as ever
 
     const t2 = setup()
     t2.setJson([{ number: 6, url: 'u', title: 'Old', state: 'MERGED', updatedAt: '2026-10-30T10:00:00Z', statusCheckRollup: [] }])
@@ -195,6 +197,17 @@ describe('PrPoller', () => {
     await waitFor(async () => t2.state.sessions.every((s) => s.pr))
     t2.poller.stop()
     expect(t2.notes).toEqual([])
+  })
+
+  test('sounds on: "PR merged" stays silent (Pitwall\'s sounds are for needing you and finishing only)', async () => {
+    const openPr = { number: 5, url: 'u', title: 'Ship it', state: 'OPEN' as const, checks: 'passing' as const, updatedAt: 1 }
+    const t = setup({ pr: openPr, sounds: true })
+    t.setJson([{ number: 5, url: 'u', title: 'Ship it', state: 'MERGED', updatedAt: '2026-10-30T10:00:00Z', statusCheckRollup: [] }])
+    t.poller.start()
+    await waitFor(async () => t.state.sessions[0].pr?.state === 'MERGED')
+    await waitFor(async () => t.state.sessions[1].pr)
+    t.poller.stop()
+    expect(t.notes).toEqual([{ sessionId: 's1', title: 'PR #5 merged', body: 'Archive "T s1"?', silent: true }])
   })
 
   test('a muted project gets no "PR merged" notification, but its PR badge still updates', async () => {

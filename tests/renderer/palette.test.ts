@@ -27,7 +27,7 @@ const hit = (sessionId: string, title: string, o: Partial<HistoryHit> = {}): His
 function snapOf(o: Partial<AppSnapshot> = {}): AppSnapshot {
   return {
     projects: [project('p1')], subProjects: [sub('tax')], sessions: [], archived: [],
-    settings: { monoFont: '', monoFontSize: 13, checkForUpdates: true }, ...o
+    settings: { monoFont: '', monoFontSize: 13, checkForUpdates: true, sounds: false }, ...o
   }
 }
 function ctxOf(o: Partial<ActionContext> = {}): ActionContext {
@@ -223,6 +223,19 @@ describe('paletteActions', () => {
     expect(a).not.toContain('show-changes') // a plain folder has no changes
     expect(a).not.toContain('show-files') // changes isn't shown for a folder, so files already is
     expect(a).not.toContain('check-updates')
+  })
+
+  test('sounds: "Turn sounds on" while they are off, "Turn sounds off" while on', () => {
+    const off = paletteActions(ctxOf())
+    expect(off.map((a) => a.id)).toContain('sounds-on')
+    expect(off.map((a) => a.id)).not.toContain('sounds-off')
+    const snap = snapOf({ settings: { ...snapOf().settings, sounds: true } })
+    const on = ids(ctxOf({ snap }))
+    expect(on).toContain('sounds-off')
+    expect(on).not.toContain('sounds-on')
+    // Found by what people would type to silence it during a call.
+    expect(labels(paletteResults(input({ query: 'mute sound', actions: paletteActions(ctxOf({ snap })) }))[0])[0]).toBe('Turn sounds off')
+    expect(labels(paletteResults(input({ query: 'sound', actions: off }))[0])[0]).toBe('Turn sounds on')
   })
 
   test('new session is offered per folder, the active session\'s folder first and common', () => {

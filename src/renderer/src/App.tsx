@@ -7,6 +7,7 @@ import IdentityConfirmDialog from './components/dialogs/IdentityConfirmDialog'
 import { useUi } from './state/ui'
 import { useSnapshot } from './state/snapshot'
 import { useToast } from './state/toast'
+import { playCue } from './state/soundPlayer'
 import DiscardFileDialog from './components/dialogs/DiscardFileDialog'
 import ArchiveDialog from './components/dialogs/ArchiveDialog'
 import ResumeDialog from './components/dialogs/ResumeDialog'
@@ -53,6 +54,7 @@ export default function App(): React.JSX.Element {
   usePruneTerminals(snap)
   useMenuCommands(snap)
   useEffect(() => window.pitwall.onFocusSession((id) => select(id)), [select])
+  useEffect(() => window.pitwall.onPlaySound(playCue), [])
   useEffect(() => { window.pitwall.setViewing(visible) }, [visible])
   // Close the panes of sessions that disappeared (archived/removed).
   useEffect(() => {

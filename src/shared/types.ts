@@ -38,12 +38,20 @@ export interface AppSettings {
   monoFont: string; monoFontSize: number
   /** Look for newer releases on GitHub, about once a day. */
   checkForUpdates: boolean
+  /**
+   * Pitwall plays a sound when a session needs you or finishes (whenever it would notify), whatever the system's
+   * notification settings or Focus say; its notifications are silent meanwhile. Off until the user turns it on.
+   */
+  sounds: boolean
 }
 export const DEFAULT_SETTINGS: AppSettings = {
   monoFont: '"SF Mono","JetBrains Mono",Menlo,monospace',
   monoFontSize: 13,
-  checkForUpdates: true
+  checkForUpdates: true,
+  sounds: false
 }
+/** Which sound: a session needs you (a question, a permission), or it finished and has a reply to read. */
+export type SoundCue = 'needs_you' | 'done'
 export interface PersistedState {
   version: 1; projects: Project[]; subProjects: SubProject[]; sessions: Session[]; settings: AppSettings
 }

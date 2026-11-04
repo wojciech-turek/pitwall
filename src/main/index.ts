@@ -89,6 +89,7 @@ function createWindow(): void {
     }
   })
   if (QUIET) w.setIgnoreMouseEvents(true)
+  if (QUIET) w.webContents.setAudioMuted(true) // tests never make a sound either
   win = w
   winLoaded = false
   // The page's <title> must not override the window title.
@@ -191,7 +192,9 @@ async function bootstrap(): Promise<void> {
   const store = await Store.open(paths.stateFile)
   const git = new GitClient(exec, env)
   const backend = createBackend(env)
-  const notifier = electronNotifier(focusSession, paths.notificationsDisabled, { window: () => win, quiet: QUIET })
+  const notifier = electronNotifier(focusSession, paths.notificationsDisabled, {
+    window: () => win, quiet: QUIET, play: (cue) => send(IPC.playSound, cue)
+  })
   refreshBadge = () => notifier.refresh()
   const mutex = new KeyedMutex()
   const launcher = launcherChoice(process.env)

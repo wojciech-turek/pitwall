@@ -1,6 +1,6 @@
 import type {
   AppSettings, AppSnapshot, ArchiveCheck, ArchiveResult, ChangedFile, ClaudeUsage, ConversationList, ConversationMatch, EnvVar, FileContent, FileEntry, GhAccount, GitIdentity, HistoryHit, NewSessionDefaults, NewSessionInput, Project, RepoIdentity,
-  StartProgress, StartResult, SubProject, TermKind, UpdateState
+  SoundCue, StartProgress, StartResult, SubProject, TermKind, UpdateState
 } from './types'
 
 export interface ProjectInput { name: string; identity: GitIdentity; extraEnv: EnvVar[] }
@@ -80,6 +80,8 @@ export interface PitwallApi {
   openInCursor(sessionId: string): Promise<{ ok: boolean; message?: string }>
   setSettings(s: AppSettings): Promise<void>
   onFocusSession(cb: (sessionId: string) => void): () => void
+  /** Sounds are on and a session needs you or finished: play its sound. */
+  onPlaySound(cb: (cue: SoundCue) => void): () => void
   /** Claude subscription usage, or null until Claude has reported any. */
   getUsage(): Promise<ClaudeUsage | null>
   /**
@@ -155,6 +157,7 @@ export const IPC = {
   termData: 'pitwall:termData',
   termExit: 'pitwall:termExit',
   focusSession: 'pitwall:focusSession',
+  playSound: 'pitwall:playSound',
   menuCommand: 'pitwall:menuCommand',
   usage: 'pitwall:usage',
   updateState: 'pitwall:updateState'
