@@ -2,6 +2,22 @@
 
 All notable changes to Pitwall are listed here, newest first. Pitwall shows these notes when an update is available, before you download it.
 
+## [0.3.4] - 2026-11-04
+
+### Added
+
+- **Pin a session to the top of its folder.** "Pin to top" in a session's ⋯ menu keeps the ones you come back to for small jobs at the top, marked with a pin. "Unpin" puts it back in place.
+- **Resize the sidebar** by dragging its right edge, anywhere from 200 to 480 pixels wide. Pitwall remembers the width; double-click the edge to go back to the default.
+
+### Changed
+
+- **Each session status has its own icon** instead of a coloured dot: a hand when Claude needs you, a spinner while it works, a check when it has finished (green until you look at it), and a warning if Claude stopped unexpectedly. Quitting Claude yourself shows a calm stop icon instead.
+- **A session's pull request shows as a chip** with an icon for open, draft, merged or closed, its number, and whether its checks pass (✓), fail (✗) or are still running (○). Once a PR exists, the chip takes the place of the +/− line counts, which stay in the hover card. A session whose PR is merged fades, so the ones still in play stand out.
+
+### Fixed
+
+- **A session that moves on to a new branch after its PR is merged no longer shows that PR.** The chip goes away until the new branch has a PR of its own.
+
 ## [0.3.3] - 2026-11-03
 
 ### Changed
