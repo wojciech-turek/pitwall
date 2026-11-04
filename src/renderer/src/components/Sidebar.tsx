@@ -7,11 +7,42 @@ import { FolderIcon, FolderPlusIcon, HistoryIcon, MutedBellIcon, PlusIcon } from
 import { useUi } from '../state/ui'
 import { useToast } from '../state/toast'
 import { cleanIpcError } from '../state/errors'
+import { useSidebarWidth } from '../state/sidebarWidth'
+
+/** The sidebar's right edge: drag to resize (saved when the drag ends), double-click for the default width. */
+function Resizer(): React.JSX.Element {
+  const { setWidth, save, reset } = useSidebarWidth.getState()
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    const el = e.currentTarget
+    const startX = e.clientX
+    const startWidth = useSidebarWidth.getState().width
+    el.setPointerCapture(e.pointerId)
+    document.documentElement.classList.add('resizing-sidebar')
+    const move = (ev: PointerEvent): void => setWidth(startWidth + ev.clientX - startX)
+    const end = (): void => {
+      el.removeEventListener('pointermove', move)
+      el.removeEventListener('pointerup', end)
+      el.removeEventListener('pointercancel', end)
+      document.documentElement.classList.remove('resizing-sidebar')
+      save()
+    }
+    el.addEventListener('pointermove', move)
+    el.addEventListener('pointerup', end)
+    el.addEventListener('pointercancel', end)
+  }
+  return (
+    <div className="sidebar-resizer" data-testid="sidebar-resizer" role="separator" aria-orientation="vertical"
+      aria-label="Resize sidebar" title="Drag to resize · double-click to reset" onPointerDown={onPointerDown} onDoubleClick={reset} />
+  )
+}
 
 export default function Sidebar({ snap, onSelect }: { snap: AppSnapshot; onSelect: (id: string) => void }): React.JSX.Element {
   const openDialog = useUi((s) => s.openDialog)
   const toast = useToast((s) => s.show)
   const projects = [...snap.projects].sort((a, b) => a.createdAt - b.createdAt)
+  const width = useSidebarWidth((s) => s.width)
 
   const run = async (p: Promise<{ ok: boolean; message?: string }>): Promise<void> => {
     try {
@@ -59,7 +90,7 @@ export default function Sidebar({ snap, onSelect }: { snap: AppSnapshot; onSelec
   )
 
   return (
-    <aside className="sidebar">
+    <aside className="sidebar" style={{ width }}>
       <div className="sidebar-head">
         <span>Projects</span>
         <button className="icon-btn always" data-testid="new-project" title="New project" aria-label="New project"
@@ -96,6 +127,7 @@ export default function Sidebar({ snap, onSelect }: { snap: AppSnapshot; onSelec
         ))}
       </div>
       <ArchivedList snap={snap} />
+      <Resizer />
     </aside>
   )
 }

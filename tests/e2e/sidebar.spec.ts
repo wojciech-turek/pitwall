@@ -26,6 +26,10 @@ async function startSession(title: string): Promise<void> {
   await expect(page.getByTestId('new-session-dialog')).toHaveCount(0, { timeout: 30_000 })
 }
 
+async function sidebarWidth(): Promise<number> {
+  return (await page.locator('.sidebar').boundingBox())!.width
+}
+
 test('sessions show a status icon; a pinned session moves to the top of its folder and back', async () => {
   ;({ app, page } = await launchApp(e.env))
   await page.getByTestId('create-first-project').click()
@@ -55,4 +59,35 @@ test('sessions show a status icon; a pinned session moves to the top of its fold
   await page.getByTestId('session-pin').click()
   await expect.poll(titles).toEqual(['Alpha', 'Beta'])
   await expect(page.getByTestId('pin-mark')).toHaveCount(0)
+})
+
+test('the sidebar edge drags to resize, the width survives a restart, and a double-click resets it', async () => {
+  expect(await sidebarWidth()).toBe(260)
+  const handle = page.getByTestId('sidebar-resizer')
+  const box = (await handle.boundingBox())!
+  const x = box.x + box.width / 2
+  const y = box.y + box.height / 2
+  await page.mouse.move(x, y)
+  await page.mouse.down()
+  await page.mouse.move(x + 60, y, { steps: 4 })
+  await page.mouse.move(x + 100, y, { steps: 4 })
+  await page.mouse.up()
+  expect(await sidebarWidth()).toBe(360)
+
+  // Past the limits it stops at 480 (and 200).
+  const wide = (await handle.boundingBox())!
+  await page.mouse.move(wide.x + wide.width / 2, y)
+  await page.mouse.down()
+  await page.mouse.move(wide.x + 600, y, { steps: 4 })
+  await page.mouse.up()
+  expect(await sidebarWidth()).toBe(480)
+  await shot(page, 'sidebar-wide')
+
+  await app!.close()
+  ;({ app, page } = await launchApp(e.env))
+  await expect(rows()).toHaveCount(2)
+  expect(await sidebarWidth()).toBe(480)
+
+  await page.getByTestId('sidebar-resizer').dblclick()
+  expect(await sidebarWidth()).toBe(260)
 })

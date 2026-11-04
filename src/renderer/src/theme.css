@@ -40,7 +40,14 @@ body { background: var(--bg-app); color: var(--text); font-family: var(--font-ui
 .update-pill:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); border-color: var(--accent); }
 
 /* ---------- sidebar ---------- */
-.sidebar { display: flex; flex-direction: column; min-height: 0; }
+.sidebar { position: relative; display: flex; flex-direction: column; min-height: 0; }
+/* The right edge drags to resize (state/sidebarWidth.ts); it shows an accent line while hovered or dragged. */
+.sidebar-resizer { position: absolute; z-index: 5; top: 0; bottom: 0; right: -4px; width: 7px; cursor: col-resize; }
+.sidebar-resizer::after { content: ''; position: absolute; top: 0; bottom: 0; left: 3px; width: 1px; background: transparent; transition: background .12s; }
+.sidebar-resizer:hover::after, .resizing-sidebar .sidebar-resizer::after { background: var(--accent); }
+.resizing-sidebar, .resizing-sidebar * { cursor: col-resize !important; user-select: none !important; }
+.sidebar-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px 6px 16px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-faint); }
+.sidebar-scroll { flex: 1; overflow-y: auto; padding: 0 8px 12px; }
 .project-group { margin-top: 10px; }
 .row { position: relative; display: flex; align-items: center; gap: 8px; min-height: 28px; padding: 0 6px 0 8px; border-radius: var(--radius); cursor: default; min-width: 0; }
 .row:hover { background: var(--bg-hover); }
