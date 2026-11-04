@@ -14,7 +14,7 @@ import { goToNextAttention } from '../state/menuCommands'
 import { modDown, shortcut } from '../platform'
 import { focusActivePane } from './PaneLayout'
 import { openInCursor } from './SessionHeader'
-import StatusDot from './StatusDot'
+import StatusIcon from './StatusIcon'
 import { ChevronIcon, FileIcon, HistoryIcon } from './Icons'
 
 const SEARCH_DELAY_MS = 150
@@ -296,7 +296,7 @@ function ItemBody({ item }: { item: PaletteItem }): React.JSX.Element {
     case 'session':
       return (
         <>
-          <span className="palette-icon"><span className="header-dot"><StatusDot status={item.session.status} /></span></span>
+          <span className="palette-icon"><StatusIcon status={item.session.status} exitCode={item.session.exitCode} /></span>
           <span className="palette-label"><Highlight text={item.label} hits={item.labelHits} /></span>
           <span className="palette-detail">{item.detail}</span>
         </>

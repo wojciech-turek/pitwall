@@ -3,16 +3,17 @@ import { countStatuses } from '@shared/runtime'
 import { useAppInfo } from '../state/appInfo'
 import { useUi } from '../state/ui'
 import { useUpdates } from '../state/updates'
+import { CheckCircleIcon, HandIcon, SpinnerIcon } from './Icons'
 
 export default function TitleBar({ sessions }: { sessions: SessionView[] }): React.JSX.Element {
   const c = countStatuses(sessions)
   const info = useAppInfo()
   const latest = useUpdates()?.newer[0]
   const openDialog = useUi((s) => s.openDialog)
-  const items: { key: string; n: number; label: string; color: string }[] = [
-    { key: 'needs', n: c.needsYou, label: 'needs you', color: 'var(--st-needs)' },
-    { key: 'unread', n: c.unread, label: 'unread', color: 'var(--st-unread)' },
-    { key: 'working', n: c.working, label: 'working', color: 'var(--st-working)' }
+  const items: { key: string; n: number; label: string; tone: string; Icon: () => React.JSX.Element }[] = [
+    { key: 'needs', n: c.needsYou, label: 'needs you', tone: 'needs', Icon: HandIcon },
+    { key: 'unread', n: c.unread, label: 'unread', tone: 'unread', Icon: CheckCircleIcon },
+    { key: 'working', n: c.working, label: 'working', tone: 'working', Icon: SpinnerIcon }
   ]
   return (
     <div className="titlebar">
@@ -23,7 +24,7 @@ export default function TitleBar({ sessions }: { sessions: SessionView[] }): Rea
           data-needs={c.needsYou} data-unread={c.unread} data-working={c.working}>
           {items.map((i) => (
             <span key={i.key} className={`count${i.n === 0 ? ' zero' : ''}`} data-count={i.key}>
-              <span className="count-dot" style={{ background: i.color }} />
+              <span className={`count-icon tone-${i.tone}`} data-glyph={i.key === 'working' ? 'spinner' : undefined}><i.Icon /></span>
               {i.n} {i.label}
             </span>
           ))}

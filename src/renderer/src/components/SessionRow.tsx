@@ -2,11 +2,12 @@ import { useEffect, useRef, useState } from 'react'
 import type { SessionView } from '@shared/types'
 import { LineCounts } from './ChangesTab'
 import PrBadge from './PrBadge'
-import StatusDot from './StatusDot'
+import StatusIcon from './StatusIcon'
 import Menu from './Menu'
 import HoverCard, { useHoverCard } from './HoverCard'
 import { useUi } from '../state/ui'
 import { SESSION_MIME } from '../state/dropZone'
+import { rowFaded, rowLineCounts } from '../state/badges'
 
 /** The chip under the cursor while a row is dragged (drawn behind the app; the drag image is taken from it). */
 function setGhost(e: React.DragEvent<HTMLElement>, session: SessionView): void {
@@ -15,12 +16,12 @@ function setGhost(e: React.DragEvent<HTMLElement>, session: SessionView): void {
   ghost.className = 'drag-ghost'
   ghost.style.left = `${r.left}px`
   ghost.style.top = `${r.top}px`
-  const dot = document.createElement('span')
-  dot.className = `status-dot st-${session.status}`
+  const icon = e.currentTarget.querySelector('.status-icon')?.cloneNode(true)
   const title = document.createElement('span')
   title.className = 'drag-ghost-title'
   title.textContent = session.title
-  ghost.append(dot, title)
+  if (icon) ghost.append(icon)
+  ghost.append(title)
   document.body.appendChild(ghost)
   const x = Math.min(Math.max(e.clientX - r.left, 0), ghost.offsetWidth)
   e.dataTransfer.setDragImage(ghost, x, Math.max(e.clientY - r.top, 0))
@@ -58,8 +59,9 @@ export default function SessionRow({ session, onSelect, projectName, subProjectN
     setEditing(false)
   }
 
+  const counts = rowLineCounts(session)
   return (
-    <div className={`row session-row${selected ? ' selected' : visible ? ' visible' : ''}${dragging ? ' dragging' : ''}`}
+    <div className={`row session-row${selected ? ' selected' : visible ? ' visible' : ''}${dragging ? ' dragging' : ''}${rowFaded(session) ? ' faded' : ''}`}
       data-testid="session-row" data-status={session.status} data-session-id={session.id} {...hover.bind}
       draggable={!editing}
       onDragStart={(e) => {
@@ -71,7 +73,7 @@ export default function SessionRow({ session, onSelect, projectName, subProjectN
       onDragEnd={() => setDraggingSession(null)}
       onClick={() => onSelect(session.id)}
       onDoubleClick={() => { setDraft(session.title); setEditing(true) }}>
-      <StatusDot status={session.status} />
+      <StatusIcon status={session.status} exitCode={session.exitCode} />
       {editing ? (
         <input ref={input} className="rename-input" data-testid="rename-input" value={draft} autoFocus
           onChange={(e) => setDraft(e.target.value)} onClick={(e) => e.stopPropagation()}
@@ -84,9 +86,7 @@ export default function SessionRow({ session, onSelect, projectName, subProjectN
         <span className="row-title">{session.title}</span>
       )}
       {!editing && session.pr && <PrBadge pr={session.pr} />}
-      {!editing && session.diffStat && (
-        <LineCounts additions={session.diffStat.additions} deletions={session.diffStat.deletions} />
-      )}
+      {!editing && counts && <LineCounts additions={counts.additions} deletions={counts.deletions} />}
       {!editing && (
         <span className="row-actions">
           <Menu testId="session-menu" items={[

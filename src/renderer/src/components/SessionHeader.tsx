@@ -4,7 +4,7 @@ import { useUi } from '../state/ui'
 import { useToast } from '../state/toast'
 import { cleanIpcError } from '../state/errors'
 import PrBadge from './PrBadge'
-import StatusDot from './StatusDot'
+import StatusIcon from './StatusIcon'
 
 /** Opens the session's folder in Cursor; says why in a toast when it can't. */
 export async function openInCursor(sessionId: string): Promise<void> {
@@ -36,7 +36,7 @@ export default function SessionHeader({ session, subProject, multi = false, onCl
         {session.pr && <PrBadge pr={session.pr} />}
         <button className="btn small header-open" data-testid="open-in-cursor" onClick={() => void openInCursor(session.id)}>Open in Cursor</button>
         <span className="header-status" data-testid="session-status">
-          <span className="header-dot"><StatusDot status={session.status} /></span>
+          <StatusIcon status={session.status} exitCode={session.exitCode} />
           <span className="header-status-label">{STATUS_LABEL[session.status]}</span>
         </span>
         {multi && (

@@ -56,26 +56,38 @@ describe('fetchPr', () => {
     })
     const logged = await readFile(log, 'utf8')
     expect(logged).toContain('pr list --head pitwall/x --state all')
+    expect(logged).toContain('isDraft')
     expect(logged).toContain('GH_TOKEN=set')
     expect(logged).not.toContain('sekret')
     expect(logged).not.toContain('switch')
   })
 
-  test('empty list and non-zero exit give null', async () => {
+  test('a draft PR is marked as one', async () => {
+    const d = await tmp()
+    await writeFile(join(d, 'pr.json'), JSON.stringify([{ ...PR[0], isDraft: true }]))
+    const env = { ...process.env, STUB_GH_PR_JSON: join(d, 'pr.json') } as Record<string, string>
+    expect(await fetchPr({ ghBin: GH, cwd: d, branch: 'b', token: 't', exec, env })).toMatchObject({ number: 123, draft: true })
+  })
+
+  test('no PR on the branch gives "none"; a failed lookup gives null', async () => {
     const d = await tmp()
     const env = { ...process.env } as Record<string, string>
-    expect(await fetchPr({ ghBin: GH, cwd: d, branch: 'b', token: 't', exec, env })).toBeNull()
+    expect(await fetchPr({ ghBin: GH, cwd: d, branch: 'b', token: 't', exec, env })).toBe('none')
     const fail = async () => ({ code: 1, stdout: '', stderr: 'x' })
     expect(await fetchPr({ ghBin: GH, cwd: d, branch: 'b', token: 't', exec: fail, env })).toBeNull()
+    const garbage = async () => ({ code: 0, stdout: 'not json', stderr: '' })
+    expect(await fetchPr({ ghBin: GH, cwd: d, branch: 'b', token: 't', exec: garbage, env })).toBeNull()
   })
 })
 
 function setup(o: { remote?: boolean; ghAccount?: string; pr?: Session['pr']; archived?: boolean; muted?: boolean } = {}) {
   const calls: { args: string[]; env?: Record<string, string> }[] = []
   let json: unknown[] = []
+  let ghFails = false
   const fakeExec = async (file: string, args: string[], opts?: { env?: Record<string, string> }) => {
     calls.push({ args, env: opts?.env })
     if (args[0] === 'auth') return { code: 0, stdout: 'tok\n', stderr: '' }
+    if (ghFails) return { code: 1, stdout: '', stderr: 'offline' }
     return { code: 0, stdout: JSON.stringify(json), stderr: '' }
   }
   const mk = (id: string): Session => ({
@@ -108,7 +120,7 @@ function setup(o: { remote?: boolean; ghAccount?: string; pr?: Session['pr']; ar
     notifier, intervalMs: 60_000, debounceMs: 20
   })
   const emit = (id: string, e: string) => cbs.forEach((cb) => cb(id, { c: id, t: 1, e }))
-  return { poller, calls, notes, state, emit, setJson: (j: unknown[]) => { json = j } }
+  return { poller, calls, notes, state, emit, setJson: (j: unknown[]) => { json = j }, setGhFails: (f: boolean) => { ghFails = f } }
 }
 
 const listCalls = <T extends { args: string[] }>(c: T[]) => c.filter((x) => x.args[0] === 'pr')
@@ -205,5 +217,38 @@ describe('PrPoller', () => {
     t.emit('s1', 'Stop')
     await new Promise((r) => setTimeout(r, 100))
     expect(t.calls.length).toBe(n)
+  })
+
+  test('a session whose branch has no PR loses the PR it had (it moved to a new branch after a merge)', async () => {
+    const merged = { number: 5, url: 'u', title: 'Ship it', state: 'MERGED' as const, checks: 'none' as const, updatedAt: 1 }
+    const t = setup({ pr: merged })
+    t.setJson([])
+    t.poller.start()
+    await waitFor(async () => t.state.sessions[0].pr === undefined)
+    t.poller.stop()
+    expect('pr' in t.state.sessions[0]).toBe(false)
+    expect(t.notes).toEqual([])
+  })
+
+  test('a failed lookup keeps the PR the session had', async () => {
+    const merged = { number: 5, url: 'u', title: 'Ship it', state: 'MERGED' as const, checks: 'none' as const, updatedAt: 1 }
+    const t = setup({ pr: merged })
+    t.setGhFails(true)
+    t.poller.start()
+    await waitFor(async () => listCalls(t.calls).length >= 2)
+    t.poller.stop()
+    expect(t.state.sessions[0].pr).toEqual(merged)
+  })
+
+  test('a PR leaving draft updates the stored PR', async () => {
+    const draft = { number: 7, url: 'u', title: 'WIP', state: 'OPEN' as const, checks: 'pending' as const, updatedAt: 1, draft: true }
+    const t = setup({ pr: draft })
+    t.setJson([{ number: 7, url: 'u', title: 'WIP', state: 'OPEN', isDraft: false, updatedAt: '2026-10-30T10:00:00Z',
+      statusCheckRollup: [{ status: 'IN_PROGRESS' }] }])
+    t.poller.start()
+    await waitFor(async () => t.state.sessions[0].pr?.draft !== true)
+    t.poller.stop()
+    expect(t.state.sessions[0].pr).toMatchObject({ number: 7, checks: 'pending' })
+    expect(t.state.sessions[0].pr?.draft).toBeUndefined()
   })
 })

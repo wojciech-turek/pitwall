@@ -563,6 +563,19 @@ describe('muted projects and mark as unread', () => {
     expect(badges.at(-1)).toBe(0)
   })
 
+  test('an exited session carries its exit code in the snapshot', async () => {
+    await addSession('a', {}, [{ e: 'SessionStart', t: 1500 }, { e: 'pitwall:exited', code: 0, t: 2000 }])
+    await addSession('b', {}, [{ e: 'SessionStart', t: 1500 }, { e: 'pitwall:exited', code: 137, t: 2000 }])
+    await addSession('c', {}, [{ e: 'SessionStart', t: 1500 }])
+    const m = await ready()
+    await waitStatus(m, 'a', 'exited')
+    await waitStatus(m, 'b', 'exited')
+    const byId = (id: string) => m.snapshot().sessions.find((s) => s.id === id)!
+    expect(byId('a').exitCode).toBe(0)
+    expect(byId('b').exitCode).toBe(137)
+    expect('exitCode' in byId('c')).toBe(false)
+  })
+
   test('marking a session that is not read is a no-op', async () => {
     await addSession('a', {}, [{ e: 'UserPromptSubmit', t: 2000 }])
     const m = await ready()

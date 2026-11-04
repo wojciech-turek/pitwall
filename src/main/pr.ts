@@ -26,23 +26,25 @@ export function summarizeChecks(rollup: unknown[]): ChecksState {
   return 'passing'
 }
 
+/** The branch's newest PR; 'none' when GitHub has none for it; null when the lookup failed. */
 export async function fetchPr(o: {
   ghBin: string; cwd: string; branch: string; token: string; exec: Exec; env: Record<string, string>
-}): Promise<PrInfo | null> {
+}): Promise<PrInfo | 'none' | null> {
   const r = await o.exec(
     o.ghBin,
-    ['pr', 'list', '--head', o.branch, '--state', 'all', '--json', 'number,url,title,state,statusCheckRollup,updatedAt', '--limit', '1'],
+    ['pr', 'list', '--head', o.branch, '--state', 'all', '--json', 'number,url,title,state,isDraft,statusCheckRollup,updatedAt', '--limit', '1'],
     { cwd: o.cwd, env: { ...o.env, GH_TOKEN: o.token } }
   )
   if (r.code !== 0) return null
   let list: unknown
   try { list = JSON.parse(r.stdout) } catch { return null }
-  if (!Array.isArray(list) || list.length === 0) return null
+  if (!Array.isArray(list)) return null
+  if (list.length === 0) return 'none'
   const p = list[0] as Record<string, unknown>
   const state = str(p.state)
   if (typeof p.number !== 'number' || !PR_STATES.has(state)) return null
   const updated = typeof p.updatedAt === 'string' ? Date.parse(p.updatedAt) : NaN
-  return {
+  const pr: PrInfo = {
     number: p.number,
     url: String(p.url ?? ''),
     title: String(p.title ?? ''),
@@ -50,10 +52,13 @@ export async function fetchPr(o: {
     checks: summarizeChecks(Array.isArray(p.statusCheckRollup) ? p.statusCheckRollup : []),
     updatedAt: Number.isNaN(updated) ? Date.now() : updated
   }
+  if (p.isDraft === true) pr.draft = true
+  return pr
 }
 
 const same = (a: PrInfo | undefined, b: PrInfo): boolean =>
-  !!a && a.number === b.number && a.state === b.state && a.checks === b.checks && a.title === b.title && a.url === b.url
+  !!a && a.number === b.number && a.state === b.state && a.checks === b.checks && a.title === b.title && a.url === b.url &&
+  a.draft === b.draft
 
 export class PrPoller {
   private tokens = new Map<string, { token: string; at: number }>()
@@ -146,6 +151,16 @@ export class PrPoller {
     const pr = await fetchPr({ ghBin: paths.ghBin, cwd: dir, branch, token, exec, env })
     if (!pr || this.stopped) return
     const before = store.state.sessions.find((x) => x.id === sessionId)?.pr
+    if (pr === 'none') {
+      // GitHub has no PR for the branch the session is on now, so the one it had was for an earlier branch (a
+      // follow-up started after a merge): showing it would make the session look finished.
+      if (!before) return
+      await store.update((d) => {
+        const t = d.sessions.find((x) => x.id === sessionId)
+        if (t) delete t.pr
+      })
+      return
+    }
     if (same(before, pr)) return
     await store.update((d) => {
       const t = d.sessions.find((x) => x.id === sessionId)

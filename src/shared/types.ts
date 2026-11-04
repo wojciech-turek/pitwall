@@ -11,7 +11,11 @@ export interface SubProject {
 }
 export type PrState = 'OPEN' | 'CLOSED' | 'MERGED'
 export type ChecksState = 'passing' | 'failing' | 'pending' | 'none'
-export interface PrInfo { number: number; url: string; title: string; state: PrState; checks: ChecksState; updatedAt: number }
+export interface PrInfo {
+  number: number; url: string; title: string; state: PrState; checks: ChecksState; updatedAt: number
+  /** Opened as a draft and not yet marked ready for review. */
+  draft?: boolean
+}
 export interface Session {
   id: string; subProjectId: string; title: string; slug: string; claudeSessionId: string; cwd: string
   worktreePath?: string; branch?: string; branchCreatedByPitwall: boolean; baseBranch?: string; baseCommit?: string
@@ -65,6 +69,8 @@ export type FileContent =
   | { kind: 'too_large'; size: number }
 export interface SessionView extends Session {
   status: DisplayStatus; needsInput?: NeedsInputReason; lastError?: string
+  /** How Claude last exited, while the session shows as exited (0: the user quit it). */
+  exitCode?: number
   diffStat?: { additions: number; deletions: number }; liveBranch?: string; startWarning?: string
   lastActivityAt?: number
   /** The launcher's warnings for this run of Claude (a terminal repaint can wipe its printed lines). */

@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { STATUS_LABEL } from '@shared/runtime'
 import type { SessionView } from '@shared/types'
 import { LineCounts } from './ChangesTab'
-import StatusDot from './StatusDot'
+import StatusIcon from './StatusIcon'
 
 export const HOVER_DELAY_MS = 300
 const CARD_WIDTH = 300
@@ -66,7 +66,7 @@ export default function HoverCard({ session, rect, projectName, subProjectName }
     <div ref={ref} className="hover-card" data-testid="hover-card" role="tooltip" style={{ left, top, width: CARD_WIDTH }}>
       <div className="hc-title">{session.title}</div>
       <div className="hc-meta">
-        <span className="header-dot"><StatusDot status={session.status} /></span>
+        <StatusIcon status={session.status} exitCode={session.exitCode} />
         <span className="hc-status">{STATUS_LABEL[session.status]}</span>
         <span className="hc-sep">·</span>
         <span className="hc-time">{relativeTime(session.lastActivityAt ?? session.createdAt)}</span>

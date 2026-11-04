@@ -120,6 +120,7 @@ export class SessionManager {
         ...this.extras.get(s.id)
       }
       if (rt.needsInput) view.needsInput = rt.needsInput
+      if (rt.activity === 'exited' && rt.exitCode !== undefined) view.exitCode = rt.exitCode
       if (rt.lastEventAt) view.lastActivityAt = rt.lastEventAt
       const lastError = rt.lastError ?? this.errors.get(s.id)
       if (lastError) view.lastError = lastError
