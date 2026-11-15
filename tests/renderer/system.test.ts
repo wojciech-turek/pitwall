@@ -56,13 +56,21 @@ describe('stepPill', () => {
     expect(run([warn, warn, crit]).map((x) => x.level)).toEqual([null, 'warn', 'critical'])
     expect(run([crit, crit, warn])[2].level).toBe('warn')
   })
-  test('a nearly full disk is a warn: under 10% or under 20 GB free', () => {
-    const full = sys({ diskFreeBytes: 15 * GB })
+  test('a nearly full disk is a warn: under 10% and under 100 GB free, or under 10 GB', () => {
+    const full = sys({ diskFreeBytes: 15 * GB }) // on 926 GB
     expect(run([full, full])[1]).toMatchObject({ level: 'warn', reason: 'disk' })
     const low = sys({ diskFreeBytes: 80 * GB })
     expect(run([low, low])[1].level).toBe('warn')
     const fine = sys({ diskFreeBytes: 200 * GB })
     expect(run([fine, fine])[1].level).toBeNull()
+    // A big disk: under 10%, but plenty left.
+    const big = sys({ diskFreeBytes: 150 * GB, diskTotalBytes: 2000 * GB })
+    expect(run([big, big])[1].level).toBeNull()
+    // A small disk: over 10%, but almost nothing left.
+    const small = sys({ diskFreeBytes: 8 * GB, diskTotalBytes: 64 * GB })
+    expect(run([small, small])[1]).toMatchObject({ level: 'warn', reason: 'disk' })
+    const smallFine = sys({ diskFreeBytes: 12 * GB, diskTotalBytes: 64 * GB })
+    expect(run([smallFine, smallFine])[1].level).toBeNull()
   })
   test('memory is the reason when both apply', () => {
     const both = sys({ pressure: 'warn', diskFreeBytes: 15 * GB })

@@ -73,7 +73,9 @@ export function heavyLabel(history: ProcStats[]): string | null {
   return null
 }
 
-const diskLow = (s: SystemStats): boolean => s.diskTotalBytes > 0 && (s.diskFreeBytes < 0.1 * s.diskTotalBytes || s.diskFreeBytes < 20 * GB)
+/** Under 10% free and under 100 GB (10% of a big disk is still a lot), or under 10 GB on any disk. */
+const diskLow = (s: SystemStats): boolean =>
+  s.diskTotalBytes > 0 && ((s.diskFreeBytes < 0.1 * s.diskTotalBytes && s.diskFreeBytes < 100 * GB) || s.diskFreeBytes < 10 * GB)
 /** What one sample says on its own. */
 function sampleLevel(s: SystemStats): 'warn' | 'critical' | null {
   if (s.pressure === 'critical') return 'critical'
