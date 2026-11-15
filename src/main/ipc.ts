@@ -27,6 +27,7 @@ import type { UsageTracker } from './usage'
 import type { SystemMonitor } from './system-monitor'
 import type { PrPoller } from './pr'
 import type { ContinueScheduler } from './sessions/continue-at'
+import type { AccountMover } from './sessions/mover'
 import { checksMessage, fetchReviewThreads, reviewsMessage } from './pr-feedback'
 
 export interface IpcDeps {
@@ -44,7 +45,8 @@ export interface IpcDeps {
   mutex: KeyedMutex
   history: Pick<SessionHistory, 'search' | 'forgetFiles'>
   usage: Pick<UsageTracker, 'current' | 'onChange'>
-  accounts: Pick<AccountsService, 'list' | 'onChange' | 'beginAdd' | 'finishAdd' | 'cancelAdd' | 'remove' | 'copyFromDefault' | 'endLogin'>
+  accounts: Pick<AccountsService, 'list' | 'onChange' | 'beginAdd' | 'finishAdd' | 'cancelAdd' | 'remove' | 'copyFromDefault' | 'endLogin' | 'setActive'>
+  mover: Pick<AccountMover, 'request' | 'requestAll' | 'cancel' | 'moveBack' | 'countMovable'>
   systemStats: Pick<SystemMonitor, 'current' | 'onChange'>
   updates: Pick<UpdateChecker, 'state' | 'checkNow' | 'onChange' | 'hasFeed'>
   pr: Pick<PrPoller, 'feedbackContext'>
@@ -95,6 +97,12 @@ export function registerIpc(d: IpcDeps): () => void {
   handle(IPC.removeAccount, (id: unknown) => d.accounts.remove(accountId(id)))
   handle(IPC.copyAccountSettings, (id: unknown) => d.accounts.copyFromDefault(accountId(id)))
   handle(IPC.endAccountLogin, (id: unknown) => d.accounts.endLogin(accountId(id)))
+  handle(IPC.countMovable, (id: unknown) => d.mover.countMovable(accountId(id)))
+  handle(IPC.setActiveAccount, async (id: unknown, moveRunning: unknown) => {
+    const target = accountId(id)
+    await d.accounts.setActive(target)
+    return moveRunning === true ? d.mover.requestAll(target) : { now: 0, later: 0 }
+  })
   handle(IPC.getSystemStats, () => d.systemStats.current())
   handle(IPC.appInfo, () => ({ version: APP_VERSION, dev: d.dev, updateFeed: d.updates.hasFeed(), parkAfterMs: parkAfterMs() }))
   handle(IPC.getUpdateState, () => d.updates.state())
@@ -143,6 +151,9 @@ export function registerIpc(d: IpcDeps): () => void {
     if (typeof id !== 'string' || !store.state.sessions.some((x) => x.id === id && x.archivedAt === undefined)) throw new Error('Session not found')
     return id
   }
+  handle(IPC.moveSession, (id: unknown, account: unknown) => d.mover.request(liveSession(id), accountId(account)))
+  handle(IPC.cancelMove, (id: unknown) => d.mover.cancel(liveSession(id)))
+  handle(IPC.moveBack, (id: unknown) => d.mover.moveBack(liveSession(id)))
   handle(IPC.scheduleContinue, async (id: unknown) => ({ at: await d.continueAt.schedule(liveSession(id)) }))
   handle(IPC.cancelContinue, (id: unknown) => d.continueAt.cancel(liveSession(id)))
   handle(IPC.sendPrFeedback, async (id: unknown, what: unknown): Promise<{ ok: true; count: number } | { ok: false; message: string }> => {

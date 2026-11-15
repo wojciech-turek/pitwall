@@ -248,3 +248,56 @@ describe('Claude accounts over IPC', () => {
   })
 })
 
+describe('switching and moving over IPC', () => {
+  const calls: unknown[][] = []
+  const mover = {
+    request: vi.fn(async (...a: unknown[]) => { calls.push(['request', ...a]) }),
+    requestAll: vi.fn(async (...a: unknown[]) => { calls.push(['requestAll', ...a]); return { now: 2, later: 1 } }),
+    cancel: vi.fn(async (...a: unknown[]) => { calls.push(['cancel', ...a]) }),
+    moveBack: vi.fn(async (...a: unknown[]) => { calls.push(['moveBack', ...a]) }),
+    countMovable: vi.fn((...a: unknown[]) => { calls.push(['count', ...a]); return { now: 2, later: 1 } })
+  }
+  const accounts = { onChange: () => () => {}, setActive: vi.fn(async (...a: unknown[]) => { calls.push(['setActive', ...a]) }) }
+  beforeEach(() => {
+    calls.length = 0
+    electron.handlers.clear()
+    registerIpc({
+      manager: { onSnapshot: () => () => {} }, store: { state: { sessions: [{ id: 's1' }, { id: 'old', archivedAt: 1 }] } }, accounts, mover,
+      usage: { current: () => [], onChange: () => () => {} },
+      systemStats: { current: () => null, onChange: () => () => {} },
+      updates: { state: () => null, checkNow: async () => {}, onChange: () => () => {}, hasFeed: () => false },
+      send: () => {}, onViewing: () => {}, env: {}, home: '/home/me', dev: false
+    } as unknown as IpcDeps)
+  })
+
+  test('Switch for new sessions only: the active account changes and nothing moves', async () => {
+    expect(await call(IPC.setActiveAccount, 'a1', false)).toEqual({ now: 0, later: 0 })
+    expect(calls).toEqual([['setActive', 'a1']])
+  })
+
+  test('Switch and move: the active account changes first, then every running session is asked to move', async () => {
+    expect(await call(IPC.setActiveAccount, 'a1', true)).toEqual({ now: 2, later: 1 })
+    expect(calls).toEqual([['setActive', 'a1'], ['requestAll', 'a1']])
+  })
+
+  test('one session: move, cancel, move back; and the count for the dialog', async () => {
+    await call(IPC.moveSession, 's1', 'a1')
+    await call(IPC.cancelMove, 's1')
+    await call(IPC.moveBack, 's1')
+    expect(await call(IPC.countMovable, 'a1')).toEqual({ now: 2, later: 1 })
+    expect(calls).toEqual([['request', 's1', 'a1'], ['cancel', 's1'], ['moveBack', 's1'], ['count', 'a1']])
+  })
+
+  test('ids that are not strings, or not a live session, are refused', async () => {
+    const refused = (ch: string, ...a: unknown[]) => expect(Promise.resolve().then(() => call(ch, ...a))).rejects.toThrow()
+    await refused(IPC.setActiveAccount, 7, true)
+    await refused(IPC.moveSession, 's1', null)
+    await refused(IPC.moveSession, 'ghost', 'a1')
+    await refused(IPC.cancelMove, 'ghost')
+    await refused(IPC.moveSession, 'old', 'a1')
+    await refused(IPC.moveBack, {})
+    await refused(IPC.countMovable)
+    expect(calls).toEqual([])
+  })
+})
+

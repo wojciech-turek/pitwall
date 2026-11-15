@@ -91,6 +91,30 @@ async function ready(firstEventTimeoutMs?: number): Promise<SessionManager> {
 }
 
 describe('SessionManager', () => {
+  test('restartClaude ends the running Claude and starts it again from freshly written files', async () => {
+    const acct = { id: 'a1', dir: join(t.tmp, 'claude-accounts', 'a1'), addedAt: 1 }
+    await store.update((d) => { d.settings.claudeAccounts = [acct] })
+    await addSession('a')
+    const m = await ready()
+    const envSh = join(sessionDir(t.paths, 'a'), 'env.sh')
+    expect(await readFile(envSh, 'utf8')).not.toContain('CLAUDE_CONFIG_DIR')
+    await store.update((d) => { d.sessions.find((x) => x.id === 'a')!.account = 'a1' })
+    await m.restartClaude('a')
+    expect(await readFile(envSh, 'utf8')).toContain(`export CLAUDE_CONFIG_DIR='${acct.dir}'`)
+    expect(await t.backend.hasSession(claudeTmuxName('a'))).toBe(true)
+    // What runs now is the launcher, not the program that ran before.
+    await waitFor(async () => existsSync(join(sessionDir(t.paths, 'a'), 'started')), 8000, 'the launcher started Claude')
+    await expect(m.restartClaude('ghost')).rejects.toThrow('Session not found.')
+  })
+
+  test('a reported error and a waiting move show on the session; a pending move passes through', async () => {
+    await addSession('a', { moveTo: 'a1' })
+    const m = await ready()
+    m.reportError('a', "Couldn't continue this conversation on b@x.com.")
+    m.updateSessionExtras('a', { moveWaiting: true })
+    expect(m.snapshot().sessions[0]).toMatchObject({ lastError: "Couldn't continue this conversation on b@x.com.", moveWaiting: true, moveTo: 'a1' })
+  })
+
   test("a session shows the account it runs on: its own, its project's pinned one, or the default when its own is gone", async () => {
     const acct = { id: 'a1', dir: join(t.tmp, 'claude-accounts', 'a1'), addedAt: 1 }
     await store.update((d) => {

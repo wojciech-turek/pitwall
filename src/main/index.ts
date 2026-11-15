@@ -31,6 +31,7 @@ import { TmuxBackend } from './tmux-backend'
 import { releasesUrl, UpdateChecker } from './updates'
 import { accountKey, accountLabel, defaultAccountDir } from './accounts'
 import { AccountsService, isLoginTerm } from './accounts-service'
+import { AccountMover } from './sessions/mover'
 import { UsageTracker } from './usage'
 import { ContinueScheduler } from './sessions/continue-at'
 import { SystemMonitor } from './system-monitor'
@@ -71,6 +72,7 @@ let disposePr: (() => void) | null = null
 let disposeServers: (() => void) | null = null
 let disposeUsage: (() => void) | null = null
 let disposeContinueAt: (() => void) | null = null
+let disposeMover: (() => void) | null = null
 let disposeSystemStats: (() => void) | null = null
 let disposeUpdates: (() => void) | null = null
 let disposeCli: (() => void) | null = null
@@ -332,8 +334,16 @@ async function bootstrap(): Promise<void> {
   })
   continueAt.start()
   disposeContinueAt = () => continueAt.stop()
+  const mover = new AccountMover({
+    store, home, env, manager: mgr, continueAt,
+    sessionDir: (id) => sessionDir(paths, id),
+    labelFor: async (id) => (await accounts.list()).find((a) => a.id === id)?.label ?? id,
+    onRestarted: (id) => send(IPC.termRestart, id)
+  })
+  mover.start()
+  disposeMover = () => mover.stop()
   disposeIpc = registerIpc({
-    manager: mgr, changes, store, git, backend, projects, bridge, paths, exec, env, home, mutex, history, usage, accounts, systemStats, updates, pr, continueAt, send, dev: DEV,
+    manager: mgr, changes, store, git, backend, projects, bridge, paths, exec, env, home, mutex, history, usage, accounts, mover, systemStats, updates, pr, continueAt, send, dev: DEV,
     launcher,
     onViewing: (ids) => {
       visibleIds = ids
@@ -387,6 +397,8 @@ if (!isPrimaryInstance) {
     disposeUsage = null
     disposeContinueAt?.()
     disposeContinueAt = null
+    disposeMover?.()
+    disposeMover = null
     disposeSystemStats?.()
     disposeSystemStats = null
     disposeUpdates?.()

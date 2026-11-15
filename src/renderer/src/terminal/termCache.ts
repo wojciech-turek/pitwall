@@ -51,6 +51,15 @@ function ensureSubscribed(): void {
   if (subscribed) return
   subscribed = true
   window.pitwall.onTermData((id, kind, data) => cache.get(keyOf(id, kind))?.term.write(data))
+  // Claude was restarted under the terminal (its account changed): attach again, without waiting for a key.
+  window.pitwall.onTermRestart((id) => {
+    const e = cache.get(keyOf(id, 'claude'))
+    if (!e) return
+    e.reopenOnKey = false
+    e.opened = false
+    e.term.reset()
+    if (e.term.element?.isConnected) void openPty(id, 'claude', e)
+  })
   window.pitwall.onTermExit((id, kind) => {
     const e = cache.get(keyOf(id, kind))
     if (!e) return

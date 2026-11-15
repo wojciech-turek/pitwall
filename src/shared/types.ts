@@ -51,6 +51,8 @@ export interface Session {
   account?: string
   /** The account this session moves to once it is idle. */
   moveTo?: string
+  /** Just moved from this account and restarted, not yet seen to start on the new one (moved-from is in its folder). */
+  movedFrom?: string
 }
 /** A Claude account added in Pitwall: its own config folder, which Claude Code keeps the login for. */
 export interface ClaudeAccount { id: string; dir: string; addedAt: number }
@@ -129,6 +131,8 @@ export interface SessionView extends Session {
   accountId?: string
   /** The session's project sets CLAUDE_CONFIG_DIR itself, so the session can't be moved. */
   accountPinned?: boolean
+  /** Moved a minute ago and still not started on the new account: Claude is at a prompt there (a sign-in, the folder trust). */
+  moveWaiting?: boolean
   /** The Server tab's dev server: whether it runs and the ports it listens on. Absent when the folder has no dev command. */
   server?: { running: boolean; ports: number[] }
   /** The launcher's warnings for this run of Claude (a terminal repaint can wipe its printed lines). */

@@ -27,7 +27,7 @@ type Deps = StarterDeps & {
   /** Searches the folders' conversations; default: one of its own over this manager's sessions. */
   history?: Pick<SessionHistory, 'search' | 'searchFiles'>
 }
-type Extras = Partial<Pick<SessionView, 'diffStat' | 'liveBranch' | 'server'>>
+type Extras = Partial<Pick<SessionView, 'diffStat' | 'liveBranch' | 'server' | 'moveWaiting'>>
 
 const FIRST_EVENT_TIMEOUT_MS = 20000
 export const ACCOUNT_GONE_WARNING = "This session's Claude account was removed. It runs on the default account."
@@ -339,6 +339,23 @@ export class SessionManager {
       const timer = setTimeout(done, timeoutMs)
       set.add(done)
     })
+  }
+
+  /**
+   * Ends the session's Claude and starts it again with freshly written files: how a change of Claude account
+   * applies. The launcher resumes the same conversation. Whatever Claude ran in the background ends with it.
+   */
+  async restartClaude(sessionId: string): Promise<void> {
+    const s = this.session(sessionId)
+    if (!s || s.archivedAt !== undefined) throw new Error('Session not found.')
+    await this.deps.backend.killSession(claudeTmuxName(sessionId))
+    await this.relaunchIfMissing(s)
+  }
+
+  /** Shows `message` as the session's error until its next successful launch. */
+  reportError(sessionId: string, message: string): void {
+    this.errors.set(sessionId, message)
+    this.publish()
   }
 
   async ensureTerminalTarget(sessionId: string, kind: TermKind): Promise<void> {

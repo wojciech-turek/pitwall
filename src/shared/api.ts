@@ -111,6 +111,20 @@ export interface PitwallApi {
   removeAccount(id: string): Promise<void>
   /** The default account's MCP servers again, and anything it has started sharing since. */
   copyAccountSettings(id: string): Promise<void>
+  /**
+   * Makes `id` the account new sessions start on. With `moveRunning`, every running session on another account is
+   * asked to move too (idle ones at once, busy ones when they finish); the counts say how many of each.
+   */
+  setActiveAccount(id: string, moveRunning: boolean): Promise<{ now: number; later: number }>
+  /** How many running sessions a Switch to `id` would move now, and how many when they finish. */
+  countMovable(id: string): Promise<{ now: number; later: number }>
+  /** Moves one session to another account: now if it is idle, else when it next is. */
+  moveSession(sessionId: string, accountId: string): Promise<void>
+  cancelMove(sessionId: string): Promise<void>
+  /** Returns a session that hasn't started on its new account to the one it came from. */
+  moveBack(sessionId: string): Promise<void>
+  /** Claude was restarted in a session (its account changed): its terminal attaches again. */
+  onTermRestart(cb: (sessionId: string) => void): () => void
   /** Ends a sign-in terminal opened to sign in again (terminal id `login-<id>`). */
   endAccountLogin(id: string): Promise<void>
   /** The latest CPU, memory and disk figures, or null before the first sample (and always on Windows). */
@@ -193,6 +207,11 @@ export const IPC = {
   removeAccount: 'pitwall:removeAccount',
   copyAccountSettings: 'pitwall:copyAccountSettings',
   endAccountLogin: 'pitwall:endAccountLogin',
+  setActiveAccount: 'pitwall:setActiveAccount',
+  countMovable: 'pitwall:countMovable',
+  moveSession: 'pitwall:moveSession',
+  cancelMove: 'pitwall:cancelMove',
+  moveBack: 'pitwall:moveBack',
   getSystemStats: 'pitwall:getSystemStats',
   appInfo: 'pitwall:appInfo',
   getUpdateState: 'pitwall:getUpdateState',
@@ -206,6 +225,7 @@ export const IPC = {
   menuCommand: 'pitwall:menuCommand',
   usage: 'pitwall:usage',
   accounts: 'pitwall:accounts',
+  termRestart: 'pitwall:termRestart',
   systemStats: 'pitwall:systemStats',
   updateState: 'pitwall:updateState'
 } as const
