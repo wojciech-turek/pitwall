@@ -70,6 +70,31 @@ test('the Server tab runs the dev command on the session port and offers to open
   const res = await fetch(`http://localhost:${port}`)
   expect(await res.text()).toBe('ok')
 
+  // a second session in the same repo runs its server at the same time, on its own port
+  await page.getByTestId('subproject-row').hover()
+  await page.getByTestId('new-session').click()
+  await page.getByTestId('session-title-input').fill('Second')
+  await page.getByTestId('start-session').click()
+  await expect(page.getByTestId('new-session-dialog')).toHaveCount(0, { timeout: 30_000 })
+  const row2 = page.getByTestId('session-row').filter({ hasText: 'Second' })
+  const id2 = (await row2.getAttribute('data-session-id'))!
+  await row2.click()
+  const env2 = await readFile(join(e.dataDir, 'sessions', id2, 'env.sh'), 'utf8')
+  const port2 = Number(/PITWALL_PORT=['"]?(\d+)/.exec(env2)?.[1])
+  expect(port2).toBeGreaterThan(0)
+  expect(port2).not.toBe(port)
+  await page.getByTestId('tab-server').click()
+  await expect(page.getByTestId('server-open')).toHaveText(`Open localhost:${port2}`, { timeout: 15_000 })
+  await waitFor(() => listening(port2), 15_000, 'second server answers')
+  expect(await listening(port)).toBe(true)
+
+  await row2.hover()
+  await row2.getByTestId('session-menu').click()
+  await page.getByTestId('session-archive').click()
+  await page.getByTestId('archive-confirm').click()
+  await expect(page.getByTestId('archive-dialog')).toHaveCount(0, { timeout: 30_000 })
+  await row.click()
+
   await row.hover()
   await row.getByTestId('session-menu').click()
   await page.getByTestId('session-archive').click()
