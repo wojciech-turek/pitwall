@@ -137,7 +137,7 @@ describe('pitwall-launch', () => {
       await start()
       await waitCapture('STUB CLAUDE READY')
       const flags = `--append-system-prompt-file ${sd}/system-note.txt`
-      expect((await logLines())[0]).toBe(`--session-id ${ID} --settings ${sd}/hooks.json --name ${TITLE} ${flags} Add a README line, don't $HOME it`)
+      expect((await logLines())[0]).toBe(`--session-id ${ID} --settings ${sd}/hooks.json --name ${TITLE} ${flags} -- Add a README line, don't $HOME it`)
       expect(await stat(join(sd, 'initial-prompt.sent')).then(() => true, () => false)).toBe(true)
       expect(await stat(join(sd, 'initial-prompt.txt')).then(() => true, () => false)).toBe(false)
       await t.tmux.sendKeys('pw-l', ['exit', 'Enter'])
@@ -146,6 +146,14 @@ describe('pitwall-launch', () => {
       await waitFor(async () => (await logLines()).some((l) => l.includes('--resume')), 8000, 'resume argv')
       const resume = (await logLines()).find((l) => l.includes('--resume'))!
       expect(resume).toBe(`--resume ${ID} --settings ${sd}/hooks.json ${flags}`)
+    })
+
+    test('a prompt starting with a dash comes after "--", so Claude never reads it as an option', async () => {
+      await setup()
+      await writeFile(join(sd, 'initial-prompt.txt'), '- item one\n')
+      await start()
+      await waitCapture('STUB CLAUDE READY')
+      expect((await logLines())[0]).toBe(`--session-id ${ID} --settings ${sd}/hooks.json --name ${TITLE} -- - item one`)
     })
 
     test('the note is read by Claude; without system-note.txt there is no --append-system-prompt-file at all', async () => {
