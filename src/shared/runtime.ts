@@ -20,6 +20,11 @@ function clearRuns(rt: SessionRuntime): SessionRuntime {
   return rest
 }
 
+function clearPending(rt: SessionRuntime): SessionRuntime {
+  const { promptPending: _p, ...rest } = rt
+  return rest
+}
+
 const MAX_RUNS = 30
 const MAX_DESCS = 20
 const TOOL_EVENTS = new Set(['PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Notification', 'PermissionRequest'])
@@ -93,10 +98,11 @@ function applyMain(rt: SessionRuntime, ev: HookEvent): SessionRuntime {
   const busy = rt.activity === 'working' || rt.activity === 'needs_input'
   switch (ev.e) {
     case 'SessionStart':
-      return ev.src === 'compact' ? rt : { ...clearLimit(clearNeeds(clearRuns(rt))), activity: 'idle' }
+      // A first prompt passed at launch is on its way: still working, until its UserPromptSubmit.
+      return ev.src === 'compact' ? rt : { ...clearLimit(clearNeeds(clearRuns(rt))), activity: rt.promptPending ? 'working' : 'idle' }
     case 'UserPromptSubmit': {
-      const { lastError: _e, ...rest } = clearLimit(clearNeeds(rt))
-      const next: SessionRuntime = { ...rest, activity: 'working' }
+      const { lastError: _e, ...rest } = clearPending(clearLimit(clearNeeds(rt)))
+      const next: SessionRuntime = { ...rest, activity: 'working', lastPromptAt: ev.t }
       if (rt.subagents) {
         const live = rt.subagents.filter((x) => x.state !== 'done')
         if (live.length) next.subagents = live
@@ -128,7 +134,7 @@ function applyMain(rt: SessionRuntime, ev: HookEvent): SessionRuntime {
           return rt
       }
     case 'Stop': {
-      const { lastMessage: _m, lastError: _e, ...rest } = clearNeeds(rt)
+      const { lastMessage: _m, lastError: _e, ...rest } = clearPending(clearNeeds(rt))
       const next: SessionRuntime = { ...rest, activity: 'idle', lastFinishedAt: ev.t }
       if (ev.msg != null) next.lastMessage = ev.msg
       return next
@@ -140,16 +146,21 @@ function applyMain(rt: SessionRuntime, ev: HookEvent): SessionRuntime {
       return next
     }
     case 'SessionEnd':
-      return ev.reason === 'clear' || ev.reason === 'resume' ? rt : { ...clearNeeds(rt), activity: 'exited' }
+      return ev.reason === 'clear' || ev.reason === 'resume' ? rt : { ...clearPending(clearNeeds(rt)), activity: 'exited' }
     case 'pitwall:launch': {
-      // A new run of Claude: its launcher reports its warnings again after this.
-      const { exitCode: _x, warnings: _w, ...rest } = clearNeeds(rt)
+      // A new run of Claude: its launcher reports its warnings (and a first prompt) again after this.
+      const { exitCode: _x, warnings: _w, ...rest } = clearPending(clearNeeds(rt))
       return { ...rest, activity: 'starting' }
     }
+    case 'pitwall:prompt-pending':
+      return { ...rt, promptPending: true }
+    case 'pitwall:sent':
+      // Pitwall typed a message and pressed Enter: working now, not only once Claude's UserPromptSubmit is read.
+      return { ...clearNeeds(rt), activity: 'working' }
     case 'pitwall:warning':
       return ev.msg ? { ...rt, warnings: { ...rt.warnings, [ev.kind || 'other']: ev.msg } } : rt
     case 'pitwall:exited': {
-      const next: SessionRuntime = { ...clearLimit(clearNeeds(clearRuns(rt))), activity: 'exited' }
+      const next: SessionRuntime = { ...clearPending(clearLimit(clearNeeds(clearRuns(rt)))), activity: 'exited' }
       if (ev.code != null) next.exitCode = ev.code
       return next
     }

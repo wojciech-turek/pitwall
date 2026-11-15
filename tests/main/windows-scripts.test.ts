@@ -95,6 +95,24 @@ describe.skipIf(process.platform !== 'win32')('pitwall-hook.ps1', () => {
     for (const ev of evs) expect(ev).toMatchObject({ e: 'PreToolUse', sid: 's', tool: 'Agent', desc: null })
   })
 
+  test('Stop keeps the whole reply in last-reply.txt beside the events, up to 64 KB, like the sh hook; SubagentStop never does', async () => {
+    const dir = await folder()
+    const f = join(dir, 'events.jsonl')
+    const reply = join(dir, 'last-reply.txt')
+    const long = 'Zażółć 🧾 line\n'.repeat(400)
+    await hook(f, JSON.stringify({ hook_event_name: 'Stop', session_id: 'x', last_assistant_message: long }))
+    expect(await readFile(reply, 'utf8')).toBe(long)
+    expect([...parseEventLine((await lines(f))[0])!.msg!]).toHaveLength(300)
+    await hook(f, JSON.stringify({ hook_event_name: 'SubagentStop', session_id: 'x', agent_id: 'a', last_assistant_message: 'helper words' }))
+    await hook(f, JSON.stringify({ hook_event_name: 'StopFailure', session_id: 'x', last_assistant_message: 'failed words' }))
+    await hook(f, JSON.stringify({ hook_event_name: 'Stop', session_id: 'x' })) // no reply: the old file stays
+    expect(await readFile(reply, 'utf8')).toBe(long)
+    await hook(f, JSON.stringify({ hook_event_name: 'Stop', session_id: 'x', last_assistant_message: 'a'.repeat(100_000) }))
+    expect(await readFile(reply, 'utf8')).toBe('a'.repeat(65536))
+    expect((await readdir(dir)).sort()).toEqual(['events.jsonl', 'last-reply.txt']) // no temp file left
+    expect(await lines(f)).toHaveLength(5)
+  })
+
   test('invalid stdin: exit 0, nothing written', async () => {
     const f = join(await folder(), 'events.jsonl')
     expect(await hook(f, 'not json {')).toMatchObject({ code: 0, stdout: '' })

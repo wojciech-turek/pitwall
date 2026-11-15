@@ -147,6 +147,25 @@ try {
   $dir = [System.IO.Path]::GetDirectoryName($file)
   if ($dir) { [void][System.IO.Directory]::CreateDirectory($dir) }
 
+  # A Stop's whole reply (the line keeps 300 characters), for `pitwall wait`, up to 64 KB, as the sh hook keeps it:
+  # before the line, so it is there when the app reads the Stop, and through a temp file, so no one reads half of it.
+  # Never a reason to lose the line: a failure here is ignored.
+  if ($dir -and (Get-Field $p 'hook_event_name') -eq 'Stop') {
+    $full = Get-Field $p 'last_assistant_message'
+    if ($full -is [string] -and $full.Length -gt 0) {
+      $tmp = [System.IO.Path]::Combine($dir, ".last-reply.$PID")
+      try {
+        $rb = (New-Object System.Text.UTF8Encoding $false).GetBytes($full)
+        if ($rb.Length -gt 65536) { $cut = New-Object byte[] 65536; [System.Array]::Copy($rb, $cut, 65536); $rb = $cut }
+        [System.IO.File]::WriteAllBytes($tmp, $rb)
+        $dst = [System.IO.Path]::Combine($dir, 'last-reply.txt')
+        if ([System.IO.File]::Exists($dst)) { [System.IO.File]::Replace($tmp, $dst, $null) } else { [System.IO.File]::Move($tmp, $dst) }
+      } catch {
+        try { [System.IO.File]::Delete($tmp) } catch { }
+      }
+    }
+  }
+
   # Append-only access: Windows then appends each write at the end, atomically, beside other writers (other hooks,
   # the app, the launcher), as >> does elsewhere.
   $fs = $null

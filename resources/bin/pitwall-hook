@@ -18,5 +18,15 @@ line=$(printf '%s' "$input" | "$JQ" -c --arg c "$2" '{c:$c, t:(now*1000|floor), 
   desc:(if .tool_name=="Agent" then (((.tool_input | objects | .description) // null) | if type=="string" then .[0:120] else null end) else null end)}') || exit 0
 [ -n "$line" ] || exit 0
 
+# A Stop's whole reply (the line keeps 300 characters), for `pitwall wait`, up to 64 KB. Written before the line, so it
+# is there when the app reads the Stop, and through a temp file, so no one ever reads half of it.
+case "$line" in
+  *'"e":"Stop",'*)
+    d=$(dirname "$1")
+    tmp="$d/.last-reply.$$"
+    printf '%s' "$input" | "$JQ" -j '.last_assistant_message | strings' | head -c 65536 > "$tmp"
+    if [ -s "$tmp" ]; then mv -f "$tmp" "$d/last-reply.txt"; else rm -f "$tmp"; fi ;;
+esac
+
 printf '%s\n' "$line" >> "$1"
 exit 0

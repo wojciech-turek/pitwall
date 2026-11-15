@@ -111,6 +111,35 @@ describe('reduceRuntime', () => {
     expect(o.needsInput).toBeUndefined()
     expect(r(rt({ activity: 'idle' }), 'pitwall:user-input').activity).toBe('idle')
   })
+  test('pitwall:sent (Pitwall typed a message and pressed Enter): working at once, before its UserPromptSubmit', () => {
+    const o = r(rt({ activity: 'idle', lastFinishedAt: 50, lastMessage: 'done' }), 'pitwall:sent')
+    expect(o.activity).toBe('working')
+    expect(displayStatus(o, 0)).toBe('working')
+    expect(r(rt({ activity: 'needs_input', needsInput: 'question' }), 'pitwall:sent').needsInput).toBeUndefined()
+    expect(r(o, 'Stop', { msg: 'answered' })).toMatchObject({ activity: 'idle', lastMessage: 'answered' })
+  })
+  test('pitwall:prompt-pending: a first prompt is coming, so SessionStart keeps the session working until it is answered', () => {
+    let o = r(r(initialRuntime, 'pitwall:launch', { mode: 'new' }), 'pitwall:prompt-pending')
+    expect(o.promptPending).toBe(true)
+    o = r(o, 'SessionStart', { src: 'startup' })
+    expect(o.activity).toBe('working')
+    expect(o.promptPending).toBe(true)
+    o = r(o, 'UserPromptSubmit')
+    expect(o.activity).toBe('working')
+    expect(o.promptPending).toBeUndefined()
+    expect(r(o, 'Stop', { msg: 'hi' }).activity).toBe('idle')
+    // Without the flag, SessionStart is idle as ever.
+    expect(r(r(initialRuntime, 'pitwall:launch', { mode: 'new' }), 'SessionStart', { src: 'startup' }).activity).toBe('idle')
+  })
+  test('pitwall:prompt-pending is dropped by Stop, SessionEnd, pitwall:exited and the next launch', () => {
+    const p = r(rt({ activity: 'starting' }), 'pitwall:prompt-pending')
+    expect(r(p, 'Stop').promptPending).toBeUndefined()
+    expect(r(p, 'SessionEnd', { reason: 'prompt_input_exit' }).promptPending).toBeUndefined()
+    expect(r(p, 'pitwall:exited', { code: 0 }).promptPending).toBeUndefined()
+    expect(r(p, 'pitwall:launch', { mode: 'resume' }).promptPending).toBeUndefined()
+    // After the exit, a relaunch's SessionStart is idle again.
+    expect(r(r(p, 'pitwall:exited', { code: 0 }), 'SessionStart', { src: 'resume' }).activity).toBe('idle')
+  })
   test('sid updates claudeSessionId', () => {
     expect(r(initialRuntime, 'PreToolUse', { sid: 'abc' }).claudeSessionId).toBe('abc')
     expect(r(rt({ claudeSessionId: 'old' }), 'PreToolUse').claudeSessionId).toBe('old')

@@ -1,12 +1,20 @@
 import { createConnection } from 'node:net'
 import { execFileSync } from 'node:child_process'
-import { mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
+import type { SessionBackend } from '../../src/main/backend'
 import { cliSocketPath, cliToken, loadCliKey } from '../../src/main/cli/auth'
 import { CliServer, type CliManager } from '../../src/main/cli/server'
-import type { AppSnapshot, DisplayStatus, NewSessionInput, SessionView, StartResult } from '../../src/shared/types'
+import { exec } from '../../src/main/exec'
+import { GitClient } from '../../src/main/git'
+import { appendEvent } from '../../src/main/hooks/events'
+import { eventsFile, resolvePaths, sessionDir, type AppPaths } from '../../src/main/paths'
+import { SessionManager } from '../../src/main/sessions/manager'
+import { KeyedMutex } from '../../src/main/sessions/mutex'
+import { Store } from '../../src/main/store'
+import type { AppSnapshot, DisplayStatus, HookEvent, NewSessionInput, Session, SessionView, StartResult } from '../../src/shared/types'
 
 const KEY = Buffer.alloc(32, 7)
 
@@ -24,9 +32,12 @@ class FakeManager implements CliManager {
   started: NewSessionInput[] = []
   startResult: StartResult | null = null
   sent: { id: string; text: string }[] = []
+  settings: { agentCli?: boolean } = {}
+  replies = new Map<string, string>()
   snapshot(): AppSnapshot {
-    return { sessions: this.sessions, archived: this.archived, projects: [], subProjects: [], settings: {} } as unknown as AppSnapshot
+    return { sessions: this.sessions, archived: this.archived, projects: [], subProjects: [], settings: this.settings } as unknown as AppSnapshot
   }
+  async lastReply(id: string): Promise<string | undefined> { return this.replies.get(id) }
   onSnapshot(cb: (s: AppSnapshot) => void): () => void {
     this.cbs.add(cb)
     return () => { this.cbs.delete(cb) }
@@ -222,6 +233,32 @@ describe('server', () => {
     expect(await call('me', 'wait', { id: 'kid' })).toEqual({ ok: true, status: 'read', lastMessage: 'done it' })
   })
 
+  test('status and wait give the whole reply when there is one; a reply cut at 300 characters says so with "…"', async () => {
+    await boot()
+    const cut = 'z'.repeat(300)
+    mgr.sessions = mgr.sessions.map((s) => (s.id === 'kid' ? { ...s, lastMessage: cut } : s))
+    expect((await call('me', 'status', { id: 'kid' })).lastMessage).toBe(cut + '…')
+    expect((await call('me', 'wait', { id: 'kid' })).lastMessage).toBe(cut + '…')
+    mgr.replies.set('kid', 'z'.repeat(5000))
+    expect((await call('me', 'status', { id: 'kid' })).lastMessage).toBe('z'.repeat(5000))
+    expect((await call('me', 'wait', { id: 'kid' })).lastMessage).toBe('z'.repeat(5000))
+  })
+
+  test("with the command off in Settings, new and send are refused; list, status and wait still answer", async () => {
+    await boot()
+    mgr.settings = { agentCli: false }
+    const off = { ok: false, error: "The pitwall command is off in Pitwall's Settings." }
+    expect(await call('me', 'new', { title: 'Helper', prompt: 'do it' })).toEqual(off)
+    expect(await call('me', 'send', { id: 'kid', text: 'hi' })).toEqual(off)
+    expect(mgr.started).toHaveLength(0)
+    expect(mgr.sent).toHaveLength(0)
+    expect(await call('me', 'list')).toMatchObject({ ok: true })
+    expect(await call('me', 'status', { id: 'kid' })).toMatchObject({ ok: true, status: 'read' })
+    expect(await call('me', 'wait', { id: 'kid' })).toMatchObject({ ok: true, status: 'read' })
+    mgr.settings = { agentCli: true }
+    expect(await call('me', 'send', { id: 'kid', text: 'hi' })).toEqual({ ok: true })
+  })
+
   test('wait resolves when a snapshot shows the target finished, and unsubscribes', async () => {
     await boot()
     mgr.setStatus('kid', 'working')
@@ -287,5 +324,81 @@ describe('server', () => {
     await boot()
     const r = await raw(JSON.stringify({ v: 1, session: 'me', token: cliToken(KEY, 'me'), cmd: 'list', args: {} }) + '\n' + 'junk\n')
     expect(r).toMatchObject({ ok: true })
+  })
+})
+
+/** The same server over a real SessionManager: what `wait` sees comes from the session's events file, as in the app. */
+describe('with the real session manager', () => {
+  let root: string
+  let paths: AppPaths
+  let real: SessionManager
+  const pasted: string[] = []
+  const backend = {
+    hasSession: async () => true,
+    pasteText: async (_n: string, x: string) => { pasted.push(x) },
+    sendKeys: async () => {}
+  } as unknown as SessionBackend
+  const ev = (id: string, e: string, x: Partial<HookEvent> = {}) => appendEvent(eventsFile(paths, id), { c: id, t: Date.now(), e, ...x })
+  const session = (id: string, o: Partial<Session> = {}): Session => ({
+    id, subProjectId: 'sp_1', title: `Title ${id}`, slug: id, claudeSessionId: `c-${id}`, cwd: root, branchCreatedByPitwall: false,
+    createdAt: 0, lastViewedAt: 0, ...o
+  })
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), 'pwcli-real-'))
+    paths = resolvePaths({ PITWALL_DATA_DIR: join(root, 'data'), PITWALL_WORKTREES_DIR: join(root, 'wt'), PITWALL_SSH_DIR: join(root, 'ssh') }, root)
+    const store = await Store.open(paths.stateFile)
+    await store.update((d) => {
+      d.projects.push({ id: 'p_1', name: 'P', createdAt: 0, extraEnv: [], identity: { sshKeyPath: '', ghAccount: '', gitName: 'J', gitEmail: 'j@x.io' } })
+      d.subProjects.push({ id: 'sp_1', projectId: 'p_1', name: 'F', kind: 'folder', path: root, createdAt: 0 })
+      d.sessions.push(session('me'), session('kid', { createdBy: 'me' }))
+    })
+    for (const id of ['me', 'kid']) {
+      await mkdir(sessionDir(paths, id), { recursive: true })
+      await ev(id, 'SessionStart', { src: 'startup' })
+    }
+    await ev('kid', 'UserPromptSubmit')
+    await ev('kid', 'Stop', { msg: 'first reply' })
+    real = new SessionManager({
+      store, paths, git: new GitClient(exec, {}), backend, exec, env: {}, home: root, mutex: new KeyedMutex(),
+      notifier: { notify: () => {}, setBadge: () => {} }
+    })
+    await real.init()
+    server = new CliServer({ key: KEY, socketPath: sock, manager: real })
+    await server.start()
+  })
+  afterEach(async () => {
+    real.dispose()
+    await rm(root, { recursive: true, force: true })
+  })
+
+  test('wait straight after send waits for the reply to that message, not the one before', async () => {
+    expect(await call('me', 'wait', { id: 'kid' })).toMatchObject({ ok: true, status: 'unread', lastMessage: 'first reply' })
+    expect(await call('me', 'send', { id: 'kid', text: 'and now this' })).toEqual({ ok: true })
+    expect(pasted).toContain('and now this')
+    let answer: unknown = null
+    const p = call('me', 'wait', { id: 'kid' }).then((r) => { answer = r; return r })
+    await new Promise((r) => setTimeout(r, 1200)) // the tailer has had time to read anything there is
+    expect(answer).toBeNull()
+    await ev('kid', 'UserPromptSubmit')
+    await ev('kid', 'Stop', { msg: 'second reply' })
+    expect(await p).toMatchObject({ ok: true, status: 'unread', lastMessage: 'second reply' })
+  })
+
+  test('wait gives the whole reply the hook kept in last-reply.txt; an older file is never taken for a newer turn', async () => {
+    const long = 'Here is the plan. '.repeat(400) // 7200 characters: the event keeps only the first 300
+    expect(await call('me', 'send', { id: 'kid', text: 'plan it' })).toEqual({ ok: true })
+    await ev('kid', 'UserPromptSubmit')
+    await new Promise((r) => setTimeout(r, 20))
+    await writeFile(join(sessionDir(paths, 'kid'), 'last-reply.txt'), long)
+    await ev('kid', 'Stop', { msg: long.slice(0, 300) })
+    expect((await call('me', 'wait', { id: 'kid' })).lastMessage).toBe(long)
+    expect((await call('me', 'status', { id: 'kid' })).lastMessage).toBe(long)
+    // The next turn's reply has no file (yet): its event's text, marked as cut.
+    expect(await call('me', 'send', { id: 'kid', text: 'more' })).toEqual({ ok: true })
+    await new Promise((r) => setTimeout(r, 20))
+    await ev('kid', 'UserPromptSubmit')
+    await ev('kid', 'Stop', { msg: 'y'.repeat(300) })
+    expect((await call('me', 'wait', { id: 'kid' })).lastMessage).toBe('y'.repeat(300) + '…')
   })
 })

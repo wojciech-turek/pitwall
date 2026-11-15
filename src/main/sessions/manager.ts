@@ -1,6 +1,7 @@
 import { accountKey } from '../accounts'
 import { writeFileAtomic } from '../atomic'
-import { join } from 'node:path'
+import { readFile, stat } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { countStatuses, displayStatus, initialRuntime, reduceRuntime } from '@shared/runtime'
 import type {
   AppSnapshot, ConversationList, ConversationMatch, DisplayStatus, HookEvent, NewSessionDefaults, NewSessionInput, Session,
@@ -253,10 +254,33 @@ export class SessionManager {
     }).catch(() => {}).finally(() => { this.clearing.delete(sessionId) })
   }
 
-  /** Types `text` into the session's Claude and presses Enter (paste first, so newlines don't submit early). */
+  /**
+   * Types `text` into the session's Claude and presses Enter (paste first, so newlines don't submit early). Logs
+   * pitwall:sent first and reads it back, so the session is working before this returns: a `wait` straight after
+   * never mistakes the previous reply for the answer.
+   */
   async sendText(id: string, text: string): Promise<void> {
+    await appendEvent(eventsFile(this.deps.paths, id), { c: id, t: this.now(), e: 'pitwall:sent' })
+    await this.tracked.get(id)?.tailer.sync()
     await this.deps.backend.pasteText(claudeTmuxName(id), text)
     await this.deps.backend.sendKeys(claudeTmuxName(id), ['Enter'])
+  }
+
+  /**
+   * Claude's whole last reply, which the hook keeps in last-reply.txt beside the events (whose Stop has only its
+   * first 300 characters), when it is newer than the latest prompt: an older one answers an earlier turn.
+   */
+  async lastReply(id: string): Promise<string | undefined> {
+    const file = join(dirname(eventsFile(this.deps.paths, id)), 'last-reply.txt')
+    try {
+      const { mtimeMs } = await stat(file)
+      const promptAt = this.tracked.get(id)?.rt.lastPromptAt
+      if (promptAt !== undefined && mtimeMs <= promptAt) return undefined
+      // The hook caps it at 64 KB, which can cut a character in two.
+      return (await readFile(file, 'utf8')).replace(/\uFFFD$/, '')
+    } catch {
+      return undefined
+    }
   }
 
   userInput(sessionId: string, kind: TermKind, data: string): void {

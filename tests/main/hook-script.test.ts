@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest'
-import { mkdtemp, readFile, mkdir } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { exec } from '../../src/main/exec'
 import { parseEventLine } from '../../src/main/hooks/events'
 
@@ -43,6 +43,24 @@ describe('pitwall-hook', () => {
     await run(f, JSON.stringify({ hook_event_name: 'Stop', session_id: 'x', last_assistant_message: 'a'.repeat(1000) }))
     const ev = parseEventLine((await lines(f))[0])
     expect(ev!.msg).toHaveLength(300)
+  })
+
+  test('Stop keeps the whole reply in last-reply.txt beside the events, up to 64 KB; SubagentStop and others never touch it', async () => {
+    const f = await eventsFile()
+    const reply = join(dirname(f), 'last-reply.txt')
+    const long = 'Zażółć 🧾 line\n'.repeat(400)
+    await run(f, JSON.stringify({ hook_event_name: 'Stop', session_id: 'x', last_assistant_message: long }))
+    expect(await readFile(reply, 'utf8')).toBe(long)
+    expect([...parseEventLine((await lines(f))[0])!.msg!]).toHaveLength(300)
+    await run(f, JSON.stringify({ hook_event_name: 'SubagentStop', session_id: 'x', agent_id: 'a', last_assistant_message: 'helper words' }))
+    await run(f, JSON.stringify({ hook_event_name: 'StopFailure', session_id: 'x', last_assistant_message: 'failed words' }))
+    await run(f, JSON.stringify({ hook_event_name: 'Notification', session_id: 'x', message: 'note words' }))
+    await run(f, JSON.stringify({ hook_event_name: 'Stop', session_id: 'x' })) // no reply: the old file stays
+    expect(await readFile(reply, 'utf8')).toBe(long)
+    await run(f, JSON.stringify({ hook_event_name: 'Stop', session_id: 'x', last_assistant_message: 'a'.repeat(100_000) }))
+    expect(await readFile(reply, 'utf8')).toBe('a'.repeat(65536))
+    expect((await readdir(dirname(f))).sort()).toEqual(['events.jsonl', 'last-reply.txt']) // no temp file left
+    expect(await lines(f)).toHaveLength(6)
   })
 
   test('subagent events carry the agent id and type', async () => {

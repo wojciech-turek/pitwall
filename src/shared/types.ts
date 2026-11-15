@@ -94,6 +94,10 @@ export interface SessionRuntime {
   subagents?: SubagentRun[]
   /** Agent-tool descriptions waiting for their SubagentStart, oldest first, at most 20. */
   agentDescs?: string[]
+  /** The launcher passed Claude a first prompt that it hasn't submitted yet (pitwall:prompt-pending). */
+  promptPending?: boolean
+  /** When Claude last took a prompt (UserPromptSubmit). */
+  lastPromptAt?: number
 }
 export type DisplayStatus = 'starting' | 'working' | 'needs_you' | 'unread' | 'read' | 'exited'
 export interface ChangedFile { path: string; status: 'M' | 'A' | 'D' | '?'; additions: number; deletions: number; binary: boolean }

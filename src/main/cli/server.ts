@@ -7,6 +7,8 @@ import { cliToken } from './auth'
 
 export type CliManager = Pick<SessionManager, 'snapshot' | 'onSnapshot' | 'start'> & {
   sendText(id: string, text: string): Promise<void>
+  /** The whole of the session's last reply, when it answers the latest prompt. */
+  lastReply(id: string): Promise<string | undefined>
 }
 
 type Reply = { ok: true; [k: string]: unknown } | { ok: false; error: string }
@@ -15,6 +17,9 @@ const MAX_REQUEST = 1024 * 1024
 const DEFAULT_WAIT_SEC = 1800
 const MAX_WAIT_SEC = 7200
 const DONE: ReadonlySet<DisplayStatus> = new Set(['unread', 'read', 'needs_you', 'exited'])
+/** How much of a reply the hook keeps in the event itself. */
+const EVENT_MSG_CHARS = 300
+const OFF = "The pitwall command is off in Pitwall's Settings."
 
 const fail = (error: string): Reply => ({ ok: false, error })
 const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined)
@@ -119,6 +124,8 @@ export class CliServer {
     if (!caller) return reply(fail('Not a Pitwall session.'))
     const args = (req.args && typeof req.args === 'object' ? req.args : {}) as Record<string, unknown>
     const m = this.deps.manager
+    // Off in Settings: nothing new is started or typed; reading what is there is still fine.
+    if ((req.cmd === 'new' || req.cmd === 'send') && m.snapshot().settings.agentCli === false) return reply(fail(OFF))
     switch (req.cmd) {
       case 'new': return reply(await this.newSession(caller, args))
       case 'list': {
@@ -129,7 +136,7 @@ export class CliServer {
       case 'status': {
         const t = this.target(caller, args)
         if (typeof t === 'string') return reply(fail(t))
-        return reply({ ok: true, id: t.id, title: t.title, status: t.status, lastMessage: t.lastMessage })
+        return reply({ ok: true, id: t.id, title: t.title, status: t.status, lastMessage: await this.replyOf(t) })
       }
       case 'send': {
         const id = str(args.id)
@@ -144,6 +151,14 @@ export class CliServer {
       case 'wait': return this.wait(caller, args, reply, onCleanup, c)
       default: return reply(fail(`Unknown command ${String(req.cmd)}.`))
     }
+  }
+
+  /** The session's whole last reply if the hook kept one for this turn; else the event's text, marked when cut. */
+  private async replyOf(s: SessionView): Promise<string | undefined> {
+    const full = await this.deps.manager.lastReply(s.id).catch(() => undefined)
+    if (full !== undefined) return full
+    const m = s.lastMessage
+    return m !== undefined && [...m].length >= EVENT_MSG_CHARS ? m + '…' : m
   }
 
   /** The target of status/wait: in the caller's folder, or the error text. */
@@ -179,12 +194,12 @@ export class CliServer {
     let unsub: (() => void) | null = null
     let timer: NodeJS.Timeout | null = null
     let done = false
-    const finish = (r: Reply | null): void => {
+    const finish = (r: Reply | Promise<Reply> | null): void => {
       if (done) return
       done = true
       unsub?.()
       if (timer) clearTimeout(timer)
-      if (r && !c.destroyed) reply(r)
+      if (r) void Promise.resolve(r).then((x) => { if (!c.destroyed) reply(x) })
     }
     const check = (snap: AppSnapshot): boolean => {
       const s = snap.sessions.find((x) => x.id === id)
@@ -195,7 +210,8 @@ export class CliServer {
       }
       last = s
       if (DONE.has(s.status)) {
-        finish({ ok: true, status: s.status, lastMessage: s.lastMessage })
+        const status = s.status
+        finish(this.replyOf(s).then((lastMessage): Reply => ({ ok: true, status, lastMessage })))
         return true
       }
       return false

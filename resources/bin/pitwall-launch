@@ -62,6 +62,8 @@ launch_new() {
   if [ -e "$dir/initial-prompt.txt" ]; then
     first_prompt=$(cat "$dir/initial-prompt.txt")
     mv "$dir/initial-prompt.txt" "$dir/initial-prompt.sent"
+    # The app keeps the session working through SessionStart, until this prompt's UserPromptSubmit.
+    [ -n "$first_prompt" ] && log_event "{\"c\":\"$PITWALL_SESSION_ID\",\"t\":$(now),\"e\":\"pitwall:prompt-pending\"}"
   fi
   start_claude --session-id "$id" --settings "$dir/hooks.json" --name "$PITWALL_TITLE"
   rc=$?

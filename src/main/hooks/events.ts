@@ -75,14 +75,19 @@ export class EventTailer {
     })
   }
 
-  private poll(): void {
-    void this.serialize(async () => {
+  /** Delivers whatever has been appended so far; resolves once it has been handled. */
+  sync(): Promise<void> {
+    return this.serialize(async () => {
       if (this.stopped) return
       for (const ev of await this.readNew()) {
         if (this.stopped) return
         this.onEvent(ev)
       }
-    }).catch(() => undefined)
+    })
+  }
+
+  private poll(): void {
+    void this.sync().catch(() => undefined)
   }
 
   start(): void {

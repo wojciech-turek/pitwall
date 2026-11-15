@@ -140,12 +140,20 @@ describe('pitwall-launch', () => {
       expect((await logLines())[0]).toBe(`--session-id ${ID} --settings ${sd}/hooks.json --name ${TITLE} ${flags} -- Add a README line, don't $HOME it`)
       expect(await stat(join(sd, 'initial-prompt.sent')).then(() => true, () => false)).toBe(true)
       expect(await stat(join(sd, 'initial-prompt.txt')).then(() => true, () => false)).toBe(false)
+      // The app hears that a prompt is coming, right after the launch and before Claude's SessionStart.
+      await waitFor(async () => (await events()).some((e) => e.e === 'SessionStart'), 8000, 'SessionStart')
+      const names = (await events()).map((e) => e.e)
+      expect(names.filter((n) => n === 'pitwall:prompt-pending')).toHaveLength(1)
+      expect(names.indexOf('pitwall:prompt-pending')).toBe(names.indexOf('pitwall:launch') + 1)
+      expect(names.indexOf('pitwall:prompt-pending')).toBeLessThan(names.indexOf('SessionStart'))
       await t.tmux.sendKeys('pw-l', ['exit', 'Enter'])
       await waitCapture('Press Enter to resume')
       await t.tmux.sendKeys('pw-l', ['Enter'])
       await waitFor(async () => (await logLines()).some((l) => l.includes('--resume')), 8000, 'resume argv')
       const resume = (await logLines()).find((l) => l.includes('--resume'))!
       expect(resume).toBe(`--resume ${ID} --settings ${sd}/hooks.json ${flags}`)
+      await waitFor(async () => (await events()).filter((e) => e.e === 'SessionStart').length === 2, 8000, 'second SessionStart')
+      expect((await events()).filter((e) => e.e === 'pitwall:prompt-pending')).toHaveLength(1) // the relaunch has no prompt
     })
 
     test('a prompt starting with a dash comes after "--", so Claude never reads it as an option', async () => {
@@ -170,6 +178,8 @@ describe('pitwall-launch', () => {
       await start()
       await waitCapture('STUB CLAUDE READY')
       expect((await logLines())[0]).toBe(`--session-id ${ID} --settings ${sd}/hooks.json --name ${TITLE}`)
+      await waitFor(async () => (await events()).some((e) => e.e === 'SessionStart'), 8000, 'SessionStart')
+      expect((await events()).map((e) => e.e)).not.toContain('pitwall:prompt-pending')
     })
 
     test('a continued session: snapshot off, and the note file (continue note, then agent note)', async () => {
