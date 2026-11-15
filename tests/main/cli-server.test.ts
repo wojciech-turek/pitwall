@@ -1,5 +1,6 @@
 import { createConnection } from 'node:net'
-import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
+import { execFileSync } from 'node:child_process'
+import { mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
@@ -113,11 +114,30 @@ describe('auth', () => {
 })
 
 describe('server', () => {
-  test('a stale socket file does not stop start, and the socket is 0600', async () => {
-    await writeFile(sock, 'stale')
+  test('a stale socket is replaced, and the new socket is 0600', async () => {
+    // A process that listens and dies without closing leaves the socket file behind, like a crash.
+    execFileSync(process.execPath, ['-e', `require('net').createServer().listen(${JSON.stringify(sock)}, () => process.exit(0))`])
+    expect((await stat(sock)).isSocket()).toBe(true)
     await boot()
     if (process.platform !== 'win32') expect((await stat(sock)).mode & 0o777).toBe(0o600)
     expect(await call('me', 'list')).toMatchObject({ ok: true })
+  })
+
+  test('a regular file in the way survives and start rejects', async () => {
+    await writeFile(sock, 'precious')
+    server = new CliServer({ key: KEY, socketPath: sock, manager: mgr })
+    await expect(server.start()).rejects.toThrow(`Something that isn't a socket is in the way at ${sock}.`)
+    expect(await readFile(sock, 'utf8')).toBe('precious')
+  })
+
+  test('a symlink in the way is left alone', async () => {
+    const target = join(dir, 'target.txt')
+    await writeFile(target, 'keep')
+    await symlink(target, sock)
+    server = new CliServer({ key: KEY, socketPath: sock, manager: mgr })
+    await expect(server.start()).rejects.toThrow(/isn't a socket/)
+    expect((await stat(target)).isFile()).toBe(true)
+    expect(await readFile(target, 'utf8')).toBe('keep')
   })
 
   test('bad, wrong-length and missing tokens, and unknown or archived callers', async () => {

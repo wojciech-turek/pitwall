@@ -1,5 +1,5 @@
 import { randomUUID, timingSafeEqual } from 'node:crypto'
-import { chmod, rm } from 'node:fs/promises'
+import { chmod, lstat, rm } from 'node:fs/promises'
 import { createServer, type Server, type Socket } from 'node:net'
 import type { AppSnapshot, DisplayStatus, SessionView } from '@shared/types'
 import type { SessionManager } from '../sessions/manager'
@@ -34,7 +34,15 @@ export class CliServer {
   }
 
   async start(): Promise<void> {
-    await rm(this.deps.socketPath, { force: true })
+    // Clear only an old socket (left by a crash); never delete some other file that happens to be there.
+    const old = await lstat(this.deps.socketPath).catch((e: NodeJS.ErrnoException) => {
+      if (e.code === 'ENOENT') return null
+      throw e
+    })
+    if (old) {
+      if (!old.isSocket()) throw new Error(`Something that isn't a socket is in the way at ${this.deps.socketPath}.`)
+      await rm(this.deps.socketPath, { force: true })
+    }
     const server = createServer((c) => this.connection(c))
     this.server = server
     await new Promise<void>((resolve, reject) => {
@@ -53,7 +61,8 @@ export class CliServer {
     this.server = null
     for (const c of this.sockets) c.destroy()
     this.sockets.clear()
-    if (server) await new Promise<void>((resolve) => server.close(() => resolve()))
+    if (!server) return // never started: the path may hold someone else's file
+    await new Promise<void>((resolve) => server.close(() => resolve()))
     await rm(this.deps.socketPath, { force: true }).catch(() => {})
   }
 
