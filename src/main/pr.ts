@@ -109,8 +109,14 @@ const same = (a: PrInfo | undefined, b: PrInfo): boolean =>
   a.draft === b.draft && a.openThreads === b.openThreads &&
   (a.failing ?? []).map((f) => f.name).join('\n') === (b.failing ?? []).map((f) => f.name).join('\n')
 
+/** A PR's review threads are fetched at most this often by the regular poll, and after a Stop only past STOP_THREADS_MS. */
+const THREADS_EVERY_MS = 5 * 60_000
+const STOP_THREADS_MS = 60_000
+
 export class PrPoller {
   private tokens = new Map<string, { token: string; at: number }>()
+  /** By PR url: when its review threads were last fetched, and the count then (kept until the next fetch). */
+  private threads = new Map<string, { at: number; count?: number }>()
   private timers = new Map<string, NodeJS.Timeout>()
   private inFlight = new Set<string>()
   private interval?: NodeJS.Timeout
@@ -118,13 +124,16 @@ export class PrPoller {
   private stopped = true
   private readonly intervalMs: number
   private readonly debounceMs: number
+  private readonly now: () => number
 
   constructor(private deps: {
     store: Store; manager: Pick<SessionManager, 'onSessionEvent' | 'snapshot'>; git: Pick<GitClient, 'hasRemote'>; exec: Exec
     env: Record<string, string>; paths: Pick<AppPaths, 'ghBin'>; notifier: Notifier; intervalMs?: number; debounceMs?: number
+    now?: () => number
   }) {
     this.intervalMs = deps.intervalMs ?? 60_000
     this.debounceMs = deps.debounceMs ?? 5000
+    this.now = deps.now ?? Date.now
   }
 
   start(): void {
@@ -151,14 +160,14 @@ export class PrPoller {
     if (prev) clearTimeout(prev)
     this.timers.set(sessionId, setTimeout(() => {
       this.timers.delete(sessionId)
-      void this.pollOne(sessionId)
+      void this.pollOne(sessionId, STOP_THREADS_MS)
     }, this.debounceMs))
   }
 
   private async pollAll(): Promise<void> {
     for (const s of [...this.deps.store.state.sessions]) {
       if (this.stopped) return
-      if (s.archivedAt === undefined) await this.pollOne(s.id)
+      if (s.archivedAt === undefined) await this.pollOne(s.id, THREADS_EVERY_MS)
     }
   }
 
@@ -171,11 +180,12 @@ export class PrPoller {
     return token
   }
 
-  private async pollOne(sessionId: string): Promise<void> {
+  /** `threadsAfterMs`: fetch the PR's review threads only once the last fetch is at least this old. */
+  private async pollOne(sessionId: string, threadsAfterMs: number): Promise<void> {
     if (this.inFlight.has(sessionId)) return
     this.inFlight.add(sessionId)
     try {
-      await this.check(sessionId)
+      await this.check(sessionId, threadsAfterMs)
     } catch {
       // A failing lookup for one session must not affect the others; it is retried on the next poll.
     } finally {
@@ -211,7 +221,7 @@ export class PrPoller {
     return { ok: true, dir: t.dir, token, ...repo, pr }
   }
 
-  private async check(sessionId: string): Promise<void> {
+  private async check(sessionId: string, threadsAfterMs: number): Promise<void> {
     const { store, git, notifier, paths, exec, env } = this.deps
     const t = this.target(sessionId)
     if (!t?.account) return
@@ -234,9 +244,15 @@ export class PrPoller {
       return
     }
     if (pr.state === 'OPEN') {
-      const repo = parsePrUrl(pr.url)
-      const n = repo ? await fetchOpenThreads({ ghBin: paths.ghBin, cwd: dir, token, ...repo, number: pr.number, exec, env }) : null
-      const count = n ?? before?.openThreads
+      const last = this.threads.get(pr.url)
+      let count = last?.count ?? before?.openThreads
+      if (!last || this.now() - last.at >= threadsAfterMs) {
+        const repo = parsePrUrl(pr.url)
+        const entry: { at: number; count?: number } = { at: this.now(), count }
+        this.threads.set(pr.url, entry) // set first: a slow or failed fetch still counts, so GitHub isn't asked again at once
+        const n = repo ? await fetchOpenThreads({ ghBin: paths.ghBin, cwd: dir, token, ...repo, number: pr.number, exec, env }) : null
+        if (n !== null) count = entry.count = n
+      }
       if (count !== undefined) pr.openThreads = count
       if (this.stopped) return
     }

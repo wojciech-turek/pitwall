@@ -126,7 +126,7 @@ describe('fetchOpenThreads', () => {
   })
 })
 
-function setup(o: { remote?: boolean; ghAccount?: string; pr?: Session['pr']; archived?: boolean; muted?: boolean } = {}) {
+function setup(o: { remote?: boolean; ghAccount?: string; pr?: Session['pr']; archived?: boolean; muted?: boolean; now?: () => number } = {}) {
   const calls: { args: string[]; env?: Record<string, string> }[] = []
   let json: unknown[] = []
   let ghFails = false
@@ -169,7 +169,7 @@ function setup(o: { remote?: boolean; ghAccount?: string; pr?: Session['pr']; ar
   const notifier = { notify: (n: { sessionId: string; title: string; body: string }) => { notes.push(n) }, setBadge: () => {} }
   const poller = new PrPoller({
     store, manager, git, exec: fakeExec, env: { PATH: '/x' }, paths: { ghBin: 'gh' } as AppPaths,
-    notifier, intervalMs: 60_000, debounceMs: 20
+    notifier, intervalMs: 60_000, debounceMs: 20, now: o.now
   })
   const emit = (id: string, e: string) => cbs.forEach((cb) => cb(id, { c: id, t: 1, e }))
   return { poller, calls, notes, state, emit, setJson: (j: unknown[]) => { json = j }, setGhFails: (f: boolean) => { ghFails = f }, setThreads: (n: number | null) => { threads = n } }
@@ -341,6 +341,47 @@ describe('PrPoller', () => {
     await waitFor(async () => m.state.sessions[0].pr?.checks === 'failing')
     m.poller.stop()
     expect(m.notes).toEqual([])
+  })
+
+  test('review threads: one fetch per PR every 5 minutes at most; a Stop fetches only if the last was over a minute ago; the count stays meanwhile', async () => {
+    let now = 1_000_000
+    const url = 'https://github.com/o/r/pull/9'
+    const json = [{ number: 9, url, title: 'X', state: 'OPEN', updatedAt: '2026-10-30T10:00:00Z', statusCheckRollup: [] }]
+    const t = setup({ now: () => now })
+    const api = () => t.calls.filter((c) => c.args[0] === 'api').length
+    const prCount = () => t.calls.filter((c) => c.args[0] === 'pr').length
+    t.setJson(json)
+    t.setThreads(2)
+    t.poller.start()
+    await waitFor(async () => t.state.sessions.every((s) => s.pr?.openThreads === 2))
+    expect(api()).toBe(1) // two sessions on one PR: one fetch
+    // A Stop 30 s later: the PR is looked up again, its threads aren't; the count stays.
+    t.setThreads(4)
+    now += 30_000
+    let lookups = prCount()
+    t.emit('s1', 'Stop')
+    await waitFor(async () => prCount() === lookups + 1)
+    await new Promise((r) => setTimeout(r, 50))
+    expect(api()).toBe(1)
+    expect(t.state.sessions[0].pr?.openThreads).toBe(2)
+    // A Stop over a minute after the fetch: fetched.
+    now += 31_000
+    t.emit('s1', 'Stop')
+    await waitFor(async () => t.state.sessions[0].pr?.openThreads === 4)
+    expect(api()).toBe(2)
+    // The regular poll fetches only once 5 minutes have passed since then.
+    now += 4 * 60_000
+    lookups = prCount()
+    await t.poller['pollAll']()
+    expect(prCount()).toBe(lookups + 2)
+    expect(api()).toBe(2)
+    expect(t.state.sessions.map((s) => s.pr?.openThreads)).toEqual([4, 4])
+    now += 60_000
+    t.setThreads(5)
+    await t.poller['pollAll']()
+    expect(api()).toBe(3)
+    expect(t.state.sessions.map((s) => s.pr?.openThreads)).toEqual([5, 5])
+    t.poller.stop()
   })
 
   test('open review threads are stored, new ones notify, and a failed lookup keeps the old count', async () => {
