@@ -1,7 +1,7 @@
 import { tmpdir } from 'node:os'
 import { describe, expect, test, vi } from 'vitest'
 import type { Exec } from '../../src/main/exec'
-import { parsePsUsage, parseSwapUsed, pressureFrom, SystemMonitor, treeStats } from '../../src/main/system-monitor'
+import { childrenOf, parsePsUsage, parseSwapUsed, pressureFrom, SystemMonitor, treeStats } from '../../src/main/system-monitor'
 import { sessionIdFromTmuxName } from '../../src/main/tmux'
 
 const PS = `
@@ -28,6 +28,15 @@ describe('treeStats', () => {
     // a root that is also a descendant of another root is not counted twice
     expect(treeStats(rows, [100, 101]).procs).toBe(3)
     expect(treeStats(rows, [999])).toEqual({ cpu: 0, rssBytes: 0, procs: 0 })
+  })
+  test('one parent-to-children map per sample, shared by every session', () => {
+    const rows = parsePsUsage(PS)
+    const kids = childrenOf(rows)
+    expect(Object.fromEntries(kids)).toEqual({ 0: [1], 1: [100, 200], 100: [101], 101: [102] })
+    expect(treeStats(rows, [100], kids)).toEqual(treeStats(rows, [100]))
+    expect(treeStats(rows, [200], kids)).toEqual({ cpu: 50, rssBytes: 9999 * 1024, procs: 1 })
+    // The map given is the one walked.
+    expect(treeStats(rows, [100], new Map()).procs).toBe(1)
   })
 })
 

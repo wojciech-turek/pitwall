@@ -17,10 +17,19 @@ export function parsePsUsage(text: string): Map<number, PsRow> {
   return rows
 }
 
-/** The roots and everything below them, each pid counted once. Roots missing from `rows` count for nothing. */
-export function treeStats(rows: Map<number, PsRow>, roots: number[]): ProcStats {
+/** Each process's children, by parent pid: built once per sample and shared by every session's treeStats. */
+export function childrenOf(rows: Map<number, PsRow>): Map<number, number[]> {
   const kids = new Map<number, number[]>()
-  for (const [pid, r] of rows) kids.set(r.ppid, [...(kids.get(r.ppid) ?? []), pid])
+  for (const [pid, r] of rows) {
+    const list = kids.get(r.ppid)
+    if (list) list.push(pid)
+    else kids.set(r.ppid, [pid])
+  }
+  return kids
+}
+
+/** The roots and everything below them, each pid counted once. Roots missing from `rows` count for nothing. */
+export function treeStats(rows: Map<number, PsRow>, roots: number[], kids: Map<number, number[]> = childrenOf(rows)): ProcStats {
   const seen = new Set<number>()
   const stack = roots.filter((p) => rows.has(p))
   const out: ProcStats = { cpu: 0, rssBytes: 0, procs: 0 }
@@ -139,12 +148,16 @@ export class SystemMonitor {
         if (!s || !live.has(s.id)) continue
         // Only a pane whose parent is the tmux server: a stale pid that was reused by something else isn't ours.
         const own = pids.filter((p) => rows.get(p)?.ppid === panes.serverPid)
-        if (own.length) roots.set(s.id, [...(roots.get(s.id) ?? []), ...own])
+        if (!own.length) continue
+        const list = roots.get(s.id)
+        if (list) list.push(...own)
+        else roots.set(s.id, own)
       }
     }
     const sessions: Record<string, ProcStats> = {}
+    const kids = childrenOf(rows)
     for (const [id, pids] of roots) {
-      const st = treeStats(rows, pids)
+      const st = treeStats(rows, pids, kids)
       sessions[id] = sessions[id] ? sumStats(sessions[id], st) : st
     }
     let pitwall: ProcStats = { cpu: 0, rssBytes: 0, procs: 0 }
