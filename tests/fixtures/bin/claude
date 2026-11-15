@@ -18,7 +18,7 @@ fi
 settings="" id="" note="" prev="" prompt="" dd=""
 for a in "$@"; do
   # A positional prompt is what follows `--`; Claude takes it as the first typed line.
-  if [ -n "$dd" ]; then prompt="$a"; elif [ "$a" = "--" ]; then dd=1; fi
+  if [ -n "$dd" ]; then [ -z "$prompt" ] && prompt="$a"; elif [ "$a" = "--" ]; then dd=1; fi
   case "$prev" in
     --settings) settings="$a" ;;
     --session-id|--resume) id="$a" ;;

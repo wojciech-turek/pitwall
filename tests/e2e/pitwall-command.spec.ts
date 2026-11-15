@@ -19,19 +19,8 @@ test.afterAll(async () => {
 const shellText = (id: string): Promise<string> =>
   tmux(e.socket, 'capture-pane', '-p', '-J', '-t', `=pw-${id}-sh:`).catch(() => '')
 
-/** Waits until the Shell prints nothing new for a moment: its prompt is up. */
-async function settled(id: string): Promise<void> {
-  let last = ''
-  let since = Date.now()
-  await waitFor(async () => {
-    const now = await shellText(id)
-    if (now !== last || !now.trim()) { last = now; since = Date.now(); return false }
-    return Date.now() - since > 1500
-  }, 20_000, 'shell prompt')
-}
-
 test('a session starts a helper with `pitwall new`; it hangs under it and its first prompt reaches Claude', async () => {
-  ;({ app, page } = await launchApp(e.env))
+  ;({ app, page } = await launchApp({ ...e.env, SHELL: '/bin/sh' })) // a plain sh, never the developer's own shell setup
   await page.getByTestId('create-first-project').click()
   await page.getByTestId('project-name-input').fill('Acme')
   await page.getByTestId('git-name-input').fill('Jane Doe')
@@ -48,13 +37,7 @@ test('a session starts a helper with `pitwall new`; it hangs under it and its fi
   await waitFor(async () => (await paneText(e, aId)).includes('STUB CLAUDE READY'), 15_000, 'ready')
 
   await page.getByTestId('tab-shell').click()
-  await settled(aId)
-  // A login shell on a developer's machine may ask something first (oh-my-zsh offers to update): decline it.
-  if ((await shellText(aId)).includes('[Y/n]')) {
-    await page.keyboard.type('n')
-    await page.keyboard.press('Enter')
-    await settled(aId)
-  }
+  await waitFor(async () => /\$ $/.test((await shellText(aId)).trimEnd() + ' '), 20_000, 'sh prompt')
   await page.keyboard.type('pitwall new "Child" --prompt hello')
   await page.keyboard.press('Enter')
 
