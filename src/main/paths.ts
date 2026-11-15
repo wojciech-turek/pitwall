@@ -6,6 +6,8 @@ export interface AppPaths {
   stateFile: string
   /** Last known Claude usage, shown again after a restart. */
   usageFile: string
+  /** Where the folders of Claude accounts added in Pitwall live (one each). */
+  claudeAccountsDir: string
   /** The last update check, so a relaunch doesn't ask GitHub again within a day. */
   updatesFile: string
   sessionsDir: string
@@ -45,6 +47,7 @@ export function resolvePaths(
     dataDir,
     stateFile: join(dataDir, 'state.json'),
     usageFile: join(dataDir, 'usage.json'),
+    claudeAccountsDir: join(dataDir, 'claude-accounts'),
     updatesFile: join(dataDir, 'updates.json'),
     sessionsDir: join(dataDir, 'sessions'),
     binDir: join(dataDir, 'bin'),

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, test } from 'vitest'
 import {
-  accountKey, accountLabel, accountMissing, defaultAccountDir, isPinned, normalizeDir, sessionAccountId, sessionConfigDir,
+  accountIdentity, accountKey, accountLabel, accountLabels, accountMissing, sameAccount, defaultAccountDir, isPinned, normalizeDir, sessionAccountId, sessionConfigDir,
   DEFAULT_ACCOUNT_ID, type AccountCtx
 } from '../../src/main/accounts'
 import { DEFAULT_SETTINGS, type AppSettings, type Project } from '@shared/types'
@@ -163,5 +163,45 @@ describe('accountLabel', () => {
     const home = await tmpHome()
     const other = await tmpHome()
     expect(await accountLabel(other, home)).toBe(other)
+  })
+})
+
+describe('who an account is', () => {
+  const signIn = async (dir: string, o: { email: string; org?: string; orgName?: string }) => {
+    await mkdir(dir, { recursive: true })
+    await writeFile(join(dir, '.claude.json'), JSON.stringify({
+      oauthAccount: { emailAddress: o.email, ...(o.org ? { organizationUuid: o.org } : {}), ...(o.orgName ? { organizationName: o.orgName } : {}) }
+    }))
+  }
+
+  test('the email and the organisation, from the profile; null when nobody is signed in', async () => {
+    const home = await tmpHome()
+    await signIn(join(home, 'a'), { email: 'me@x.com', org: 'org-1', orgName: 'Acme' })
+    expect(await accountIdentity(join(home, 'a'), home)).toEqual({ email: 'me@x.com', org: 'org-1', orgName: 'Acme' })
+    await signIn(join(home, 'b'), { email: 'me@x.com' })
+    expect(await accountIdentity(join(home, 'b'), home)).toEqual({ email: 'me@x.com', org: null, orgName: null })
+    expect(await accountIdentity(join(home, 'none'), home)).toBeNull()
+  })
+
+  test('one email in two organisations is two accounts', () => {
+    const a = { email: 'me@x.com', org: 'org-1', orgName: 'Acme' }
+    expect(sameAccount(a, { ...a })).toBe(true)
+    expect(sameAccount(a, { email: 'me@x.com', org: 'org-2', orgName: 'Other' })).toBe(false)
+    expect(sameAccount(a, { email: 'me@x.com', org: null, orgName: null })).toBe(false)
+    expect(sameAccount(a, { email: 'ME@x.com', org: 'org-1', orgName: 'Acme' })).toBe(true)
+    expect(sameAccount(a, { email: 'you@x.com', org: 'org-1', orgName: 'Acme' })).toBe(false)
+  })
+
+  test('labels: the email; accounts sharing an email add their organisation, or Personal', async () => {
+    const home = await tmpHome()
+    const [a, b, c, d] = ['a', 'b', 'c', 'd'].map((n) => join(home, n))
+    await signIn(a, { email: 'me@x.com', org: 'org-1', orgName: 'Acme' })
+    await signIn(b, { email: 'me@x.com' })
+    await signIn(c, { email: 'other@x.com', org: 'org-9', orgName: 'Nine' })
+    const labels = await accountLabels([a, b, c, d], home)
+    expect(labels.get(a)).toBe('me@x.com · Acme')
+    expect(labels.get(b)).toBe('me@x.com · Personal')
+    expect(labels.get(c)).toBe('other@x.com')
+    expect(labels.get(d)).toBe(join('~', 'd')) // nobody signed in: its folder
   })
 })

@@ -60,36 +60,66 @@ export function sessionConfigDir(project: Project, session: Pick<Session, 'accou
 /** A Claude account is identified by its config folder: the same folder, however spelled, is the same account. */
 export const accountKey = sessionConfigDir
 
-/** Each .claude.json's email, as of its mtime: the file is big and asked about often, so it's read only when it changes. */
-const emails = new Map<string, { mtimeMs: number; email: string | null }>()
+/** Who is signed in to an account: the email, and the organisation when the plan belongs to one. */
+export interface AccountIdentity { email: string; org: string | null; orgName: string | null }
 
-async function emailIn(file: string): Promise<string | null> {
+/** Each .claude.json's identity, as of its mtime: the file is big and asked about often, so it's read only when it changes. */
+const identities = new Map<string, { mtimeMs: number; identity: AccountIdentity | null }>()
+
+async function identityIn(file: string): Promise<AccountIdentity | null> {
   const mtimeMs = await stat(file).then((st) => st.mtimeMs, () => null)
   if (mtimeMs === null) {
-    emails.delete(file)
+    identities.delete(file)
     return null
   }
-  const hit = emails.get(file)
-  if (hit && hit.mtimeMs === mtimeMs) return hit.email
-  let email: string | null = null
+  const hit = identities.get(file)
+  if (hit && hit.mtimeMs === mtimeMs) return hit.identity
+  let identity: AccountIdentity | null = null
   try {
-    const v = JSON.parse(await readFile(file, 'utf8'))?.oauthAccount?.emailAddress
-    if (typeof v === 'string' && v) email = v
+    const o = JSON.parse(await readFile(file, 'utf8'))?.oauthAccount
+    const str = (v: unknown): string | null => (typeof v === 'string' && v ? v : null)
+    const email = str(o?.emailAddress)
+    if (email) identity = { email, org: str(o?.organizationUuid), orgName: str(o?.organizationName) }
   } catch {
-    // missing or corrupt: no email
+    // missing or corrupt: nobody signed in
   }
-  emails.set(file, { mtimeMs, email })
-  return email
+  identities.set(file, { mtimeMs, identity })
+  return identity
 }
 
-/**
- * The signed-in email for an account, else its folder with home shown as ~. Claude keeps the default account's
- * profile at <home>/.claude.json (beside the folder), any other account's inside its folder. Read only.
- */
-export async function accountLabel(key: string, home: string): Promise<string> {
-  const file = key === normalizeDir(join(home, '.claude'), home) ? join(home, '.claude.json') : join(key, '.claude.json')
-  const email = await emailIn(file)
-  if (email) return email
+/** Where an account keeps its profile: beside the folder for the built-in default (~/.claude), inside any other. */
+export function profileFile(dir: string, home: string): string {
+  return normalizeDir(dir, home) === normalizeDir(join(home, '.claude'), home) ? join(home, '.claude.json') : join(dir, '.claude.json')
+}
+
+/** Who is signed in to the account in this folder, or null. Reads only the email and organisation from its profile. */
+export function accountIdentity(key: string, home: string): Promise<AccountIdentity | null> {
+  return identityIn(profileFile(key, home))
+}
+
+/** One email can hold a personal plan and a seat in an organisation: those are two accounts. */
+export function sameAccount(a: AccountIdentity, b: AccountIdentity): boolean {
+  return a.email.toLowerCase() === b.email.toLowerCase() && a.org === b.org
+}
+
+const folderLabel = (key: string, home: string): string => {
   const h = normalizeDir(home, home)
   return key === h || key.startsWith(h + sep) ? join('~', key.slice(h.length)) : key
+}
+
+/** The signed-in email for an account, else its folder with home shown as ~. Read only. */
+export async function accountLabel(key: string, home: string): Promise<string> {
+  return (await accountIdentity(key, home))?.email ?? folderLabel(key, home)
+}
+
+/** A label per account: its email, with the organisation (or "Personal") added where two accounts share an email. */
+export async function accountLabels(keys: string[], home: string): Promise<Map<string, string>> {
+  const ids = await Promise.all(keys.map((k) => accountIdentity(k, home)))
+  const count = new Map<string, number>()
+  for (const id of ids) if (id) count.set(id.email.toLowerCase(), (count.get(id.email.toLowerCase()) ?? 0) + 1)
+  return new Map(keys.map((k, i) => {
+    const id = ids[i]
+    if (!id) return [k, folderLabel(k, home)]
+    return [k, (count.get(id.email.toLowerCase()) ?? 0) > 1 ? `${id.email} · ${id.orgName ?? 'Personal'}` : id.email]
+  }))
 }
