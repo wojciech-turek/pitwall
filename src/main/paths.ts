@@ -10,6 +10,10 @@ export interface AppPaths {
   updatesFile: string
   sessionsDir: string
   binDir: string
+  /** The key that signs each session's token for the `pitwall` command. */
+  cliKey: string
+  /** Where the `pitwall` command's launcher lives (put on each session's PATH). */
+  cliBinDir: string
   tmuxConf: string
   worktreesRoot: string
   sshDir: string
@@ -42,6 +46,8 @@ export function resolvePaths(
     updatesFile: join(dataDir, 'updates.json'),
     sessionsDir: join(dataDir, 'sessions'),
     binDir: join(dataDir, 'bin'),
+    cliKey: join(dataDir, 'cli.key'),
+    cliBinDir: join(dataDir, 'cli-bin'),
     tmuxConf: join(dataDir, 'tmux.conf'),
     worktreesRoot: env.PITWALL_WORKTREES_DIR || join(home, 'pitwall', `worktrees${suffix}`),
     sshDir: env.PITWALL_SSH_DIR || join(home, '.ssh'),

@@ -43,6 +43,8 @@ export interface Session {
   continuedFrom?: string
   /** The first of the session's block of 10 ports, exported as $PITWALL_PORT. */
   portBase?: number
+  /** The id of the session that started this one with the `pitwall` command. */
+  createdBy?: string
 }
 export interface AppSettings {
   monoFont: string; monoFontSize: number
@@ -129,6 +131,9 @@ export interface NewSessionInput {
    */
   continueClaudeId?: string
   continuedFrom?: string
+  /** Set only by the command server, for a session started by another session (never by the renderer). */
+  createdBy?: string
+  initialPrompt?: string
 }
 export type StartResult = { ok: true; sessionId: string } | { ok: false; step: StartStep; error: string }
 export interface NewSessionDefaults {

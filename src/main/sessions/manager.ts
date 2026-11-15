@@ -234,6 +234,12 @@ export class SessionManager {
     }).catch(() => {}).finally(() => { this.clearing.delete(sessionId) })
   }
 
+  /** Types `text` into the session's Claude and presses Enter (paste first, so newlines don't submit early). */
+  async sendText(id: string, text: string): Promise<void> {
+    await this.deps.backend.pasteText(claudeTmuxName(id), text)
+    await this.deps.backend.sendKeys(claudeTmuxName(id), ['Enter'])
+  }
+
   userInput(sessionId: string, kind: TermKind, data: string): void {
     if (kind !== 'claude') return
     // Keys only: terminal-generated replies (focus, device and cursor reports) all start with ESC.

@@ -633,4 +633,13 @@ describe('muted projects and mark as unread', () => {
     expect(m.snapshot().projects[0].muted).toBeUndefined()
     expect(status(m, 'a')).toBe('starting')
   })
+
+  test('sendText pastes the text, then presses Enter', async () => {
+    const m = mkManager()
+    const calls: string[] = []
+    t.backend.pasteText = async (n, x) => { calls.push(`paste ${n} ${x}`) }
+    t.backend.sendKeys = async (n, k) => { calls.push(`keys ${n} ${k.join(',')}`) }
+    await m.sendText('a', 'hello\nthere')
+    expect(calls).toEqual([`paste ${claudeTmuxName('a')} hello\nthere`, `keys ${claudeTmuxName('a')} Enter`])
+  })
 })

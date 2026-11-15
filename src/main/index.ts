@@ -13,6 +13,8 @@ import { PrPoller } from './pr'
 import { ServerWatcher } from './server-watch'
 import { registerIpc } from './ipc'
 import { electronNotifier } from './notifier'
+import { cliSocketPath, loadCliKey } from './cli/auth'
+import { CliServer } from './cli/server'
 import { resolvePaths, sessionDir } from './paths'
 import { appUserModelId } from './platform'
 import { PortAllocator } from './ports'
@@ -64,6 +66,7 @@ let disposePr: (() => void) | null = null
 let disposeServers: (() => void) | null = null
 let disposeUsage: (() => void) | null = null
 let disposeUpdates: (() => void) | null = null
+let disposeCli: (() => void) | null = null
 let refreshBadge: (() => void) | null = null
 
 const send = (channel: string, ...args: unknown[]): void => {
@@ -210,6 +213,16 @@ async function bootstrap(): Promise<void> {
   const mgr = new SessionManager({ store, paths, git, backend, exec, env, home, mutex, notifier, launcher, history, ports: new PortAllocator() })
   manager = mgr
   await mgr.init()
+  // The `pitwall` command's socket: sessions ask Pitwall to start and watch helper sessions. Not on Windows (no unix sockets).
+  if (!WINDOWS) {
+    try {
+      const cli = new CliServer({ key: await loadCliKey(paths.cliKey), socketPath: cliSocketPath(paths.dataDir), manager: mgr })
+      await cli.start()
+      disposeCli = () => { void cli.stop() }
+    } catch (e) {
+      console.error('pitwall command server did not start:', e)
+    }
+  }
 
   const projects = new ProjectService({
     store, git, exec, env, home,
@@ -315,6 +328,8 @@ if (!isPrimaryInstance) {
     disposeUsage = null
     disposeUpdates?.()
     disposeUpdates = null
+    disposeCli?.()
+    disposeCli = null
     manager?.dispose()
   })
 
