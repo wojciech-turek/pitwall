@@ -14,7 +14,8 @@ import {
   buildHookSettings, findUserStatusLine, hookCommandFor, statusLineCommandFor, windowsHookCommand, windowsStatusLineCommand
 } from '../hooks/settings'
 import { cliSocketPath, cliToken } from '../cli/auth'
-import { DEFAULT_ACCOUNT_ID, sessionAccountId, sessionConfigDir } from '../accounts'
+import { DEFAULT_ACCOUNT_ID, defaultAccountDir, sessionAccountId, sessionConfigDir } from '../accounts'
+import { linkShared } from '../account-folders'
 import { buildSessionEnv, getGhToken, renderEnvFile } from '../identity'
 import { eventsFile, sessionDir, type AppPaths } from '../paths'
 import { findGitBash, windowsPowerShell } from '../platform'
@@ -129,12 +130,18 @@ export async function writeSessionFiles(session: Session, deps: StarterDeps): Pr
   const accounts = { settings: deps.store.state.settings, home: deps.home, env: deps.env }
   const configDir = sessionConfigDir(project, session, accounts)
   const accountId = sessionAccountId(project, session, accounts)
+  const addedAccount = accountId !== null && accountId !== DEFAULT_ACCOUNT_ID
+  if (addedAccount) {
+    // Each time the account is used: what the default folder shares is looked for again (something may have appeared
+    // there since, or the account's folder may have been deleted by hand). Best effort: Claude runs without it.
+    await mkdir(configDir, { recursive: true, mode: 0o700 }).then(() => linkShared(configDir, defaultAccountDir(accounts))).catch(() => undefined)
+  }
   const userStatusLine = await findUserStatusLine(session.cwd, configDir)
   const env = buildSessionEnv({
     project,
     session,
     portBase: session.portBase,
-    claudeAccountDir: accountId !== null && accountId !== DEFAULT_ACCOUNT_ID ? configDir : undefined,
+    claudeAccountDir: addedAccount ? configDir : undefined,
     rootPath: sp.repoRoot ?? sp.path,
     sessionDir: dir,
     eventsFile: events,

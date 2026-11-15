@@ -255,7 +255,8 @@ describe('switching and moving over IPC', () => {
     requestAll: vi.fn(async (...a: unknown[]) => { calls.push(['requestAll', ...a]); return { now: 2, later: 1 } }),
     cancel: vi.fn(async (...a: unknown[]) => { calls.push(['cancel', ...a]) }),
     moveBack: vi.fn(async (...a: unknown[]) => { calls.push(['moveBack', ...a]) }),
-    countMovable: vi.fn((...a: unknown[]) => { calls.push(['count', ...a]); return { now: 2, later: 1 } })
+    countMovable: vi.fn((...a: unknown[]) => { calls.push(['count', ...a]); return { now: 2, later: 1 } }),
+    settleOn: vi.fn(async (...a: unknown[]) => { calls.push(['settleOn', ...a]) })
   }
   const accounts = { onChange: () => () => {}, setActive: vi.fn(async (...a: unknown[]) => { calls.push(['setActive', ...a]) }) }
   beforeEach(() => {
@@ -272,12 +273,13 @@ describe('switching and moving over IPC', () => {
 
   test('Switch for new sessions only: the active account changes and nothing moves', async () => {
     expect(await call(IPC.setActiveAccount, 'a1', false)).toEqual({ now: 0, later: 0 })
-    expect(calls).toEqual([['setActive', 'a1']])
+    // Sessions already on it stop waiting to move away (switching back cancels).
+    expect(calls).toEqual([['setActive', 'a1'], ['settleOn', 'a1']])
   })
 
   test('Switch and move: the active account changes first, then every running session is asked to move', async () => {
     expect(await call(IPC.setActiveAccount, 'a1', true)).toEqual({ now: 2, later: 1 })
-    expect(calls).toEqual([['setActive', 'a1'], ['requestAll', 'a1']])
+    expect(calls).toEqual([['setActive', 'a1'], ['settleOn', 'a1'], ['requestAll', 'a1']])
   })
 
   test('one session: move, cancel, move back; and the count for the dialog', async () => {

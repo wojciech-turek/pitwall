@@ -299,6 +299,7 @@ body.pane-resizing-column, body.pane-resizing-column * { cursor: row-resize !imp
 .account-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; border: 1px solid var(--text-faint); }
 .account-dot.on { background: var(--accent); border-color: var(--accent); }
 .account-note { flex: none; font-size: 10px; color: var(--text-faint); }
+.account-note.warn { color: var(--usage-warn); }
 .account-stale { grid-column: 1 / -1; font-size: 10px; color: var(--text-faint); text-align: right; }
 .account-add { grid-column: 1 / -1; justify-self: start; margin-top: 2px; padding: 0; border: 0; background: none; font: inherit; color: var(--text-faint); cursor: pointer; }
 .account-add:hover, .account-add:focus-visible { color: var(--text); }

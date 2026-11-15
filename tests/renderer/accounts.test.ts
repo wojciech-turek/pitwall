@@ -50,6 +50,11 @@ describe('the panel beside the meters', () => {
     expect(rows[1].stale).toBe('')
   })
 
+  test('an account nobody is signed in to says so', () => {
+    const rows = panelRows([acct(), other({ signedIn: false })], undefined, now)
+    expect(rows.map((r) => r.signedOut)).toEqual([false, true])
+  })
+
   test("a folder a project set for itself can't be switched to and has no menu", () => {
     const pinned = acct({ id: undefined, account: '/p/pinned', label: 'c@x.com', active: false, usage: usage(5) })
     const row = panelRows([acct(), pinned], undefined, now)[1]
@@ -105,11 +110,11 @@ describe('Switch', () => {
     expect(dialogs).toEqual([])
   })
 
-  test('with running sessions elsewhere, the dialog asks first and nothing changes yet', async () => {
+  test('with running sessions elsewhere, the account is active at once and the dialog only asks about moving them', async () => {
     const { api, calls } = stub({ now: 3, later: 1 })
     const dialogs: unknown[] = []
     await switchAccount(api, { id: 'a1', label: 'b@x.com' }, (d) => dialogs.push(d))
-    expect(calls).toEqual([['count', 'a1']])
+    expect(calls).toEqual([['count', 'a1'], ['setActive', 'a1', false]])
     expect(dialogs).toEqual([{ type: 'switch-account', accountId: 'a1', label: 'b@x.com', now: 3, later: 1 }])
   })
 })

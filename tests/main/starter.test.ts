@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { access, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { access, mkdir, readFile, readdir, realpath, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
@@ -158,6 +158,15 @@ describe('startSession', () => {
       expect(s.account).toBe('a1')
       expect(await envSh(s.id)).toContain(`export CLAUDE_CONFIG_DIR='${acct().dir}'`)
       expect(await envSh(s.id)).toContain("export PITWALL_CLAUDE_ACCOUNT='1'")
+    })
+
+    test('what the default folder shares is looked for again each time the account is used, even if its folder was deleted', async () => {
+      const { sp } = await addRepo()
+      await store.update((d) => { d.settings.claudeAccounts = [acct()]; d.settings.activeAccount = 'a1' })
+      await mkdir(join(t.tmp, '.claude', 'agents'), { recursive: true }) // appeared after the account was added
+      expect(await has(acct().dir)).toBe(false)
+      await start(input(sp))
+      expect(await realpath(join(acct().dir, 'agents'))).toBe(await realpath(join(t.tmp, '.claude', 'agents')))
     })
 
     test("a helper takes its parent's account, not the active one", async () => {

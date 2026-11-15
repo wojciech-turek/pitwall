@@ -110,7 +110,8 @@ run_claude() (
     # conversation continued from outside Pitwall whose transcript exists: Claude's error stands, Enter resumes again.
     if [ "$rc" -ne 0 ] && ! tail -n +"$((before + 1))" "$PITWALL_EVENTS_FILE" 2>/dev/null | grep -q '"e":"SessionStart"' &&
       ! { [ -e "$dir/continue-note.txt" ] && has_transcript "$id"; }; then
-      if [ -e "$dir/moved-from" ]; then
+      # (A conversation with nothing said in it has no transcript and nothing to lose: it starts anew, below.)
+      if [ -e "$dir/moved-from" ] && has_transcript "$id"; then
         # Just moved to another account (the app wrote moved-from): a new conversation there would lose this one.
         # The app puts the session back; the marker is its to remove.
         log_event "{\"c\":\"$PITWALL_SESSION_ID\",\"t\":$(now),\"e\":\"pitwall:move-failed\",\"code\":$rc}"

@@ -101,6 +101,7 @@ export default function AccountsPanel(): React.JSX.Element {
           <div className="usage-account-head">
             <span className={row.active ? 'account-dot on' : 'account-dot'} aria-hidden="true" />
             <span className="usage-account-label" data-testid="usage-account" title={row.active ? `${row.label} · new sessions start here` : row.label}>{row.label}</span>
+            {row.signedOut && <span className="account-note warn" data-testid={`account-signedout-${i}`}>Signed out</span>}
             {row.note && <span className="account-note" data-testid={`account-note-${i}`}>{row.note}</span>}
             {row.canSwitch && (
               <button className="btn small" data-testid={`account-switch-${i}`} disabled={busy} onClick={() => doSwitch(row)}>Switch</button>

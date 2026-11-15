@@ -222,7 +222,7 @@ export class AccountsService {
     if (!acct) throw new Error(NOT_FOUND)
     const defaultDir = defaultAccountDir(this.ctx())
     await copyProfileKeys(profileFile(defaultDir, this.deps.home), profileFile(acct.dir, this.deps.home), ['mcpServers'])
-    await linkShared(acct.dir, defaultDir)
+    await linkShared(acct.dir, defaultDir, process.platform, undefined, { refreshCopies: true })
   }
 
   /** The account sessions started from now on run on. */

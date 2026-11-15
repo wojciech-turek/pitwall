@@ -62,6 +62,8 @@ export interface AccountRow {
   removeWhy?: string
   /** How the selected session relates to this row, when that isn't simply "it runs on the active account". */
   note?: string
+  /** Nobody is signed in to this account's folder (sessions on it would stop at Claude's sign-in). */
+  signedOut: boolean
 }
 
 /** One row per account, in the order given (the active one first). `selected` is the session shown, if any. */
@@ -72,7 +74,8 @@ export function panelRows(
     const added = a.id !== undefined && a.id !== 'default'
     const row: AccountRow = {
       account: a.account, label: a.label, active: a.active, stale: a.usage ? staleNote(a.usage.updatedAt, now) : '',
-      canSwitch: a.id !== undefined && !a.active, menu: added, canRemove: added && a.sessions === 0
+      canSwitch: a.id !== undefined && !a.active, menu: added, canRemove: added && a.sessions === 0,
+      signedOut: a.id !== undefined && !a.signedIn
     }
     if (a.id !== undefined) row.id = a.id
     if (a.usage) row.usage = a.usage
@@ -101,17 +104,15 @@ export function switchPrompt(label: string, n: { now: number; later: number }): 
 }
 
 /**
- * Switch on an account's row (and in the limit banner): with no running session elsewhere, it becomes the active
- * account at once; otherwise the dialog asks whether to move them too, and nothing changes until it is answered.
+ * Switch on an account's row (and in the limit banner): the account becomes the active one at once. If sessions are
+ * running on another account, a dialog then asks whether to move them too.
  */
 export async function switchAccount(
   pitwall: Pick<PitwallApi, 'countMovable' | 'setActiveAccount'>, to: { id: string; label: string }, openDialog: (d: DialogState) => void
 ): Promise<void> {
   const n = await pitwall.countMovable(to.id)
-  if (n.now + n.later === 0) {
-    await pitwall.setActiveAccount(to.id, false)
-    return
-  }
+  await pitwall.setActiveAccount(to.id, false)
+  if (n.now + n.later === 0) return
   openDialog({ type: 'switch-account', accountId: to.id, label: to.label, now: n.now, later: n.later })
 }
 

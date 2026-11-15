@@ -98,7 +98,9 @@ test("a conversation that won't resume on the other account goes back where it w
   const alpha = await idOf('Alpha')
   const conversation = (await sessionFile(alpha, 'claude-id')).trim()
   // The default account can't resume it (the stub refuses there).
-  await mkdir(e.env.CLAUDE_CONFIG_DIR, { recursive: true })
+  // (And the conversation has something in it: Claude keeps a transcript of it, which the stub doesn't write.)
+  await mkdir(join(e.env.CLAUDE_CONFIG_DIR, 'projects', '-stub'), { recursive: true })
+  await writeFile(join(e.env.CLAUDE_CONFIG_DIR, 'projects', '-stub', `${conversation}.jsonl`), '{}\n')
   await writeFile(join(e.env.CLAUDE_CONFIG_DIR, '.stub-resume-fail'), '')
   await page.getByTestId('session-row').filter({ hasText: 'Alpha' }).click()
   await page.getByTestId('move-menu').click()

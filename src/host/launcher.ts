@@ -294,7 +294,8 @@ export class Launcher {
       const started = async (): Promise<boolean> =>
         (hooks && this.eventLines(env).slice(before).some(isSessionStart)) ||
         ((!hooks || continued) && (await this.hasTranscript(env, id)))
-      if (rc !== 0 && !this.stopping && existsSync(this.file('moved-from')) && !(await started())) {
+      // (A conversation with nothing said in it has no transcript and nothing to lose: it starts anew, below.)
+      if (rc !== 0 && !this.stopping && existsSync(this.file('moved-from')) && !(await started()) && (await this.hasTranscript(env, id))) {
         // Just moved to another account (the app wrote moved-from): a new conversation there would lose this one.
         // The app puts the session back; the marker is its to remove.
         this.logEvent(env, { e: 'pitwall:move-failed', code: rc })

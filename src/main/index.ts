@@ -1,4 +1,6 @@
 import { existsSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
+import { parseEventLine } from './hooks/events'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { app, BrowserWindow, dialog, Menu, nativeImage, powerMonitor, shell } from 'electron'
@@ -16,7 +18,7 @@ import { registerIpc } from './ipc'
 import { electronNotifier } from './notifier'
 import { cliSocketPath, loadCliKey } from './cli/auth'
 import { CliServer } from './cli/server'
-import { resolvePaths, sessionDir } from './paths'
+import { eventsFile, resolvePaths, sessionDir } from './paths'
 import { appUserModelId } from './platform'
 import { PortAllocator } from './ports'
 import { ProjectService } from './projects'
@@ -337,6 +339,7 @@ async function bootstrap(): Promise<void> {
   const mover = new AccountMover({
     store, home, env, manager: mgr, continueAt,
     sessionDir: (id) => sessionDir(paths, id),
+    readEvents: async (id) => (await readFile(eventsFile(paths, id), 'utf8').catch(() => '')).split('\n').flatMap((l) => parseEventLine(l) ?? []),
     labelFor: async (id) => (await accounts.list()).find((a) => a.id === id)?.label ?? id,
     onRestarted: (id) => send(IPC.termRestart, id)
   })

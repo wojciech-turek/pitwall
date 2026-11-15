@@ -181,7 +181,20 @@ describe('the host launcher', () => {
     expect(exits).toEqual([])
   })
 
+  test('a session just moved, with nothing in its conversation yet: a failed resume starts a new one on the new account', async () => {
+    writeFileSync(join(sd, 'started'), '')
+    writeFileSync(join(sd, 'moved-from'), 'default\n')
+    launcher().start()
+    await until(() => spawned.length === 1, 'resume started')
+    lastPty().exit(1)
+    await until(() => spawned.length === 2, 'fresh launch')
+    expect(lastPty().args).toEqual(['--session-id', ID, '--settings', join(sd, 'hooks.json'), '--name', TITLE])
+    expect(eventList().some((e) => e.e === 'pitwall:move-failed')).toBe(false)
+  })
+
   test('a session just moved to another account: a resume that fails says so and never starts a new conversation', async () => {
+    mkdirSync(join(dir, '.claude', 'projects', '-some-folder'), { recursive: true })
+    writeFileSync(join(dir, '.claude', 'projects', '-some-folder', `${ID}.jsonl`), '{}\n')
     writeFileSync(join(sd, 'started'), '')
     writeFileSync(join(sd, 'moved-from'), 'default\n')
     launcher().start()

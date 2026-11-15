@@ -141,9 +141,23 @@ describe('pitwall-launch', () => {
       await writeFile(join(sd, 'moved-from'), 'default\n')
       await t.tmux.sendKeys('pw-l', ['Enter'])
     }
+    /** As Claude keeps a conversation that has been said something in. */
+    const withTranscript = async (): Promise<void> => {
+      const folder = join(t.env.CLAUDE_CONFIG_DIR || join(t.env.HOME, '.claude'), 'projects', '-some-folder')
+      await mkdir(folder, { recursive: true })
+      await writeFile(join(folder, `${ID}.jsonl`), '{}\n')
+    }
+
+    test('a conversation with nothing in it yet has nothing to lose: a new one starts on the new account', async () => {
+      await setup()
+      await relaunchFailing()
+      await waitFor(async () => (await logLines()).filter((l) => l.includes('--session-id')).length === 2, 8000, 'fresh launch')
+      expect((await events()).some((e) => e.e === 'pitwall:move-failed')).toBe(false)
+    })
 
     test('a resume that fails says so and never starts a new conversation', async () => {
       await setup()
+      await withTranscript()
       await relaunchFailing()
       await waitFor(async () => (await events()).some((e) => e.e === 'pitwall:move-failed'), 8000, 'move-failed event')
       await waitCapture('Claude exited (code 1). Press Enter to resume.')

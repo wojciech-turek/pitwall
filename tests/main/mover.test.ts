@@ -24,6 +24,7 @@ let restarted: string[]
 let snapCbs: Array<(s: AppSnapshot) => void>
 let eventCbs: Array<(id: string, e: HookEvent) => void>
 let timers: Array<{ fn: () => void; ms: number; cleared: boolean }>
+let savedEvents: Map<string, HookEvent[]>
 
 const project = (id: string, extraEnv: Project['extraEnv'] = []): Project =>
   ({ id, name: id, createdAt: 0, extraEnv, identity: { sshKeyPath: '', ghAccount: '', gitName: '', gitEmail: '' } })
@@ -72,7 +73,7 @@ beforeEach(async () => {
   })
   status = new Map(); limitHit = new Set(); busySubagent = new Set()
   restarts = []; restartFails = false; sent = []; cancelled = []; extras = []; restarted = []
-  snapCbs = []; eventCbs = []; timers = []
+  snapCbs = []; eventCbs = []; timers = []; savedEvents = new Map()
   mover = make()
   mover.start()
 })
@@ -94,6 +95,7 @@ function make(): AccountMover {
       updateSessionExtras: (id, patch) => { extras.push([id, patch]) }
     },
     continueAt: { cancel: async (id) => { cancelled.push(id) } },
+    readEvents: async (id) => savedEvents.get(id) ?? [],
     labelFor: async (id) => (id === 'a1' ? 'b@x.com' : id === 'default' ? 'me@x.com' : id),
     onRestarted: (id) => { restarted.push(id) },
     timers: {
@@ -344,6 +346,7 @@ describe('changing your mind, and things changing underneath', () => {
   test('after a restart of Pitwall: a pending move still happens, and a session mid-move keeps its new account and re-arms the wait', async () => {
     await add(mkSession('pending', { moveTo: 'a1' }), mkSession('mid', { account: 'a1', movedFrom: 'default' }))
     writeFileSync(marker('mid'), 'default\n')
+    savedEvents.set('mid', [{ c: 'mid', t: Date.now() + 1000, e: 'pitwall:launch' }]) // launched there, not yet started
     mover.stop()
     timers = []
     mover = make()
@@ -370,4 +373,105 @@ test('moving again clears what was said about the last failed move', async () =>
   await mover.request('s1', 'a2')
   expect(extras).toContainEqual(['s1', { moveError: undefined }])
   expect(get('s1').account).toBe('a2')
+})
+
+describe('review fixes', () => {
+  test("moving to the default account never writes its profile (Pitwall doesn't edit ~/.claude.json)", async () => {
+    writeFileSync(join(acctDir, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'b@x.com' }, projects: { '/w/s1': { hasTrustDialogAccepted: true } } }))
+    const before = readFileSync(join(home, '.claude.json'), 'utf8')
+    await add(mkSession('s1', { account: 'a1' }))
+    await mover.request('s1', 'default')
+    expect('account' in get('s1')).toBe(false)
+    expect(readFileSync(join(home, '.claude.json'), 'utf8')).toBe(before)
+  })
+
+  test('switching back cancels the moves still pending for sessions already on that account', async () => {
+    await add(mkSession('w1'), mkSession('w2'), mkSession('other', { account: 'a1' }))
+    status.set('w1', 'working'); status.set('w2', 'working'); status.set('other', 'working')
+    await mover.requestAll('a1')
+    await mover.request('other', 'a2')
+    expect(get('w1').moveTo).toBe('a1')
+    await mover.settleOn('default') // Switch back to the default account
+    expect('moveTo' in get('w1')).toBe(false)
+    expect('moveTo' in get('w2')).toBe(false)
+    expect(get('other').moveTo).toBe('a2') // not on the default account: untouched
+    setStatus('w1', 'read'); setStatus('w2', 'read'); await settle()
+    expect(restarts).toEqual([])
+  })
+
+  test('a second move waits until the first is seen to start: the account it came from is never overwritten', async () => {
+    await add(mkSession('s1'))
+    await mover.request('s1', 'a1')
+    await mover.request('s1', 'a2') // straight after, before Claude has started on a1
+    expect(get('s1').account).toBe('a1')
+    expect(get('s1').movedFrom).toBe('default')
+    expect(get('s1').moveTo).toBe('a2')
+    expect(restarts).toEqual(['s1'])
+    emit('s1', 'SessionStart'); await settle()
+    publish(); await settle()
+    expect(get('s1').account).toBe('a2')
+    expect(get('s1').movedFrom).toBe('a1')
+    expect(restarts).toEqual(['s1', 's1'])
+  })
+
+  describe('picking up a move after Pitwall was restarted in the middle of it', () => {
+    const restartMover = async (): Promise<void> => {
+      mover.stop(); timers = []; restarts = []
+      mover = make(); mover.start()
+      await settle()
+    }
+    const midMove = async (): Promise<number> => {
+      await add(mkSession('mid', { account: 'a1', movedFrom: 'default' }))
+      writeFileSync(marker('mid'), 'default\n')
+      return Date.now()
+    }
+    const ev = (e: string, t: number): HookEvent => ({ c: 'mid', t, e })
+
+    test('Claude started on the new account while Pitwall was closed: the move is done, nothing waits', async () => {
+      const at = await midMove()
+      savedEvents.set('mid', [ev('SessionStart', at - 60_000), ev('pitwall:launch', at + 1000), ev('SessionStart', at + 2000)])
+      await restartMover()
+      expect('movedFrom' in get('mid')).toBe(false)
+      expect(existsSync(marker('mid'))).toBe(false)
+      expect(get('mid').account).toBe('a1')
+      expect(restarts).toEqual([])
+      expect(timers.filter((t) => !t.cleared)).toEqual([])
+    })
+
+    test('the resume failed while Pitwall was closed: back on the account it came from, and it says so', async () => {
+      const at = await midMove()
+      savedEvents.set('mid', [ev('pitwall:launch', at + 1000), ev('pitwall:move-failed', at + 1000), ev('pitwall:exited', at + 1000)])
+      await restartMover()
+      expect('account' in get('mid')).toBe(false)
+      expect('movedFrom' in get('mid')).toBe(false)
+      expect(restarts).toEqual(['mid'])
+      expect(extras).toContainEqual(['mid', { moveError: "Couldn't continue this conversation on b@x.com." }])
+    })
+
+    test('Pitwall quit before Claude was restarted: it is restarted now, on the account shown', async () => {
+      const at = await midMove()
+      savedEvents.set('mid', [ev('pitwall:launch', at - 60_000), ev('SessionStart', at - 59_000)])
+      await restartMover()
+      expect(restarts).toEqual(['mid'])
+      expect(get('mid').account).toBe('a1')
+      expect(get('mid').movedFrom).toBe('default')
+      expect(timers.filter((t) => !t.cleared)).toHaveLength(1)
+    })
+
+    test('Pitwall quit before the marker was written: written now, then restarted', async () => {
+      await add(mkSession('mid', { account: 'a1', movedFrom: 'default' }))
+      await restartMover()
+      expect(readFileSync(marker('mid'), 'utf8')).toBe('default\n')
+      expect(restarts).toEqual(['mid'])
+    })
+
+    test('launched and still starting: it waits, as after a move made just now', async () => {
+      const at = await midMove()
+      savedEvents.set('mid', [ev('pitwall:launch', at + 1000)])
+      await restartMover()
+      expect(restarts).toEqual([])
+      expect(get('mid').movedFrom).toBe('default')
+      expect(timers.filter((t) => !t.cleared)).toHaveLength(1)
+    })
+  })
 })

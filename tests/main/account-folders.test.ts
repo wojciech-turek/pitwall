@@ -190,3 +190,32 @@ test('creating, linking and copying write nothing into the default folder', asyn
   await removeAccountFolder(dir, root)
   expect([...tree(def), ...tree(home)]).toEqual(before)
 })
+
+describe('review fixes', () => {
+  test("several sessions moved at once each keep their folder's entry (no lost update)", async () => {
+    const from = join(tmp, 'from.json')
+    const to = join(dir, '.claude.json')
+    const cwds = Array.from({ length: 8 }, (_, i) => `/w/s${i}`)
+    writeFileSync(from, JSON.stringify({ projects: Object.fromEntries(cwds.map((c) => [c, { hasTrustDialogAccepted: true }])) }))
+    writeFileSync(to, JSON.stringify({ oauthAccount: { emailAddress: 'b@x' } }))
+    await Promise.all(cwds.map((c) => copyProjectEntry(from, to, c)))
+    expect(Object.keys((json(to) as { projects: object }).projects).sort()).toEqual(cwds)
+  })
+
+  test('on Windows, copying settings again refreshes the copied files; without asking, a file there is left alone', async () => {
+    const noLink = async (): Promise<void> => {}
+    await linkShared(dir, def, 'win32', noLink)
+    writeFileSync(join(def, 'settings.json'), '{"theme":"light"}')
+    await linkShared(dir, def, 'win32', noLink)
+    expect(readFileSync(join(dir, 'settings.json'), 'utf8')).toBe('{"theme":"dark"}')
+    await linkShared(dir, def, 'win32', noLink, { refreshCopies: true })
+    expect(readFileSync(join(dir, 'settings.json'), 'utf8')).toBe('{"theme":"light"}')
+  })
+
+  test.skipIf(WINDOWS)('refreshing never replaces a link or follows one into the default folder', async () => {
+    await linkShared(dir, def)
+    await linkShared(dir, def, process.platform, undefined, { refreshCopies: true })
+    expect(lstatSync(join(dir, 'settings.json')).isSymbolicLink()).toBe(true)
+    expect(readFileSync(join(def, 'settings.json'), 'utf8')).toBe('{"theme":"dark"}')
+  })
+})

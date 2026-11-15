@@ -38,7 +38,8 @@ const exists = (p: string): Promise<boolean> => lstat(p).then(() => true, () => 
  * there (a link, or something real) is left alone, and one that has appeared in the default folder since is added.
  */
 export async function linkShared(
-  dir: string, defaultDir: string, platform: NodeJS.Platform = process.platform, link: Symlink = symlink
+  dir: string, defaultDir: string, platform: NodeJS.Platform = process.platform, link: Symlink = symlink,
+  o: { /** Windows: copy the files again over the copies made before ("Copy settings from Default"). */ refreshCopies?: boolean } = {}
 ): Promise<void> {
   const windows = platform === 'win32'
   for (const name of LINKED_DIRS) {
@@ -48,7 +49,10 @@ export async function linkShared(
   }
   for (const name of LINKED_FILES) {
     const target = join(defaultDir, name)
-    if (!(await stat(target).then((s) => s.isFile(), () => false)) || (await exists(join(dir, name)))) continue
+    if (!(await stat(target).then((s) => s.isFile(), () => false))) continue
+    const mine = await lstat(join(dir, name)).catch(() => null)
+    // Something is there already: left alone, unless it is a copy (a regular file, on Windows) asked to be refreshed.
+    if (mine && !(windows && o.refreshCopies && mine.isFile())) continue
     if (windows) await copyFile(target, join(dir, name))
     else await link(target, join(dir, name), 'file')
   }
@@ -65,8 +69,20 @@ async function readJson(file: string): Promise<Json | null | 'corrupt'> {
   }
 }
 
+/** One read-and-write at a time per destination: several sessions moving at once must not lose each other's entries. */
+const merging = new Map<string, Promise<void>>()
+
 /** Reads both profiles and saves what `merge` makes of them. A source that can't be read, or a corrupt destination, changes nothing. */
-async function mergeProfile(fromFile: string, toFile: string, merge: (from: Json, to: Json) => boolean): Promise<void> {
+function mergeProfile(fromFile: string, toFile: string, merge: (from: Json, to: Json) => boolean): Promise<void> {
+  const key = resolve(toFile)
+  const run = (merging.get(key) ?? Promise.resolve()).then(() => mergeProfileNow(fromFile, toFile, merge))
+  const tail = run.catch(() => undefined)
+  merging.set(key, tail)
+  void tail.then(() => { if (merging.get(key) === tail) merging.delete(key) })
+  return run
+}
+
+async function mergeProfileNow(fromFile: string, toFile: string, merge: (from: Json, to: Json) => boolean): Promise<void> {
   const from = await readJson(fromFile)
   const to = await readJson(toFile)
   if (from === null || from === 'corrupt' || to === 'corrupt') return

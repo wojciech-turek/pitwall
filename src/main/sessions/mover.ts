@@ -1,4 +1,4 @@
-import { mkdir, rm } from 'node:fs/promises'
+import { mkdir, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { defaultAccountDir, isPinned, sessionAccountId, DEFAULT_ACCOUNT_ID, type AccountCtx } from '../accounts'
 import { copyProjectEntry, profileFile } from '../account-folders'
@@ -23,6 +23,8 @@ interface Deps {
   sessionDir: (sessionId: string) => string
   manager: Pick<SessionManager, 'snapshot' | 'onSnapshot' | 'onSessionEvent' | 'restartClaude' | 'sendText' | 'updateSessionExtras'>
   continueAt: Pick<ContinueScheduler, 'cancel'>
+  /** A session's events so far, oldest first (to see what happened to a move while Pitwall was closed). */
+  readEvents: (sessionId: string) => Promise<HookEvent[]>
   /** An account's label (its email), for messages. */
   labelFor: (accountId: string) => Promise<string>
   /** Claude was restarted in this session: its terminal should attach again. */
@@ -68,7 +70,7 @@ export class AccountMover {
     ]
     for (const s of this.deps.store.state.sessions) {
       if (s.archivedAt !== undefined) continue
-      if (s.movedFrom !== undefined) this.armWait(s.id)
+      if (s.movedFrom !== undefined) void this.chain(s.id, () => this.reconcile(s.id)).catch(() => undefined)
       if (s.moveTo !== undefined) void this.chain(s.id, () => this.tryMove(s.id)).catch(() => undefined)
     }
   }
@@ -116,6 +118,15 @@ export class AccountMover {
     const count = this.countMovable(target)
     await Promise.all(this.movable(target).map((s) => this.request(s.id, target).catch(() => undefined)))
     return count
+  }
+
+  /**
+   * `target` became the active account: sessions already on it stop waiting to move away (switching back cancels).
+   * Sessions on other accounts are untouched.
+   */
+  async settleOn(target: string): Promise<void> {
+    const here = this.deps.store.state.sessions.filter((s) => s.archivedAt === undefined && s.moveTo !== undefined && this.currentId(s.id) === target)
+    await Promise.all(here.map((s) => this.cancel(s.id).catch(() => undefined)))
   }
 
   /** Drops a pending move. */
@@ -218,6 +229,8 @@ export class AccountMover {
     if (!s || s.moveTo === undefined) return
     const current = this.currentId(id)
     if (current === null || current === s.moveTo || !this.accountExists(s.moveTo)) return this.setMoveTo(id, undefined)
+    // Still not seen to start where it was last moved to: the next move waits, so "where it came from" stays true.
+    if (s.movedFrom !== undefined) return
     const view = this.views().get(id)
     if (!ready(view)) return
     await this.move(s, current, s.moveTo, !!view?.limitHit)
@@ -226,25 +239,86 @@ export class AccountMover {
   private async move(s: Session, from: string, to: string, limitHit: boolean): Promise<void> {
     const { home } = this.deps
     await this.deps.continueAt.cancel(s.id).catch(() => undefined)
-    // The folder's trust and allowed tools go with it, so Claude doesn't stop at the trust prompt there.
-    await copyProjectEntry(profileFile(this.dirOf(from), home), profileFile(this.dirOf(to), home), s.cwd).catch(() => undefined)
+    // The folder's trust and allowed tools go with it, so Claude doesn't stop at the trust prompt there. Only into an
+    // added account's profile: Pitwall never edits the default one (~/.claude.json), where Claude asks again if it must.
+    if (to !== DEFAULT_ACCOUNT_ID) {
+      await copyProjectEntry(profileFile(this.dirOf(from), home), profileFile(this.dirOf(to), home), s.cwd).catch(() => undefined)
+    }
     await this.patch(s.id, (x) => {
       if (to === DEFAULT_ACCOUNT_ID) delete x.account
       else x.account = to
       x.movedFrom = from
       delete x.moveTo
     })
-    await mkdir(this.deps.sessionDir(s.id), { recursive: true })
-    await writeFileAtomic(join(this.deps.sessionDir(s.id), MOVED_FROM_FILE), from + '\n')
     if (limitHit) this.continueAfter.add(s.id)
-    this.armWait(s.id)
     try {
+      await this.writeMarker(s.id, from)
+      this.armWait(s.id)
       await this.deps.manager.restartClaude(s.id)
     } catch (e) {
       await this.unmove(s.id)
       throw e
     }
     this.deps.onRestarted?.(s.id)
+  }
+
+  private async writeMarker(id: string, from: string): Promise<void> {
+    await mkdir(this.deps.sessionDir(id), { recursive: true })
+    await writeFileAtomic(join(this.deps.sessionDir(id), MOVED_FROM_FILE), from + '\n')
+  }
+
+  /**
+   * A session found mid-move when Pitwall starts: what happened while it was closed is in the session's events since
+   * the marker was written. Started there: the move is done. Failed: back where it came from. Launched and nothing
+   * since: wait, as after a move made now. Never launched (Pitwall quit before restarting Claude): restart it now,
+   * so it runs on the account it is shown on.
+   */
+  private async reconcile(id: string): Promise<void> {
+    const s = this.session(id)
+    if (s?.movedFrom === undefined) return
+    const marker = join(this.deps.sessionDir(id), MOVED_FROM_FILE)
+    const written = await stat(marker).then((st) => st.mtimeMs, () => null)
+    if (written === null) {
+      await this.writeMarker(id, s.movedFrom)
+      return this.relaunchMoved(id)
+    }
+    // (The launcher stamps its events to the second.)
+    const since = Math.floor(written / 1000) * 1000
+    const events = (await this.deps.readEvents(id).catch(() => [])).filter((e) => e.t >= since)
+    const launch = events.map((e) => e.e).lastIndexOf('pitwall:launch')
+    if (launch < 0) return this.relaunchMoved(id)
+    const after = events.slice(launch).map((e) => e.e)
+    if (after.includes('SessionStart')) return this.finish(id)
+    if (after.includes('pitwall:move-failed')) return this.fail(id)
+    this.armWait(id)
+  }
+
+  private async relaunchMoved(id: string): Promise<void> {
+    this.armWait(id)
+    await this.deps.manager.restartClaude(id)
+    this.deps.onRestarted?.(id)
+  }
+
+  /** Claude started on the new account: the move is done. */
+  private async finish(id: string): Promise<void> {
+    const typeContinue = this.continueAfter.has(id)
+    this.forget(id)
+    await this.patch(id, (x) => { delete x.movedFrom })
+    await rm(join(this.deps.sessionDir(id), MOVED_FROM_FILE), { force: true })
+    if (typeContinue) this.continuePending.add(id)
+  }
+
+  /** The conversation wouldn't resume there: back where it came from, never a new conversation, and it says so. */
+  private async fail(id: string): Promise<void> {
+    const s = this.session(id)
+    const project = s && this.projectOf(s)
+    if (!s || !project) return
+    const to = sessionAccountId(project, s, this.ctx()) ?? DEFAULT_ACCOUNT_ID
+    await this.revert(id)
+    const label = await this.deps.labelFor(to).catch(() => to)
+    // Kept on the session until dismissed (an ordinary error is wiped by the next event from the restarted Claude).
+    this.failed.add(id)
+    this.deps.manager.updateSessionExtras(id, { moveError: `Couldn't continue this conversation on ${label}.` })
   }
 
   /** The session's account as it was before the move, and nothing left of the move. */
@@ -295,24 +369,8 @@ export class AccountMover {
     if (e.e !== 'SessionStart' && e.e !== 'pitwall:move-failed') return
     if (this.session(id)?.movedFrom === undefined) return
     void this.chain(id, async () => {
-      const s = this.session(id)
-      if (s?.movedFrom === undefined) return
-      if (e.e === 'SessionStart') {
-        // Claude started on the new account: the move is done.
-        const typeContinue = this.continueAfter.has(id)
-        this.forget(id)
-        await this.patch(id, (x) => { delete x.movedFrom })
-        await rm(join(this.deps.sessionDir(id), MOVED_FROM_FILE), { force: true })
-        if (typeContinue) this.continuePending.add(id)
-        return
-      }
-      // The conversation wouldn't resume there: back where it came from, never a new conversation.
-      const to = sessionAccountId(this.projectOf(s)!, s, this.ctx()) ?? DEFAULT_ACCOUNT_ID
-      await this.revert(id)
-      const label = await this.deps.labelFor(to).catch(() => to)
-      // Kept on the session until dismissed (an ordinary error is wiped by the next event from the restarted Claude).
-      this.failed.add(id)
-      this.deps.manager.updateSessionExtras(id, { moveError: `Couldn't continue this conversation on ${label}.` })
+      if (this.session(id)?.movedFrom === undefined) return
+      await (e.e === 'SessionStart' ? this.finish(id) : this.fail(id))
     }).catch(() => undefined)
   }
 

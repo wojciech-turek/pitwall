@@ -46,7 +46,7 @@ export interface IpcDeps {
   history: Pick<SessionHistory, 'search' | 'forgetFiles'>
   usage: Pick<UsageTracker, 'current' | 'onChange'>
   accounts: Pick<AccountsService, 'list' | 'onChange' | 'beginAdd' | 'finishAdd' | 'cancelAdd' | 'remove' | 'copyFromDefault' | 'endLogin' | 'setActive'>
-  mover: Pick<AccountMover, 'request' | 'requestAll' | 'cancel' | 'moveBack' | 'countMovable'>
+  mover: Pick<AccountMover, 'request' | 'requestAll' | 'cancel' | 'moveBack' | 'countMovable' | 'settleOn'>
   systemStats: Pick<SystemMonitor, 'current' | 'onChange'>
   updates: Pick<UpdateChecker, 'state' | 'checkNow' | 'onChange' | 'hasFeed'>
   pr: Pick<PrPoller, 'feedbackContext'>
@@ -101,6 +101,8 @@ export function registerIpc(d: IpcDeps): () => void {
   handle(IPC.setActiveAccount, async (id: unknown, moveRunning: unknown) => {
     const target = accountId(id)
     await d.accounts.setActive(target)
+    // Sessions already on it stop waiting to move away: switching back cancels.
+    await d.mover.settleOn(target)
     return moveRunning === true ? d.mover.requestAll(target) : { now: 0, later: 0 }
   })
   handle(IPC.getSystemStats, () => d.systemStats.current())
