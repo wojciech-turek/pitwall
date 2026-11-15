@@ -298,6 +298,14 @@ describe('pitwall-launch', () => {
       expect(await serverPane()).toContain('▸ printf')
     })
 
+    test('a PORT inherited from the tmux server environment never overrides PITWALL_PORT', async () => {
+      t.env.PORT = '1234'
+      await setup({ server: { devCommand: 'printf "port=%s" "$PORT"', portBase: 40010 } })
+      await startServer()
+      await waitServer('port=40010')
+      expect(await serverPane()).not.toContain('port=1234')
+    })
+
     test('a PORT in the project environment wins over PITWALL_PORT', async () => {
       await setup({
         project: { ...project, extraEnv: [{ key: 'PORT', value: '3999' }] },

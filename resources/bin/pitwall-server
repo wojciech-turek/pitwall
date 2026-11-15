@@ -4,6 +4,8 @@
 dir="$1"
 
 run_server() (
+  # An inherited PORT (the app's or the login shell's) must not stand in for this session's own port.
+  unset PORT
   . "$dir/env.sh"
   if [ -n "$PITWALL_GH_ACCOUNT" ]; then
     GH_TOKEN=$("${PITWALL_GH_BIN:-gh}" auth token --hostname github.com --user "$PITWALL_GH_ACCOUNT" 2>/dev/null)
@@ -17,7 +19,7 @@ run_server() (
       echo "pitwall: couldn't get a GitHub token for $PITWALL_GH_ACCOUNT — gh commands will run signed out. Check \`gh auth status\`."
     fi
   fi
-  # A PORT set in the project's environment variables (via env.sh) wins.
+  # Only a PORT set in the project's environment variables (via env.sh) wins.
   if [ -z "$PORT" ] && [ -n "$PITWALL_PORT" ]; then PORT="$PITWALL_PORT"; export PORT; fi
   if [ -z "$PITWALL_DEV_COMMAND" ]; then
     echo "No dev server command is set for this folder."
