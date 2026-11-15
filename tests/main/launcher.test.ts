@@ -148,12 +148,31 @@ describe('pitwall-launch', () => {
       expect(names.indexOf('pitwall:prompt-pending')).toBeLessThan(names.indexOf('SessionStart'))
       await t.tmux.sendKeys('pw-l', ['exit', 'Enter'])
       await waitCapture('Press Enter to resume')
+      // Claude started that conversation, so the prompt was given: it stays sent.
+      expect(await stat(join(sd, 'initial-prompt.sent')).then(() => true, () => false)).toBe(true)
+      expect(await stat(join(sd, 'initial-prompt.txt')).then(() => true, () => false)).toBe(false)
       await t.tmux.sendKeys('pw-l', ['Enter'])
       await waitFor(async () => (await logLines()).some((l) => l.includes('--resume')), 8000, 'resume argv')
       const resume = (await logLines()).find((l) => l.includes('--resume'))!
       expect(resume).toBe(`--resume ${ID} --settings ${sd}/hooks.json ${flags}`)
       await waitFor(async () => (await events()).filter((e) => e.e === 'SessionStart').length === 2, 8000, 'second SessionStart')
       expect((await events()).filter((e) => e.e === 'pitwall:prompt-pending')).toHaveLength(1) // the relaunch has no prompt
+    })
+
+    test('Claude exits before its SessionStart (No, exit at the folder-trust prompt): the prompt is kept for the next launch', async () => {
+      await setup({ silent: true }) // no SessionStart, as when Claude stops at the trust prompt
+      t.env.STUB_CLAUDE_RESUME_FAIL = '1' // that conversation never started, so the next launch is a new one
+      await writeFile(join(sd, 'initial-prompt.txt'), 'Do the thing\n')
+      await start()
+      await waitCapture('STUB CLAUDE READY')
+      expect((await logLines())[0]).toBe(`--session-id ${ID} --settings ${sd}/hooks.json --name ${TITLE} -- Do the thing`)
+      await t.tmux.sendKeys('pw-l', ['exit', 'Enter'])
+      await waitCapture('Press Enter to resume')
+      expect(await readFile(join(sd, 'initial-prompt.txt'), 'utf8')).toBe('Do the thing\n')
+      expect(await stat(join(sd, 'initial-prompt.sent')).then(() => true, () => false)).toBe(false)
+      await t.tmux.sendKeys('pw-l', ['Enter'])
+      await waitFor(async () => (await logLines()).filter((l) => l.startsWith('--session-id')).length === 2, 8000, 'new launch')
+      expect((await logLines()).filter((l) => l.startsWith('--session-id'))[1]).toContain('-- Do the thing')
     })
 
     test('a prompt starting with a dash comes after "--", so Claude never reads it as an option', async () => {

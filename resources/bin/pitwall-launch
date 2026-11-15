@@ -65,8 +65,15 @@ launch_new() {
     # The app keeps the session working through SessionStart, until this prompt's UserPromptSubmit.
     [ -n "$first_prompt" ] && log_event "{\"c\":\"$PITWALL_SESSION_ID\",\"t\":$(now),\"e\":\"pitwall:prompt-pending\"}"
   fi
+  prompt_from=$(event_lines)
   start_claude --session-id "$id" --settings "$dir/hooks.json" --name "$PITWALL_TITLE"
   rc=$?
+  # No SessionStart: Claude never began the conversation (No, exit at the folder-trust prompt), so the prompt never
+  # reached it. Keep it for the next launch.
+  if [ -n "$first_prompt" ] && [ -e "$dir/initial-prompt.sent" ] &&
+    ! tail -n +"$((prompt_from + 1))" "$PITWALL_EVENTS_FILE" 2>/dev/null | grep -q '"e":"SessionStart"'; then
+    mv "$dir/initial-prompt.sent" "$dir/initial-prompt.txt"
+  fi
   first_prompt=
   return "$rc"
 }
