@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { exitCodeFor, parseArgs } from '../../src/cli/index'
+import { exitCodeFor, parseArgs, USAGE } from '../../src/cli/index'
 
 describe('pitwall client: parseArgs', () => {
   test('new: title, prompt, branch, base, json', () => {
@@ -30,6 +30,9 @@ describe('pitwall client: parseArgs', () => {
     expect(parseArgs([])).toEqual({ help: true })
     expect(parseArgs(['nope'])).toMatchObject({ error: expect.stringContaining('nope') })
     expect(parseArgs(['list', '--wat'])).toMatchObject({ error: expect.stringContaining('--wat') })
+  })
+  test('--help says how to wait without hitting the caller\'s own command timeout', () => {
+    expect(USAGE.replace(/\s+/g, ' ')).toContain('`pitwall wait` blocks until the session finishes; give it a `--timeout` shorter than your command timeout and run it again if it times out (exit 124).')
   })
 })
 

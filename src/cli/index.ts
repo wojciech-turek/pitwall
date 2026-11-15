@@ -28,6 +28,9 @@ export const USAGE = `Usage:
   pitwall --help
 
 Exit codes: 0 ok, 1 error, 2 not in a Pitwall session, 3 needs you, 4 exited, 124 timeout.
+
+\`pitwall wait\` blocks until the session finishes; give it a \`--timeout\` shorter than your command timeout and
+run it again if it times out (exit 124).
 `
 
 const VALUE_FLAGS: Record<string, string[]> = {

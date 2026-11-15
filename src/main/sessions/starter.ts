@@ -178,7 +178,8 @@ export const AGENT_NOTE =
   'the `pitwall` command instead of creating git worktrees yourself: `pitwall new "<title>" --prompt "<task>"` ' +
   'starts a session on its own branch and worktree; `pitwall wait <id>` waits until it finishes and prints its ' +
   'reply; `pitwall list` shows the sessions in this folder; `pitwall send <id> "<text>"` gives a session you started ' +
-  'a follow-up. Run `pitwall --help` for details.'
+  'a follow-up. Run `pitwall --help` for details. `pitwall wait` blocks until the session finishes; give it a ' +
+  '`--timeout` shorter than your command timeout and run it again if it times out (exit 124).'
 
 /**
  * What Claude is told in a session that continues a conversation run outside Pitwall. Its recorded system prompt names

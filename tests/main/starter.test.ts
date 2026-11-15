@@ -9,7 +9,7 @@ import { GitClient } from '../../src/main/git'
 import { forwardSlashes } from '../../src/main/hooks/settings'
 import { sessionDir } from '../../src/main/paths'
 import { KeyedMutex } from '../../src/main/sessions/mutex'
-import { prepareNewSession, startSession, writeSessionFiles, type StarterDeps } from '../../src/main/sessions/starter'
+import { AGENT_NOTE, prepareNewSession, startSession, writeSessionFiles, type StarterDeps } from '../../src/main/sessions/starter'
 import { PortAllocator } from '../../src/main/ports'
 import { Store } from '../../src/main/store'
 import type { SessionBackend } from '../../src/main/backend'
@@ -128,6 +128,8 @@ describe('startSession', () => {
     const note = await readFile(join(d, 'system-note.txt'), 'utf8')
     expect(note).toContain('You are running inside Pitwall')
     expect(note).toContain('`pitwall new "<title>" --prompt "<task>"`')
+    expect(note).toBe(AGENT_NOTE + '\n')
+    expect(AGENT_NOTE.endsWith(' Run `pitwall --help` for details. `pitwall wait` blocks until the session finishes; give it a `--timeout` shorter than your command timeout and run it again if it times out (exit 124).')).toBe(true)
     expect(await has(join(d, 'continue-note.txt'))).toBe(false)
   })
 
