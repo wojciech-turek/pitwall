@@ -1,6 +1,6 @@
 import { createConnection } from 'node:net'
 import { execFileSync } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
@@ -113,6 +113,21 @@ describe('auth', () => {
     expect(k2.equals(k)).toBe(false)
     expect((await loadCliKey(f)).equals(k2)).toBe(true)
   })
+  test('loadCliKey never replaces a key it cannot read: an unreadable file or a folder in the way throws, the key stays', async () => {
+    const f = join(dir, 'cli.key')
+    const k = await loadCliKey(f)
+    await chmod(f, 0o000)
+    try {
+      await expect(loadCliKey(f)).rejects.toMatchObject({ code: 'EACCES' })
+    } finally {
+      await chmod(f, 0o600)
+    }
+    expect((await loadCliKey(f)).equals(k)).toBe(true) // every session's token still works
+    const d = join(dir, 'key-dir')
+    await mkdir(d)
+    await expect(loadCliKey(d)).rejects.toMatchObject({ code: 'EISDIR' })
+  })
+
   test('cliSocketPath is in the data dir, or a short temp path when that is too long', () => {
     expect(cliSocketPath('/a/b')).toBe('/a/b/cli.sock')
     const long = '/' + 'x'.repeat(120)
