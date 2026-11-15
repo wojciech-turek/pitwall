@@ -5,7 +5,7 @@ import * as L from './layout'
 import type { Layout, Zone } from './layout'
 import type { PaletteMode } from './palette'
 
-export type MainTab = { id: 'claude' } | { id: 'shell' } | { id: string; kind: 'file' | 'diff'; path: string }
+export type MainTab = { id: 'claude' } | { id: 'shell' } | { id: 'server' } | { id: string; kind: 'file' | 'diff'; path: string }
 
 export type DialogState =
   | { type: 'project'; projectId?: string }
@@ -63,6 +63,15 @@ export interface UiState {
   setDirty(tabKey: string, dirty: boolean): void
   /** Forget tabs, drafts and dirty flags of a session that no longer exists (archived). */
   forgetSession(sessionId: string): void
+}
+
+/** The tabs to show: the Server tab (when the folder has a dev command) sits after Shell, before open files. */
+export function withServerTab(tabs: MainTab[], enabled: boolean): MainTab[] {
+  const rest = tabs.filter((t) => t.id !== 'server')
+  if (!enabled) return rest
+  const at = rest.findIndex((t) => t.id !== 'claude' && t.id !== 'shell')
+  const server: MainTab = { id: 'server' }
+  return at < 0 ? [...rest, server] : [...rest.slice(0, at), server, ...rest.slice(at)]
 }
 
 const defaultTabs = (): MainTab[] => [{ id: 'claude' }, { id: 'shell' }]
@@ -151,7 +160,7 @@ export const useUi = create<UiState>()((set, get) => ({
     }),
   closeTab: (sessionId, tabId) =>
     set((s) => {
-      if (tabId === 'claude' || tabId === 'shell') return s
+      if (tabId === 'claude' || tabId === 'shell' || tabId === 'server') return s
       const cur = s.tabs[sessionId]
       const idx = cur?.findIndex((t) => t.id === tabId) ?? -1
       if (!cur || idx < 0) return s

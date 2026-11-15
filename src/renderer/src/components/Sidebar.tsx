@@ -79,7 +79,7 @@ export default function Sidebar({ snap, onSelect }: { snap: AppSnapshot; onSelec
             <PlusIcon />
           </button>
           <Menu testId="subproject-menu" items={[
-            { label: 'Setup and teardown…', testId: 'subproject-setup', onClick: () => openDialog({ type: 'subproject-settings', subProjectId: sp.id }) },
+            { label: 'Setup, dev server and teardown…', testId: 'subproject-setup', onClick: () => openDialog({ type: 'subproject-settings', subProjectId: sp.id }) },
             { label: 'Remove from pitwall', danger: true, onClick: () => void run(window.pitwall.removeSubProject(sp.id)) }
           ]} />
         </span>

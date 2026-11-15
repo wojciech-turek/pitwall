@@ -59,7 +59,9 @@ function ensureSubscribed(): void {
     // Claude: a key relaunches the tmux session, which resumes the same conversation.
     const text = kind === 'shell'
       ? 'Shell exited — press any key to start a new one'
-      : 'Claude session ended — press any key to reattach.'
+      : kind === 'server'
+        ? 'Dev server stopped — press any key to start it again'
+        : 'Claude session ended — press any key to reattach.'
     e.term.write(`\r\n\x1b[90m[${text}]\x1b[0m`)
   })
 }

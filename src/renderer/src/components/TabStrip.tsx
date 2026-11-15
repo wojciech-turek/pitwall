@@ -2,8 +2,8 @@ import { useUi, type MainTab } from '../state/ui'
 import { requestFocus } from '../terminal/termCache'
 import { baseName } from '@shared/base-name'
 
-export default function TabStrip({ sessionId, tabs, active }: {
-  sessionId: string; tabs: MainTab[]; active: string
+export default function TabStrip({ sessionId, tabs, active, serverRunning = false }: {
+  sessionId: string; tabs: MainTab[]; active: string; serverRunning?: boolean
 }): React.JSX.Element {
   const setActive = useUi((s) => s.setActiveTab)
   const closeTab = useUi((s) => s.closeTab)
@@ -12,13 +12,14 @@ export default function TabStrip({ sessionId, tabs, active }: {
   return (
     <div className="tabstrip" role="tablist">
       {tabs.map((t) => {
-        const isTerm = t.id === 'claude' || t.id === 'shell'
-        const label = t.id === 'claude' ? 'Claude' : t.id === 'shell' ? 'Shell' : `${'kind' in t && t.kind === 'diff' ? 'Diff · ' : ''}${baseName((t as { path: string }).path)}`
+        const isTerm = t.id === 'claude' || t.id === 'shell' || t.id === 'server'
+        const label = t.id === 'claude' ? 'Claude' : t.id === 'shell' ? 'Shell' : t.id === 'server' ? 'Server' : `${'kind' in t && t.kind === 'diff' ? 'Diff · ' : ''}${baseName((t as { path: string }).path)}`
         return (
           <div key={t.id} role="tab" aria-selected={t.id === active} data-testid={`tab-${isTerm ? t.id : t.id}`}
             className={`tab${t.id === active ? ' active' : ''}`}
-            onClick={() => { if (isTerm) requestFocus(sessionId, t.id as 'claude' | 'shell'); setActive(sessionId, t.id) }}>
+            onClick={() => { if (isTerm) requestFocus(sessionId, t.id as 'claude' | 'shell' | 'server'); setActive(sessionId, t.id) }}>
             <span className="tab-label">{label}</span>
+            {t.id === 'server' && serverRunning && <span className="server-dot" data-testid="server-dot" aria-label="Running" />}
             {dirty[`${sessionId}:${t.id}`] && <span className="tab-dirty" aria-label="Unsaved changes" />}
             {!isTerm && (
               <button className="tab-close" aria-label={`Close ${label}`}

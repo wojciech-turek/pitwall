@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { layoutStorage, useUi } from '../../src/renderer/src/state/ui'
+import { layoutStorage, useUi, withServerTab, type MainTab } from '../../src/renderer/src/state/ui'
 import { EMPTY_LAYOUT, panes, parseLayout, type Layout } from '../../src/renderer/src/state/layout'
 
 const file = (p: string) => ({ id: `file:${p}`, kind: 'file' as const, path: p })
@@ -276,5 +276,27 @@ describe('palette', () => {
     expect(useUi.getState().palette).toBe('files')
     ui.closePalette()
     expect(useUi.getState().palette).toBeNull()
+  })
+})
+
+describe('withServerTab', () => {
+  const base: MainTab[] = [{ id: 'claude' }, { id: 'shell' }, file('a.ts')]
+  const ids = (t: MainTab[]): string[] => t.map((x) => x.id)
+
+  test('puts the server tab after shell, before files', () => {
+    expect(ids(withServerTab(base, true))).toEqual(['claude', 'shell', 'server', 'file:a.ts'])
+  })
+  test('removes it when disabled', () => {
+    expect(ids(withServerTab(withServerTab(base, true), false))).toEqual(['claude', 'shell', 'file:a.ts'])
+  })
+  test('enabling twice adds it once', () => {
+    expect(ids(withServerTab(withServerTab(base, true), true))).toEqual(['claude', 'shell', 'server', 'file:a.ts'])
+  })
+  test('the server tab cannot be closed', () => {
+    const ui = useUi.getState()
+    ui.select('s1')
+    useUi.setState({ tabs: { s1: withServerTab(useUi.getState().tabs['s1'], true) } })
+    ui.closeTab('s1', 'server')
+    expect(ids(useUi.getState().tabs['s1'])).toContain('server')
   })
 })
