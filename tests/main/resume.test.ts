@@ -511,13 +511,11 @@ describe('resumeSession', () => {
     })
     test('gets a new block when another live session holds it', async () => {
       const got = await resumeWith({ otherLive: 40050 })
-      expect(got).toBeDefined()
-      expect(got).not.toBe(40050)
+      expect(got).toBe(40000)
     })
     test('gets a new block when its first port is busy', async () => {
       const got = await resumeWith({ free: (p) => p !== 40050 })
-      expect(got).toBeDefined()
-      expect(got).not.toBe(40050)
+      expect(got).toBe(40000)
     })
   })
 })

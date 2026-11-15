@@ -177,9 +177,8 @@ async function doResume(
       if (deps.ports) {
         // Keep the old block when nobody else has it and its first port is free; else a new one.
         const taken = takenPorts(deps)
-        const keep = s.portBase !== undefined && !taken.includes(s.portBase) && (await deps.ports.isFree(s.portBase))
-        if (keep) deps.ports.reserve(s.portBase!)
-        r.portBase = keep ? s.portBase : await deps.ports.allocate(taken)
+        const old = s.portBase
+        r.portBase = old !== undefined && (await deps.ports.claim(old, taken)) ? old : await deps.ports.allocate(taken)
         session.portBase = r.portBase
       }
       await writeSessionFiles(session, deps)

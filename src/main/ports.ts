@@ -18,15 +18,26 @@ export function portFree(port: number): Promise<boolean> {
  */
 export class PortAllocator {
   private readonly reserved = new Set<number>()
-  readonly isFree: (port: number) => Promise<boolean>
+  private readonly isFree: (port: number) => Promise<boolean>
 
   constructor(o: { isFree?: (port: number) => Promise<boolean> } = {}) {
     this.isFree = o.isFree ?? portFree
   }
 
-  /** Marks a block as in use without checking it (a resumed session keeping its old one). */
-  reserve(base: number): void {
+  /**
+   * Takes a particular block (a resumed session's old one) if it isn't taken or reserved and its first port is free.
+   * Reserved before the check, like allocate, so a block can't be handed to two sessions.
+   */
+  async claim(base: number, taken: number[]): Promise<boolean> {
+    if (taken.includes(base) || this.reserved.has(base)) return false
     this.reserved.add(base)
+    let free = false
+    try {
+      free = await this.isFree(base)
+    } finally {
+      if (!free) this.reserved.delete(base)
+    }
+    return free
   }
 
   async allocate(taken: number[]): Promise<number> {

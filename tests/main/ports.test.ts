@@ -20,17 +20,33 @@ describe('PortAllocator', () => {
     expect(await Promise.all([a.allocate([]), a.allocate([])])).toEqual([40000, 40010])
     expect(await a.allocate([])).toBe(40020)
   })
-  test('reserve() keeps a block from being handed out', async () => {
+  test('claim of a free block is true, and allocate then skips it', async () => {
     const a = new PortAllocator({ isFree: always })
-    a.reserve(40000)
-    a.reserve(40020)
+    expect(await a.claim(40000, [])).toBe(true)
     expect(await a.allocate([])).toBe(40010)
-    expect(await a.allocate([])).toBe(40030)
   })
-  test('isFree is the injected check', async () => {
-    const a = new PortAllocator({ isFree: async (p) => p === 40010 })
-    expect(await a.isFree(40010)).toBe(true)
-    expect(await a.isFree(40000)).toBe(false)
+  test('claim of a taken or reserved block is false', async () => {
+    const a = new PortAllocator({ isFree: always })
+    expect(await a.claim(40000, [40000])).toBe(false)
+    expect(await a.claim(40010, [])).toBe(true)
+    expect(await a.claim(40010, [])).toBe(false)
+  })
+  test('claim of a busy block is false and leaves it unreserved', async () => {
+    let busy = true
+    const a = new PortAllocator({ isFree: async () => !busy })
+    expect(await a.claim(40000, [])).toBe(false)
+    busy = false
+    expect(await a.allocate([])).toBe(40000)
+  })
+  test('a claim and an allocate at the same moment never get the same block', async () => {
+    const a = new PortAllocator({ isFree: () => new Promise((r) => setImmediate(() => r(true))) })
+    const [claimed, got] = await Promise.all([a.claim(40000, []), a.allocate([])])
+    expect(claimed).toBe(true)
+    expect(got).toBe(40010)
+    const b = new PortAllocator({ isFree: () => new Promise((r) => setImmediate(() => r(true))) })
+    const [got2, claimed2] = await Promise.all([b.allocate([]), b.claim(40000, [])])
+    expect(got2).toBe(40000)
+    expect(claimed2).toBe(false)
   })
   test('a busy block is not left reserved', async () => {
     let busy = true
