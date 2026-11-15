@@ -352,6 +352,15 @@ describe('subagent runs', () => {
     expect(o.activity).toBe('needs_input')
     expect(r(o, 'PostToolUse', { aid: 'b' }).activity).toBe('idle')
   })
+  test('the permission Notification Claude sends without an agent id (~6 s after the subagent\'s PermissionRequest) keeps the resume', () => {
+    let o = r(started(), 'PermissionRequest', { aid: 'a', tool: 'Bash' })
+    expect(o.resumeActivity).toBe('idle')
+    o = r(o, 'Notification', { nt: 'permission_prompt' }) // no aid
+    expect(o).toMatchObject({ activity: 'needs_input', needsInput: 'permission', resumeActivity: 'idle' })
+    const p = r(o, 'PostToolUse', { aid: 'a', tool: 'Bash' })
+    expect(p.activity).toBe('idle')
+    expect(displayStatus(p, 0)).toBe('unread')
+  })
   test('a parent event while a subagent question is pending drops the resume', () => {
     const o = r(r(started(), 'PermissionRequest', { aid: 'a', tool: 'Bash' }), 'UserPromptSubmit')
     expect(o.resumeActivity).toBeUndefined()

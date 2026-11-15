@@ -175,8 +175,9 @@ function applyMain(rt: SessionRuntime, ev: HookEvent): SessionRuntime {
 
 export function reduceRuntime(rt: SessionRuntime, ev: HookEvent): SessionRuntime {
   const next = { ...apply(rt, ev) }
-  // The parent's own events take over from a subagent's question (a typed answer keeps it).
-  if (!ev.aid && ev.e !== 'pitwall:user-input') delete next.resumeActivity
+  // The parent's own events take over from a subagent's question (a typed answer keeps it). A Notification doesn't:
+  // Claude can send the permission one without the subagent's id, some seconds after its PermissionRequest.
+  if (!ev.aid && ev.e !== 'pitwall:user-input' && ev.e !== 'Notification') delete next.resumeActivity
   if (ev.sid) next.claudeSessionId = ev.sid
   next.lastEventAt = ev.t
   if (!ev.e.startsWith('pitwall:')) next.firstEventSeen = true
