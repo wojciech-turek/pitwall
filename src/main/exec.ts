@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
-import { statSync } from 'node:fs'
+import { accessSync, constants, statSync } from 'node:fs'
+import { delimiter, join } from 'node:path'
 import { windowsCommand, type IsFile } from '../host/win-command'
 
 export interface ExecResult { code: number; stdout: string; stderr: string }
@@ -14,6 +15,25 @@ export const isFile: IsFile = (p) => {
   } catch {
     return false
   }
+}
+
+const isExecutableFile = (p: string): boolean => {
+  try {
+    accessSync(p, constants.X_OK)
+    return statSync(p).isFile()
+  } catch {
+    return false
+  }
+}
+
+/** The first `<dir>/<name>` on `pathVar` that is an executable regular file, or null. Empty entries are skipped. */
+export function findExecutable(name: string, pathVar: string | undefined, isExec: (p: string) => boolean = isExecutableFile): string | null {
+  for (const dir of (pathVar ?? '').split(delimiter)) {
+    if (!dir) continue
+    const p = join(dir, name)
+    if (isExec(p)) return p
+  }
+  return null
 }
 
 /**

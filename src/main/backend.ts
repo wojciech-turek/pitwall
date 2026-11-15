@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises'
 import type { LauncherSpec } from '../host/protocol'
 
 export type { LauncherSpec }
@@ -82,4 +83,32 @@ export type LauncherChoice = 'script' | 'host'
 export function launcherChoice(env: Record<string, string | undefined>, platform: NodeJS.Platform = process.platform): LauncherChoice {
   if (platform === 'win32') return 'host'
   return env.PITWALL_LAUNCHER === 'host' && sessionBackendKind(env, platform) === 'host' ? 'host' : 'script'
+}
+
+/**
+ * Which backend this run uses. Windows: the host. An env override: that. Sessions already running keep the backend
+ * recorded for them (never switch a running set between tmux and the host). Otherwise tmux if it is installed, else
+ * the host. `record` says to write the choice to backend.json. A recorded tmux with no tmux found still gives tmux:
+ * its sessions then fail one by one with tmux's own error instead of being orphaned.
+ */
+export function chooseBackend(o: {
+  env: Record<string, string | undefined>; platform: NodeJS.Platform; tmuxPath: string | null
+  recorded: BackendKind | null; liveSessions: number
+}): { kind: BackendKind; record: boolean } {
+  if (o.platform === 'win32') return { kind: 'host', record: false }
+  if (o.env.PITWALL_SESSION_BACKEND === 'host') return { kind: 'host', record: false }
+  if (o.env.PITWALL_SESSION_BACKEND === 'tmux') return { kind: 'tmux', record: false }
+  if (o.recorded && o.liveSessions > 0) return { kind: o.recorded, record: false }
+  if (o.tmuxPath) return { kind: 'tmux', record: true }
+  return { kind: 'host', record: true }
+}
+
+/** backend.json's `kind`; null when the file is missing, unreadable or says anything else. */
+export async function readRecordedBackend(file: string): Promise<BackendKind | null> {
+  try {
+    const kind = (JSON.parse(await readFile(file, 'utf8')) as { kind?: unknown } | null)?.kind
+    return kind === 'tmux' || kind === 'host' ? kind : null
+  } catch {
+    return null
+  }
 }

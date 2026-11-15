@@ -3,8 +3,9 @@ import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { app, BrowserWindow, dialog, Menu, nativeImage, powerMonitor, shell } from 'electron'
 import { IPC } from '@shared/api'
-import { launcherChoice, sessionBackendKind, type SessionBackend } from './backend'
-import { exec } from './exec'
+import { chooseBackend, launcherChoice, readRecordedBackend, type SessionBackend } from './backend'
+import { writeFileAtomic } from './atomic'
+import { exec, findExecutable } from './exec'
 import { historySources, SessionHistory } from './history'
 import { HostBackend } from './host-backend'
 import { buildMenuTemplate } from './menu'
@@ -178,12 +179,26 @@ function focusSession(sessionId: string): void {
 }
 
 /**
- * tmux on Pitwall's private socket, or (PITWALL_SESSION_BACKEND=host) the Pitwall host: this executable run as Node
+ * tmux on Pitwall's private socket, or (PITWALL_SESSION_BACKEND=host, or no tmux installed; see chooseBackend) the Pitwall host: this executable run as Node
  * on out/host/index.js, one per data dir, so a dev build and the installed app never share agents.
  */
-function createBackend(env: Record<string, string>): SessionBackend {
-  if (sessionBackendKind(process.env) === 'tmux') {
-    return new TmuxBackend(new Tmux({ socket: paths.tmuxSocket, confPath: paths.tmuxConf, env, exec }), env)
+async function createBackend(env: Record<string, string>, store: Store): Promise<SessionBackend> {
+  const file = join(paths.dataDir, 'backend.json')
+  const tmuxPath = findExecutable('tmux', env.PATH)
+  const choice = chooseBackend({
+    env: process.env, platform: process.platform, tmuxPath,
+    recorded: await readRecordedBackend(file),
+    liveSessions: store.state.sessions.filter((s) => s.archivedAt === undefined).length
+  })
+  if (choice.record) {
+    try {
+      await writeFileAtomic(file, JSON.stringify({ kind: choice.kind }))
+    } catch (e) {
+      console.error('could not record the session backend:', e)
+    }
+  }
+  if (choice.kind === 'tmux') {
+    return new TmuxBackend(new Tmux({ socket: paths.tmuxSocket, confPath: paths.tmuxConf, env, exec, tmuxBin: tmuxPath ?? undefined }), env)
   }
   return new HostBackend({
     dataDir: paths.dataDir,
@@ -202,7 +217,7 @@ async function bootstrap(): Promise<void> {
   await installResources(paths)
   const store = await Store.open(paths.stateFile)
   const git = new GitClient(exec, env)
-  const backend = createBackend(env)
+  const backend = await createBackend(env, store)
   const notifier = electronNotifier(focusSession, paths.notificationsDisabled, {
     window: () => win, quiet: QUIET,
     // The red dot is drawn on the icon the Dock shows: the bundle's (the same artwork), or a dev run's own.
