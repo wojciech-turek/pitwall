@@ -3,7 +3,7 @@ import {
   accountIdentity, accountLabels, defaultAccountDir, sameAccount, sessionAccountId, sessionConfigDir, DEFAULT_ACCOUNT_ID,
   type AccountCtx
 } from './accounts'
-import { copyProfileKeys, createAccountFolder, linkShared, profileFile, removeAccountFolder, PROFILE_KEYS } from './account-folders'
+import { copyProfileKeys, createAccountFolder, isProfileKey, linkShared, profileFile, removeAccountFolder } from './account-folders'
 import type { SessionBackend } from './backend'
 import type { Exec } from './exec'
 import type { AppPaths } from './paths'
@@ -182,7 +182,7 @@ export class AccountsService {
         return { ok: false, message: `${who.email} is already added.` }
       }
     }
-    await copyProfileKeys(profileFile(defaultDir, this.deps.home), profileFile(dir, this.deps.home), PROFILE_KEYS)
+    await copyProfileKeys(profileFile(defaultDir, this.deps.home), profileFile(dir, this.deps.home), isProfileKey)
     await linkShared(dir, defaultDir)
     this.adding.delete(addId)
     await this.deps.store.update((d) => {

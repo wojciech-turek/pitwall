@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import {
   copyProfileKeys, copyProjectEntry, createAccountFolder, linkShared, profileFile, removeAccountFolder,
-  LINKED_DIRS, LINKED_FILES, PROFILE_KEYS
+  isProfileKey, LINKED_DIRS, LINKED_FILES, PROFILE_KEYS
 } from '../../src/main/account-folders'
 
 const WINDOWS = process.platform === 'win32'
@@ -42,7 +42,7 @@ describe('an added account\'s folder', () => {
   test('what is shared and what is not', () => {
     expect(LINKED_DIRS).toEqual(['projects', 'todos', 'plans', 'file-history', 'shell-snapshots', 'commands', 'agents', 'skills', 'plugins'])
     expect(LINKED_FILES).toEqual(['settings.json', 'CLAUDE.md', 'keybindings.json'])
-    expect(PROFILE_KEYS).toEqual(['mcpServers', 'hasCompletedOnboarding', 'lastOnboardingVersion'])
+    expect(PROFILE_KEYS).toEqual(['mcpServers', 'lastOnboardingVersion', 'claudeInChromeDefaultEnabled'])
     for (const never of ['.claude.json', '.credentials.json', 'sessions', 'statsig']) {
       expect([...LINKED_DIRS, ...LINKED_FILES]).not.toContain(never)
     }
@@ -107,9 +107,28 @@ describe('the profile file (.claude.json)', () => {
     const to = join(dir, '.claude.json')
     writeFileSync(from, JSON.stringify({ mcpServers: { x: 1 }, hasCompletedOnboarding: true, oauthAccount: { emailAddress: 'a@x' }, userID: 'u', projects: { '/p': {} } }))
     writeFileSync(to, JSON.stringify({ oauthAccount: { emailAddress: 'b@x' } }))
-    await copyProfileKeys(from, to, PROFILE_KEYS)
+    await copyProfileKeys(from, to, isProfileKey)
     expect(json(to)).toEqual({ oauthAccount: { emailAddress: 'b@x' }, mcpServers: { x: 1 }, hasCompletedOnboarding: true })
     if (!WINDOWS) expect(statSync(to).mode & 0o777).toBe(0o600)
+  })
+
+  test("a new account takes every 'already seen' flag, so Claude starts at its prompt there; never facts about the other account", async () => {
+    const seen = {
+      hasCompletedOnboarding: true, lastOnboardingVersion: '1.0.3', hasCompletedClaudeInChromeOnboarding: true,
+      claudeInChromeDefaultEnabled: true, hasSeenTasksHint: true, hasShownOpus46Notice: true, hasAcknowledgedCostThreshold: true,
+      hasIdeOnboardingBeenShown: true, effortCalloutV2Dismissed: true, thinkingMigrationComplete: true, mcpServers: { x: 1 }
+    }
+    const theirs = {
+      oauthAccount: { emailAddress: 'a@x' }, userID: 'u', machineID: 'm', anonymousId: 'anon', projects: { '/p': {} },
+      hasAvailableMaxSubscription: true, claudeMaxTier: 'x', cachedFeatureFlags: { f: 1 }, modelAccessCache: { m: 1 },
+      orgModelDefaultCache: {}, numStartups: 99, tipsHistory: { t: 1 }, hasExtraUsageEnabled: true
+    }
+    const from = join(tmp, 'from.json')
+    const to = join(dir, '.claude.json')
+    writeFileSync(from, JSON.stringify({ ...seen, ...theirs }))
+    writeFileSync(to, JSON.stringify({ oauthAccount: { emailAddress: 'b@x' }, userID: 'me' }))
+    await copyProfileKeys(from, to, isProfileKey)
+    expect(json(to)).toEqual({ oauthAccount: { emailAddress: 'b@x' }, userID: 'me', ...seen })
   })
 
   test('a key asked for that is the profile itself is refused', async () => {

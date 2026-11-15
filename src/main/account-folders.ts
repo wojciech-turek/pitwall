@@ -16,8 +16,18 @@ export { profileFile }
 export const LINKED_DIRS = ['projects', 'todos', 'plans', 'file-history', 'shell-snapshots', 'commands', 'agents', 'skills', 'plugins']
 /** Files linked to the default account's (copied on Windows, where a file link needs privileges). */
 export const LINKED_FILES = ['settings.json', 'CLAUDE.md', 'keybindings.json']
-/** What a new account's profile takes from the default one: user-level MCP servers and "onboarding is done". */
-export const PROFILE_KEYS = ['mcpServers', 'hasCompletedOnboarding', 'lastOnboardingVersion']
+/** Keys a new account's profile takes from the default one by name: user-level MCP servers, and two first-run answers. */
+export const PROFILE_KEYS = ['mcpServers', 'lastOnboardingVersion', 'claudeInChromeDefaultEnabled']
+/**
+ * ...and by shape: every "already seen / done" flag (hasCompletedOnboarding, hasSeenTasksHint, effortCalloutDismissed,
+ * thinkingMigrationComplete…). Checked with real Claude Code (2.1.325): a profile fresh from `claude auth login` opens
+ * on the first-run theme picker, then other one-time prompts, and a session moved there would sit at them; with these
+ * copied it opens at its prompt. Facts about the account (hasAvailableMaxSubscription, caches, ids) never match.
+ */
+const SEEN_FLAG = /^has(Completed|Seen|Shown|Acknowledged|Opened|Visited|Used|Reset|IdeOnboarding)[A-Z]|Dismissed$|MigrationComplete$/
+
+/** What a new account's profile takes from the default one. */
+export const isProfileKey = (key: string): boolean => PROFILE_KEYS.includes(key) || SEEN_FLAG.test(key)
 /** Who is signed in: never copied from one account to another, whatever is asked. */
 const NEVER_COPIED = new Set(['oauthAccount', 'userID', 'projects'])
 
@@ -93,11 +103,12 @@ async function mergeProfileNow(fromFile: string, toFile: string, merge: (from: J
 }
 
 /** Copies only the named top-level keys (never the signed-in profile) from one account's profile into another's. */
-export function copyProfileKeys(fromFile: string, toFile: string, keys: readonly string[]): Promise<void> {
+export function copyProfileKeys(fromFile: string, toFile: string, keys: readonly string[] | ((key: string) => boolean)): Promise<void> {
+  const wanted = typeof keys === 'function' ? keys : (k: string): boolean => keys.includes(k)
   return mergeProfile(fromFile, toFile, (from, to) => {
     let changed = false
-    for (const k of keys) {
-      if (NEVER_COPIED.has(k) || !(k in from)) continue
+    for (const k of Object.keys(from)) {
+      if (NEVER_COPIED.has(k) || !wanted(k)) continue
       to[k] = from[k]
       changed = true
     }

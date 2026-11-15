@@ -261,3 +261,28 @@ If a check fails:
   `usage.test.ts`, `tests/host/launcher.test.ts`, the Windows suites, an e2e with a fake `claude`).
 - The two known gaps in `docs/todo.md` under Accounts (`~` in the app's `CLAUDE_CONFIG_DIR`, symlinked spellings)
   matter more now; fix them as part of normalising account folders.
+
+## Check first: results (2026-11-15, Claude Code 2.1.325, macOS)
+
+Done by hand with two real accounts in different organisations: a Team seat (the default folder) and a personal Max
+plan (a scratch folder), then signed out and removed again.
+
+1. **Resume across accounts: works, both ways.** A conversation started on the Team account resumed on the Max
+   account with `projects` linked, back on Team, and on Max again: same conversation id, full history each time.
+   Across organisations Claude says once "Claude can't use thinking from another organization": the earlier
+   thinking isn't deleted, but the next replies reread the conversation and may be slower and use more tokens.
+2. **Logins are kept apart per folder at 2.1.325** (two Keychain entries, `Claude Code-credentials` and
+   `Claude Code-credentials-<8 hex>`). The oldest version that does this was **not found**: Claude's changelog doesn't
+   say. `MIN_CLAUDE_FOR_ACCOUNTS` stays a placeholder.
+3. **`claude auth login` honours `CLAUDE_CONFIG_DIR`**, and `claude auth logout` there removed only that folder's
+   login: the default account stayed signed in.
+4. **Links are followed and survive.** `projects`, `file-history`, `shell-snapshots`, `skills`, `plugins` and
+   `settings.json` were still links after four runs; the same 16 plugins were listed on both accounts. Not tried:
+   changing a setting from inside Claude on the added account (whether a save replaces the `settings.json` link).
+5. **Two accounts refreshing at once: not checked** (needs both idle for over an hour).
+6. **First-run prompts.** A profile fresh from `claude auth login` opens on the first-run theme picker; with
+   `hasCompletedOnboarding` and `lastOnboardingVersion` copied it reaches the folder-trust prompt; with the folder's
+   `projects` entry (`hasTrustDialogAccepted`) it reaches a further one-time prompt ("Claude in Chrome extension
+   detected"). With every "already seen" flag copied from the default profile it opens at its prompt. So a new
+   account now takes those flags by shape (`isProfileKey` in `src/main/account-folders.ts`), not three named keys.
+   User-level MCP servers are listed there but need signing in again, as designed.

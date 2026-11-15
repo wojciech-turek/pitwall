@@ -40,7 +40,7 @@ beforeEach(async () => {
   home = join(tmp, 'home')
   root = join(tmp, 'data', 'claude-accounts')
   mkdirSync(join(home, '.claude', 'projects'), { recursive: true })
-  writeFileSync(join(home, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'me@x.com' }, mcpServers: { srv: 1 }, hasCompletedOnboarding: true }))
+  writeFileSync(join(home, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'me@x.com' }, mcpServers: { srv: 1 }, hasCompletedOnboarding: true, hasSeenTasksHint: true, numStartups: 9 }))
   store = await Store.open(join(tmp, 'state.json'))
   await store.update((d) => { d.projects.push(project('p')); d.subProjects.push(sub('sp', 'p')) })
   started = []; killed = []; execs = []; usage = []
@@ -123,6 +123,8 @@ describe('adding an account', () => {
     const profile = JSON.parse(readFileSync(join(dir, '.claude.json'), 'utf8'))
     expect(profile.mcpServers).toEqual({ srv: 1 })
     expect(profile.hasCompletedOnboarding).toBe(true)
+    expect(profile.hasSeenTasksHint).toBe(true) // every one-time prompt already answered stays answered
+    expect('numStartups' in profile).toBe(false)
     expect(profile.oauthAccount.emailAddress).toBe('work@x.com')
     expect(killed).toContain(`pw-login-${res.id}`)
   })
