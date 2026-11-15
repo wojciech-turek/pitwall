@@ -49,7 +49,7 @@ beforeEach(() => {
   registerIpc({
     manager, history,
     pr: { feedbackContext: async () => ({ ok: false as const, message: 'x' }) },
-    usage: { current: () => null, onChange: () => () => {} },
+    usage: { current: () => [], onChange: () => () => {} },
     systemStats: { current: () => null, onChange: () => () => {} },
     updates: { state: () => null, checkNow: async () => {}, onChange: () => () => {}, hasFeed: () => false },
     send: () => {}, onViewing: () => {}, env: {}, home: '/home/me', dev: false
@@ -126,7 +126,7 @@ describe('IPC: stray worktrees', () => {
     registerIpc({
       manager, history, store, git, exec, paths: { dataDir: '/nowhere/pitwall' },
       pr: { feedbackContext: async () => ({ ok: false as const, message: 'x' }) },
-      usage: { current: () => null, onChange: () => () => {} },
+      usage: { current: () => [], onChange: () => () => {} },
       systemStats: { current: () => null, onChange: () => () => {} },
       updates: { state: () => null, checkNow: async () => {}, onChange: () => () => {}, hasFeed: () => false },
       send: () => {}, onViewing: () => {}, env: {}, home: '/home/me', dev: false

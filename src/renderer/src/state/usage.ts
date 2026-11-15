@@ -1,14 +1,14 @@
 import { useEffect } from 'react'
 import { create } from 'zustand'
 import type { PitwallApi } from '@shared/api'
-import type { ClaudeUsage, UsageWindow } from '@shared/types'
+import type { AccountUsage, UsageWindow } from '@shared/types'
 
-const useUsageStore = create<{ usage: ClaudeUsage | null }>()(() => ({ usage: null }))
+const useUsageStore = create<{ usage: AccountUsage[] }>()(() => ({ usage: [] }))
 let started = false
 let pushed = false // a push is newer than the initial fetch
 const api = (): PitwallApi => (globalThis as unknown as { pitwall: PitwallApi }).pitwall
 
-export function __pushUsage(usage: ClaudeUsage | null): void {
+export function __pushUsage(usage: AccountUsage[]): void {
   pushed = true
   useUsageStore.setState({ usage })
 }
@@ -23,10 +23,16 @@ function start(): void {
   })
 }
 
-/** Claude subscription usage; one IPC subscription for the whole renderer. */
-export function useUsage(): ClaudeUsage | null {
+/** Claude subscription usage per account; one IPC subscription for the whole renderer. */
+export function useUsage(): AccountUsage[] {
   useEffect(start, [])
   return useUsageStore((s) => s.usage)
+}
+
+/** The selected session's account first, the rest in their given order. */
+export function orderAccounts(list: AccountUsage[], selected?: string): AccountUsage[] {
+  const mine = list.filter((x) => x.account === selected)
+  return mine.length ? [...mine, ...list.filter((x) => x.account !== selected)] : list
 }
 
 export type UsageLevel = 'ok' | 'warn' | 'high'

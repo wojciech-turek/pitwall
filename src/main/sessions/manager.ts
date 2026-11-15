@@ -1,3 +1,4 @@
+import { accountKey } from '../accounts'
 import { writeFileAtomic } from '../atomic'
 import { join } from 'node:path'
 import { countStatuses, displayStatus, initialRuntime, reduceRuntime } from '@shared/runtime'
@@ -56,6 +57,8 @@ export class SessionManager {
   private clearing = new Set<string>()
   private warnings = new Map<string, string>()
   private errors = new Map<string, string>()
+  /** Project id -> its account, cleared whenever the store changes (an env edit can move a project). */
+  private accounts = new Map<string, string>()
   private snapshotCbs = new Set<(s: AppSnapshot) => void>()
   private eventCbs = new Set<(id: string, ev: HookEvent) => void>()
   private waiters = new Map<string, Set<() => void>>()
@@ -75,6 +78,7 @@ export class SessionManager {
 
   async init(): Promise<void> {
     this.unsubStore = this.deps.store.onChange(() => {
+      this.accounts.clear()
       this.updateBadge() // a project may have been muted or unmuted
       this.publish()
     })
@@ -108,6 +112,18 @@ export class SessionManager {
 
   // ---- queries -----------------------------------------------------------
 
+  private accountOf(subProjectId: string): string | undefined {
+    const st = this.deps.store.state
+    const project = st.projects.find((p) => p.id === st.subProjects.find((x) => x.id === subProjectId)?.projectId)
+    if (!project) return undefined
+    let key = this.accounts.get(project.id)
+    if (key === undefined) {
+      key = accountKey(project, this.deps.home, this.deps.env)
+      this.accounts.set(project.id, key)
+    }
+    return key
+  }
+
   snapshot(): AppSnapshot {
     const st = this.deps.store.state
     const sessions: SessionView[] = this.active().map((s) => {
@@ -119,6 +135,8 @@ export class SessionManager {
         status: this.statusOf(s.id),
         ...this.extras.get(s.id)
       }
+      const account = this.accountOf(s.subProjectId)
+      if (account) view.account = account
       if (rt.needsInput) view.needsInput = rt.needsInput
       if (rt.activity === 'exited' && rt.exitCode !== undefined) view.exitCode = rt.exitCode
       if (rt.lastEventAt) view.lastActivityAt = rt.lastEventAt

@@ -1,5 +1,5 @@
 import type {
-  AppSettings, AppSnapshot, ArchiveCheck, ArchiveResult, ChangedFile, ClaudeUsage, SystemStats, ConversationList, ConversationMatch, EnvVar, FileContent, FileEntry, GhAccount, GitIdentity, HistoryHit, NewSessionDefaults, NewSessionInput, Project, RepoIdentity,
+  AppSettings, AppSnapshot, ArchiveCheck, ArchiveResult, ChangedFile, AccountUsage, SystemStats, ConversationList, ConversationMatch, EnvVar, FileContent, FileEntry, GhAccount, GitIdentity, HistoryHit, NewSessionDefaults, NewSessionInput, Project, RepoIdentity,
   StartProgress, StartResult, StrayWorktree, SubProject, TermKind, UpdateState
 } from './types'
 
@@ -94,8 +94,8 @@ export interface PitwallApi {
   openInCursor(sessionId: string): Promise<{ ok: boolean; message?: string }>
   setSettings(s: AppSettings): Promise<void>
   onFocusSession(cb: (sessionId: string) => void): () => void
-  /** Claude subscription usage, or null until Claude has reported any. */
-  getUsage(): Promise<ClaudeUsage | null>
+  /** Claude subscription usage, one entry per account that has reported any. */
+  getUsage(): Promise<AccountUsage[]>
   /** The latest CPU, memory and disk figures, or null before the first sample (and always on Windows). */
   getSystemStats(): Promise<SystemStats | null>
   onSystemStats(cb: (s: SystemStats) => void): () => void
@@ -104,7 +104,7 @@ export interface PitwallApi {
    * when pointed at a feed with PITWALL_RELEASES_URL).
    */
   appInfo(): Promise<{ version: string; dev: boolean; updateFeed: boolean; parkAfterMs: number }>
-  onUsage(cb: (u: ClaudeUsage | null) => void): () => void
+  onUsage(cb: (u: AccountUsage[]) => void): () => void
   /** What the last update check found (nothing until one succeeds). */
   getUpdateState(): Promise<UpdateState>
   /** Checks GitHub now, even with automatic checks off; never fails (a failed check leaves checkedAt as it was). */

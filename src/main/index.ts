@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { app, BrowserWindow, dialog, Menu, nativeImage, powerMonitor, shell } from 'electron'
 import { IPC } from '@shared/api'
 import { launcherChoice, sessionBackendKind, type SessionBackend } from './backend'
@@ -29,6 +29,7 @@ import { Store } from './store'
 import { Tmux } from './tmux'
 import { TmuxBackend } from './tmux-backend'
 import { releasesUrl, UpdateChecker } from './updates'
+import { accountKey, accountLabel } from './accounts'
 import { UsageTracker } from './usage'
 import { SystemMonitor } from './system-monitor'
 import { isViewing, viewingAfter, type ViewingEvent } from './viewing'
@@ -265,7 +266,13 @@ async function bootstrap(): Promise<void> {
   disposeServers = () => servers.stop()
   const usage = new UsageTracker({
     file: paths.usageFile,
-    sessionDirs: () => store.state.sessions.filter((s) => s.archivedAt === undefined).map((s) => sessionDir(paths, s.id))
+    defaultAccount: resolve(env.CLAUDE_CONFIG_DIR || join(home, '.claude')),
+    labelFor: (k) => accountLabel(k, home),
+    sessions: () => store.state.sessions.filter((s) => s.archivedAt === undefined).flatMap((s) => {
+      const sp = store.state.subProjects.find((x) => x.id === s.subProjectId)
+      const project = store.state.projects.find((p) => p.id === sp?.projectId)
+      return project ? [{ dir: sessionDir(paths, s.id), account: accountKey(project, home, env) }] : []
+    })
   })
   await usage.load()
   usage.start()

@@ -105,6 +105,8 @@ export interface SessionView extends Session {
   exitCode?: number
   diffStat?: { additions: number; deletions: number }; liveBranch?: string; startWarning?: string
   lastActivityAt?: number
+  /** The Claude account (config folder) this session's project uses. */
+  account?: string
   /** The Server tab's dev server: whether it runs and the ports it listens on. Absent when the folder has no dev command. */
   server?: { running: boolean; ports: number[] }
   /** The launcher's warnings for this run of Claude (a terminal repaint can wipe its printed lines). */
@@ -118,6 +120,8 @@ export interface AppSnapshot {
 export interface GhAccount { login: string; active: boolean; ok: boolean }
 /** One Claude subscription limit window, from Claude Code's status line. */
 export interface UsageWindow { usedPercentage: number; /** ms */ resetsAt: number }
+/** One Claude account's usage: `account` is its config folder, `label` its email or folder for display. */
+export interface AccountUsage { account: string; label: string; usage: ClaudeUsage }
 export interface ClaudeUsage { fiveHour?: UsageWindow; sevenDay?: UsageWindow; /** When Claude reported it (ms). */ updatedAt: number }
 /** What a group of processes costs. `cpu` is `ps %cpu` summed, so 100 is one core. */
 export interface ProcStats { cpu: number; rssBytes: number; procs: number }

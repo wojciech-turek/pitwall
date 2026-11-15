@@ -1,6 +1,6 @@
 import { readFile, rename, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { ClaudeUsage, UsageWindow } from '../shared/types'
+import type { AccountUsage, ClaudeUsage, UsageWindow } from '../shared/types'
 
 /** Written by pitwall-statusline in each session folder. */
 export const STATUSLINE_FILE = 'statusline.json'
@@ -33,34 +33,61 @@ export function parseStatusLine(text: string, mtimeMs: number): ClaudeUsage | nu
   return usageOf(windowFrom(rl.five_hour, CLAUDE_KEYS), windowFrom(rl.seven_day, CLAUDE_KEYS), Math.floor(mtimeMs))
 }
 
-function parseSaved(text: string): ClaudeUsage | null {
-  let raw: unknown
-  try { raw = JSON.parse(text) } catch { return null }
+function parseUsage(raw: unknown): ClaudeUsage | null {
   const o = obj(raw)
   if (!o || !isNum(o.updatedAt)) return null
   return usageOf(windowFrom(o.fiveHour, SAVED_KEYS), windowFrom(o.sevenDay, SAVED_KEYS), o.updatedAt)
 }
 
+/** The saved file: v2 is { v: 2, accounts }, anything older is one bare usage, which belonged to the default account. */
+function parseSaved(text: string, defaultAccount: string): Map<string, ClaudeUsage> {
+  const out = new Map<string, ClaudeUsage>()
+  let raw: unknown
+  try { raw = JSON.parse(text) } catch { return out }
+  const o = obj(raw)
+  if (!o) return out
+  if (o.v === undefined) {
+    const u = parseUsage(o)
+    if (u) out.set(defaultAccount, u)
+    return out
+  }
+  const accounts = o.v === 2 ? obj(o.accounts) : null
+  for (const [key, v] of Object.entries(accounts ?? {})) {
+    const u = parseUsage(v)
+    if (u) out.set(key, u)
+  }
+  return out
+}
+
 /**
- * Claude subscription usage, from the newest status-line report of any live session. The latest value is kept in
- * `file` so it shows again after a restart.
+ * Claude subscription usage per account, from the newest status-line report of each account's live sessions. The
+ * latest values are kept in `file` so they show again after a restart.
  */
 export class UsageTracker {
-  private usage: ClaudeUsage | null = null
-  private listeners = new Set<(u: ClaudeUsage | null) => void>()
+  private usage = new Map<string, ClaudeUsage>()
+  /** Each account's label, and the report time it was read at. */
+  private labels = new Map<string, { label: string; at: number }>()
+  private listeners = new Set<(u: AccountUsage[]) => void>()
   /** statusline.json files (by mtime) already found to have no rate_limits. */
   private noLimits = new Map<string, number>()
   private timer?: NodeJS.Timeout
   private checking: Promise<void> | null = null
   private readonly intervalMs: number
 
-  constructor(private deps: { file: string; sessionDirs: () => string[]; intervalMs?: number }) {
+  constructor(private deps: {
+    file: string
+    sessions: () => { dir: string; account: string }[]
+    labelFor: (account: string) => Promise<string>
+    defaultAccount: string
+    intervalMs?: number
+  }) {
     this.intervalMs = deps.intervalMs ?? 5000
   }
 
   async load(): Promise<void> {
     const text = await readFile(this.deps.file, 'utf8').catch(() => null)
-    this.usage = text === null ? null : parseSaved(text)
+    this.usage = text === null ? new Map() : parseSaved(text, this.deps.defaultAccount)
+    await this.refreshLabels()
   }
 
   start(): void {
@@ -74,54 +101,77 @@ export class UsageTracker {
     this.timer = undefined
   }
 
-  current(): ClaudeUsage | null {
-    return this.usage
+  current(): AccountUsage[] {
+    const out: AccountUsage[] = []
+    for (const [account, usage] of this.usage) out.push({ account, label: this.labels.get(account)?.label ?? account, usage })
+    return out.sort((a, b) => a.label.localeCompare(b.label) || a.account.localeCompare(b.account))
   }
 
-  onChange(cb: (u: ClaudeUsage | null) => void): () => void {
+  onChange(cb: (u: AccountUsage[]) => void): () => void {
     this.listeners.add(cb)
     return () => { this.listeners.delete(cb) }
   }
 
-  /** Looks for a newer report; never throws. */
+  /** Looks for newer reports; never throws. */
   check(): Promise<void> {
     this.checking ??= this.scan().catch(() => undefined).finally(() => { this.checking = null })
     return this.checking
   }
 
+  /** Reads the label of each account that has none yet or has a newer report than its label was read at. */
+  private async refreshLabels(): Promise<boolean> {
+    let changed = false
+    for (const [account, u] of this.usage) {
+      const known = this.labels.get(account)
+      if (known && known.at >= u.updatedAt) continue
+      const label = await this.deps.labelFor(account).catch(() => account)
+      if (label !== known?.label) changed = true
+      this.labels.set(account, { label, at: u.updatedAt })
+    }
+    return changed
+  }
+
   private async scan(): Promise<void> {
-    const files = (await Promise.all(this.deps.sessionDirs().map(async (dir) => {
+    const found = (await Promise.all(this.deps.sessions().map(async ({ dir, account }) => {
       const path = join(dir, STATUSLINE_FILE)
       const st = await stat(path).catch(() => null)
-      return st?.isFile() ? { path, mtime: Math.floor(st.mtimeMs) } : null
+      return st?.isFile() ? { path, account, mtime: Math.floor(st.mtimeMs) } : null
     }))).filter((f) => f !== null).sort((a, b) => b.mtime - a.mtime)
-    for (const k of this.noLimits.keys()) if (!files.some((f) => f.path === k)) this.noLimits.delete(k)
+    for (const k of this.noLimits.keys()) if (!found.some((f) => f.path === k)) this.noLimits.delete(k)
 
-    for (const { path, mtime } of files) {
-      if (this.usage && mtime <= this.usage.updatedAt) return // nothing newer than what we have, so no change
-      if (this.noLimits.get(path) === mtime) continue
-      const text = await readFile(path, 'utf8').catch(() => null)
-      const next = text === null ? null : parseStatusLine(text, mtime)
-      if (!next) {
-        this.noLimits.set(path, mtime)
-        continue
+    let changed = false
+    for (const account of new Set(found.map((f) => f.account))) {
+      for (const { path, mtime } of found.filter((f) => f.account === account)) {
+        const have = this.usage.get(account)
+        if (have && mtime <= have.updatedAt) break // nothing newer than what we have for this account
+        if (this.noLimits.get(path) === mtime) continue
+        const text = await readFile(path, 'utf8').catch(() => null)
+        const next = text === null ? null : parseStatusLine(text, mtime)
+        if (!next) {
+          this.noLimits.set(path, mtime)
+          continue
+        }
+        this.usage.set(account, next)
+        changed = true
+        break
       }
-      await this.set(next)
-      return
+    }
+    if (await this.refreshLabels()) changed = true
+    if (!changed) return
+    await this.save()
+    const list = this.current()
+    for (const cb of [...this.listeners]) {
+      try { cb(list) } catch { /* a listener must not break the tracker */ }
     }
   }
 
-  private async set(next: ClaudeUsage): Promise<void> {
-    this.usage = next
+  private async save(): Promise<void> {
     try {
       const tmp = `${this.deps.file}.tmp`
-      await writeFile(tmp, JSON.stringify(next))
+      await writeFile(tmp, JSON.stringify({ v: 2, accounts: Object.fromEntries(this.usage) }))
       await rename(tmp, this.deps.file)
     } catch {
-      // best effort: only the value shown after a restart is affected
-    }
-    for (const cb of [...this.listeners]) {
-      try { cb(next) } catch { /* a listener must not break the tracker */ }
+      // best effort: only the values shown after a restart are affected
     }
   }
 }
