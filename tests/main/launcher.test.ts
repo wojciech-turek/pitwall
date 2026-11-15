@@ -129,6 +129,46 @@ describe('pitwall-launch', () => {
     expect(modes).toEqual(['new', 'resume', 'new'])
   })
 
+  describe('a session just moved to another account (moved-from)', () => {
+    const relaunchFailing = async (): Promise<void> => {
+      const flag = join(t.tmp, 'resume-fail')
+      t.env.STUB_CLAUDE_RESUME_FAIL_FILE = flag
+      await start()
+      await waitCapture('STUB CLAUDE READY')
+      await t.tmux.sendKeys('pw-l', ['exit', 'Enter'])
+      await waitCapture('Press Enter to resume')
+      await writeFile(flag, '')
+      await writeFile(join(sd, 'moved-from'), 'default\n')
+      await t.tmux.sendKeys('pw-l', ['Enter'])
+    }
+
+    test('a resume that fails says so and never starts a new conversation', async () => {
+      await setup()
+      await relaunchFailing()
+      await waitFor(async () => (await events()).some((e) => e.e === 'pitwall:move-failed'), 8000, 'move-failed event')
+      await waitCapture('Claude exited (code 1). Press Enter to resume.')
+      const evs = await events()
+      expect(evs.find((e) => e.e === 'pitwall:move-failed')).toMatchObject({ c: ID, code: 1 })
+      expect(evs.at(-1)).toMatchObject({ e: 'pitwall:exited', code: 1 })
+      const argv = (await logLines()).filter((l) => l.startsWith('--'))
+      expect(argv.map((l) => l.split(' ')[0])).toEqual(['--session-id', '--resume'])
+      expect(await capture()).not.toContain("Couldn't resume the previous conversation")
+      expect(await readFile(join(sd, 'moved-from'), 'utf8')).toBe('default\n') // the app's to remove, never the launcher's
+    })
+
+    test('a resume that started and then failed is an ordinary exit', async () => {
+      await setup()
+      await writeFile(join(sd, 'moved-from'), 'default\n')
+      await start()
+      await waitCapture('STUB CLAUDE READY')
+      await t.tmux.sendKeys('pw-l', ['exit', 'Enter'])
+      await waitCapture('Press Enter to resume')
+      await t.tmux.sendKeys('pw-l', ['Enter'])
+      await waitFor(async () => (await events()).filter((e) => e.e === 'SessionStart').length === 2, 8000, 'resumed')
+      expect((await events()).some((e) => e.e === 'pitwall:move-failed')).toBe(false)
+    })
+  })
+
   describe('the first prompt (initial-prompt.txt) and the agent note (system-note.txt)', () => {
     test('a new session starts Claude with the prompt as its last argument; a relaunch never repeats it', async () => {
       await setup()

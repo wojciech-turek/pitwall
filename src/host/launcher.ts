@@ -294,7 +294,11 @@ export class Launcher {
       const started = async (): Promise<boolean> =>
         (hooks && this.eventLines(env).slice(before).some(isSessionStart)) ||
         ((!hooks || continued) && (await this.hasTranscript(env, id)))
-      if (rc !== 0 && !this.stopping && !(await started())) {
+      if (rc !== 0 && !this.stopping && existsSync(this.file('moved-from')) && !(await started())) {
+        // Just moved to another account (the app wrote moved-from): a new conversation there would lose this one.
+        // The app puts the session back; the marker is its to remove.
+        this.logEvent(env, { e: 'pitwall:move-failed', code: rc })
+      } else if (rc !== 0 && !this.stopping && !(await started())) {
         this.logEvent(env, { e: 'pitwall:exited', code: rc })
         this.print(MESSAGES.resumeFailed())
         this.warn(env, 'resume', WARNINGS.resume())

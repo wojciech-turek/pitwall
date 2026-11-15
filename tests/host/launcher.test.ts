@@ -181,6 +181,33 @@ describe('the host launcher', () => {
     expect(exits).toEqual([])
   })
 
+  test('a session just moved to another account: a resume that fails says so and never starts a new conversation', async () => {
+    writeFileSync(join(sd, 'started'), '')
+    writeFileSync(join(sd, 'moved-from'), 'default\n')
+    launcher().start()
+    await until(() => spawned.length === 1, 'resume started')
+    expect(lastPty().args).toEqual(['--resume', ID, '--settings', join(sd, 'hooks.json')])
+    lastPty().exit(1)
+    await until(() => screen.includes(MESSAGES.exited(1)), 'exit message')
+    expect(spawned).toHaveLength(1) // no fresh conversation
+    expect(screen).not.toContain(MESSAGES.resumeFailed())
+    const evs = eventList().map((e) => ({ e: e.e, code: e.code }))
+    expect(evs.slice(-2)).toEqual([{ e: 'pitwall:move-failed', code: 1 }, { e: 'pitwall:exited', code: 1 }])
+    expect(readFileSync(join(sd, 'moved-from'), 'utf8')).toBe('default\n') // the app's to remove, never the launcher's
+  })
+
+  test('a session just moved: a resume that started and then failed is an ordinary exit', async () => {
+    writeFileSync(join(sd, 'started'), '')
+    writeFileSync(join(sd, 'moved-from'), 'default\n')
+    launcher().start()
+    await until(() => spawned.length === 1, 'resume started')
+    appendFileSync(events, JSON.stringify({ c: 's_1', t: 1, e: 'SessionStart' }) + '\n')
+    lastPty().exit(1)
+    await until(() => screen.includes(MESSAGES.exited(1)), 'exit message')
+    expect(eventList().some((e) => e.e === 'pitwall:move-failed')).toBe(false)
+    expect(spawned).toHaveLength(1)
+  })
+
   test('a failed resume with no SessionStart falls back to a new conversation; one that started does not', async () => {
     writeFileSync(join(sd, 'started'), '')
     const l = launcher()
