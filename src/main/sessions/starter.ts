@@ -131,6 +131,7 @@ export async function writeSessionFiles(session: Session, deps: StarterDeps): Pr
     claudeBin: deps.paths.claudeBin,
     ghBin: deps.paths.ghBin,
     setupCommand: sp.setupCommand,
+    devCommand: sp.devCommand,
     userStatusLine,
     gitBash: windows && userStatusLine ? findGitBash(deps.env, isFile) ?? undefined : undefined,
     home: deps.home,

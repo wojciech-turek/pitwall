@@ -11,7 +11,7 @@ import { appendEvent, EventTailer } from '../hooks/events'
 import type { Notifier } from '../notifier'
 import { eventsFile, sessionDir } from '../paths'
 import { shellTabArgv } from '../platform'
-import { claudeTmuxName, shellTmuxName } from '../tmux'
+import { claudeTmuxName, serverTmuxName, shellTmuxName } from '../tmux'
 import { Conversations } from './continue'
 import { isAnswerInput } from './input'
 import { notificationBody } from './notify-text'
@@ -25,7 +25,7 @@ type Deps = StarterDeps & {
   /** Searches the folders' conversations; default: one of its own over this manager's sessions. */
   history?: Pick<SessionHistory, 'search' | 'searchFiles'>
 }
-type Extras = Partial<Pick<SessionView, 'diffStat' | 'liveBranch'>>
+type Extras = Partial<Pick<SessionView, 'diffStat' | 'liveBranch' | 'server'>>
 
 const FIRST_EVENT_TIMEOUT_MS = 20000
 export const START_WARNING =
@@ -270,9 +270,19 @@ export class SessionManager {
     if (!s) throw new Error('Session not found.')
     const { backend, paths } = this.deps
     if (kind === 'claude') return this.relaunchIfMissing(s)
-    const name = shellTmuxName(sessionId)
+    const server = kind === 'server'
+    const name = server ? serverTmuxName(sessionId) : shellTmuxName(sessionId)
+    if (server) {
+      const sp = this.deps.store.state.subProjects.find((x) => x.id === s.subProjectId)
+      if (!sp?.devCommand) throw new Error('No dev server command is set for this folder.')
+      if (usesHostLauncher(this.deps)) throw new Error("The Server tab isn't available on Windows yet.")
+    }
     if (await backend.hasSession(name)) return
     await assertSessionFolder(s.cwd)
+    if (server) {
+      await backend.newSession({ name, cwd: s.cwd, argv: [join(paths.binDir, 'pitwall-server'), sessionDir(paths, sessionId)] })
+      return
+    }
     if (usesHostLauncher(this.deps)) {
       // The session's identity, then PowerShell (pwsh if installed) on Windows, as pitwall-shell does elsewhere.
       const argv = shellTabArgv(this.deps.platform ?? process.platform, this.deps.env, isFile)

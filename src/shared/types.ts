@@ -7,7 +7,9 @@ export interface Project { id: string; name: string; identity: GitIdentity; extr
 export type SubProjectKind = 'repo' | 'folder'
 export interface SubProject {
   id: string; projectId: string; name: string; path: string; kind: SubProjectKind
-  repoRoot?: string; relPath?: string; setupCommand?: string; teardownCommand?: string; createdAt: number
+  repoRoot?: string; relPath?: string; setupCommand?: string; teardownCommand?: string
+  /** Starts the folder's dev server in a session's Server tab. */
+  devCommand?: string; createdAt: number
 }
 export type PrState = 'OPEN' | 'CLOSED' | 'MERGED'
 export type ChecksState = 'passing' | 'failing' | 'pending' | 'none'
@@ -71,7 +73,7 @@ export interface SessionRuntime {
 }
 export type DisplayStatus = 'starting' | 'working' | 'needs_you' | 'unread' | 'read' | 'exited'
 export interface ChangedFile { path: string; status: 'M' | 'A' | 'D' | '?'; additions: number; deletions: number; binary: boolean }
-export type TermKind = 'claude' | 'shell'
+export type TermKind = 'claude' | 'shell' | 'server'
 export interface FileEntry { path: string; status?: 'M' | 'A' | 'D' | '?' }
 export type FileContent =
   | { kind: 'text'; content: string; mtimeMs: number }
@@ -83,6 +85,8 @@ export interface SessionView extends Session {
   exitCode?: number
   diffStat?: { additions: number; deletions: number }; liveBranch?: string; startWarning?: string
   lastActivityAt?: number
+  /** The Server tab's dev server: whether it runs and the ports it listens on. Absent when the folder has no dev command. */
+  server?: { running: boolean; ports: number[] }
   /** The launcher's warnings for this run of Claude (a terminal repaint can wipe its printed lines). */
   launchWarnings?: string[]
 }

@@ -27,7 +27,7 @@ export interface PitwallApi {
   addFolder(projectId: string): Promise<AddFolderResult>
   confirmAddFolder(projectId: string, path: string, overwriteIdentity: boolean): Promise<AddFolderResult>
   removeSubProject(id: string): Promise<{ ok: boolean; message?: string }>
-  updateSubProject(id: string, patch: { setupCommand?: string; teardownCommand?: string }): Promise<void>
+  updateSubProject(id: string, patch: { setupCommand?: string; teardownCommand?: string; devCommand?: string }): Promise<void>
   prepareNewSession(subProjectId: string): Promise<NewSessionDefaults>
   startSession(i: NewSessionInput): Promise<StartResult>
   onStartProgress(cb: (p: StartProgress) => void): () => void

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { exec } from '../../src/main/exec'
-import { claudeTmuxName, shellTmuxName } from '../../src/main/tmux'
+import { claudeTmuxName, serverTmuxName, shellTmuxName, tmuxNameFor } from '../../src/main/tmux'
 import { access } from 'node:fs/promises'
 import { makeTestEnv, tmuxSocketPath } from '../helpers/env'
 import { waitFor } from '../helpers/wait'
@@ -13,6 +13,10 @@ describe('Tmux', () => {
   test('names', () => {
     expect(claudeTmuxName('abc')).toBe('pw-abc')
     expect(shellTmuxName('abc')).toBe('pw-abc-sh')
+    expect(serverTmuxName('abc')).toBe('pw-abc-srv')
+    expect(tmuxNameFor('a', 'claude')).toBe('pw-a')
+    expect(tmuxNameFor('a', 'shell')).toBe('pw-a-sh')
+    expect(tmuxNameFor('a', 'server')).toBe('pw-a-srv')
   })
 
   test('new/list/capture/kill on private socket', async () => {

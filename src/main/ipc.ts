@@ -81,7 +81,7 @@ export function registerIpc(d: IpcDeps): () => void {
   handle(IPC.confirmAddFolder, (projectId: string, path: string, overwrite: boolean) =>
     projects.confirmAddFolder(projectId, path, overwrite))
   handle(IPC.removeSubProject, (id: string) => projects.removeSubProject(id))
-  handle(IPC.updateSubProject, (id: string, patch: { setupCommand?: string; teardownCommand?: string }) => projects.updateSubProject(id, patch))
+  handle(IPC.updateSubProject, (id: string, patch: { setupCommand?: string; teardownCommand?: string; devCommand?: string }) => projects.updateSubProject(id, patch))
   handle(IPC.prepareNewSession, (id: string) => manager.prepareNew(id))
   // Only continueConversation continues an outside conversation: it checks it and keeps Claude to the worktree.
   handle(IPC.startSession, (i: NewSessionInput) =>

@@ -10,7 +10,7 @@ import { archiveSession, checkArchive, removeEmptyWorktreesFolder, type ArchiveD
 import { SessionManager } from '../../src/main/sessions/manager'
 import { KeyedMutex } from '../../src/main/sessions/mutex'
 import { Store } from '../../src/main/store'
-import { claudeTmuxName, shellTmuxName } from '../../src/main/tmux'
+import { claudeTmuxName, serverTmuxName, shellTmuxName } from '../../src/main/tmux'
 import type { NewSessionInput, Project, Session, SubProject } from '../../src/shared/types'
 import { makeTestEnv } from '../helpers/env'
 import { WINDOWS } from '../helpers/processes'
@@ -95,6 +95,7 @@ describe('archive', () => {
   test('clean pushed session archives fully', async () => {
     const { r, sp, deps } = await addRepo({ remote: true })
     const s = await startOne(sp)
+    await t.backend.newSession({ name: serverTmuxName(s.id), cwd: s.cwd, argv: ['sleep', '60'] })
     await sh(r, s.worktreePath!, 'push', 'origin', s.branch!)
     const check = await checkArchive(s.id, deps)
     expect(check).toMatchObject({
@@ -106,8 +107,9 @@ describe('archive', () => {
     expect(await branchesOf(r)).toEqual(['main'])
     expect(await t.backend.hasSession(claudeTmuxName(s.id))).toBe(false)
     expect(await t.backend.hasSession(shellTmuxName(s.id))).toBe(false)
+    expect(await t.backend.hasSession(serverTmuxName(s.id))).toBe(false)
     expect(await has(sessionDir(t.paths, s.id))).toBe(false)
-    expect(closed.sort()).toEqual([`${s.id}:claude`, `${s.id}:shell`])
+    expect(closed.sort()).toEqual([`${s.id}:claude`, `${s.id}:server`, `${s.id}:shell`])
     expect(detached).toEqual([])
     const snap = manager.snapshot()
     expect(snap.sessions).toHaveLength(0)
@@ -285,7 +287,7 @@ describe('archive', () => {
     expect(store.state.sessions[0].archivedAt).toBeUndefined()
     expect(manager.snapshot().sessions).toHaveLength(1)
     // Its terminals were closed for the archive: they offer to reattach instead of staying frozen.
-    expect(detached.sort()).toEqual([`${s.id}:claude`, `${s.id}:shell`])
+    expect(detached.sort()).toEqual([`${s.id}:claude`, `${s.id}:server`, `${s.id}:shell`])
   })
 
   // Windows, with a file in the worktree in use: git unregisters the worktree and deletes the rest, then fails.
@@ -418,7 +420,7 @@ describe('archive', () => {
       expect(lines[0]).toBe(wt)
       expect(lines[1]).toBe(`${sp.repoRoot}|${s.worktreePath}|${s.branch}|Fix tax rounding|Jane`)
       expect(lines[2]).toBe('dir-exists')
-      expect((await readFile(order, 'utf8')).trim().split('\n')).toEqual(['kill', 'kill', 'teardown'])
+      expect((await readFile(order, 'utf8')).trim().split('\n')).toEqual(['kill', 'kill', 'kill', 'teardown'])
       expect(await has(s.worktreePath!)).toBe(false)
     })
 
@@ -447,7 +449,7 @@ describe('archive', () => {
       expect(await has(s.worktreePath!)).toBe(true)
       expect(store.state.sessions[0].archivedAt).toBeUndefined()
       // The agent was stopped for the teardown: its terminals offer to reattach, which relaunches it (Cancel).
-      expect(detached.sort()).toEqual([`${s.id}:claude`, `${s.id}:shell`])
+      expect(detached.sort()).toEqual([`${s.id}:claude`, `${s.id}:server`, `${s.id}:shell`])
       expect(await t.backend.hasSession(claudeTmuxName(s.id))).toBe(false)
       await manager.ensureTerminalTarget(s.id, 'claude')
       expect(await t.backend.hasSession(claudeTmuxName(s.id))).toBe(true)
@@ -476,7 +478,7 @@ describe('archive', () => {
       await new Promise((r) => setTimeout(r, 2500))
       expect(await has(marker)).toBe(false)
       expect(await has(s.worktreePath!)).toBe(true)
-      expect(detached.sort()).toEqual([`${s.id}:claude`, `${s.id}:shell`])
+      expect(detached.sort()).toEqual([`${s.id}:claude`, `${s.id}:server`, `${s.id}:shell`])
     })
 
     test.skipIf(WINDOWS)('a backgrounded child that outlives the command does not keep archive waiting', async () => {
@@ -580,7 +582,7 @@ describe('archive', () => {
     }
     expect(await archiveSession(s.id, { confirmedDataLoss: false }, deps)).toEqual({ ok: true })
     expect(order).toEqual([
-      'list', `kill ${claudeTmuxName(s.id)}`, `kill ${shellTmuxName(s.id)}`, 'list',
+      'list', `kill ${claudeTmuxName(s.id)}`, `kill ${shellTmuxName(s.id)}`, `kill ${serverTmuxName(s.id)}`, 'list',
       `end ${[`${claudePane}@2000`, `${shellPane}@2100`, '7001@3000'].sort().join(' ')}`
     ])
   })

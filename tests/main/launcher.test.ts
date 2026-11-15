@@ -23,21 +23,21 @@ const project: Project = {
   identity: { sshKeyPath: '/k/id', ghAccount: 'dev-work', gitName: 'Jane', gitEmail: 'm@x.io' }
 }
 
-async function writeEnv(p: Project, setupCommand?: string, userStatusLine?: string) {
+async function writeEnv(p: Project, setupCommand?: string, userStatusLine?: string, server?: { devCommand?: string; portBase?: number }) {
   const env = buildSessionEnv({
     project: p, session: { id: ID, title: TITLE }, rootPath: cwd, sessionDir: sd, eventsFile: eventsFile(t.paths, ID),
-    claudeBin: t.paths.claudeBin, ghBin: t.paths.ghBin, setupCommand, userStatusLine, home: t.tmp
+    claudeBin: t.paths.claudeBin, ghBin: t.paths.ghBin, setupCommand, userStatusLine, home: t.tmp, ...server
   })
   await writeFile(join(sd, 'env.sh'), renderEnvFile(env), { mode: 0o600 })
 }
 
-async function setup(extra: { setupCommand?: string; silent?: boolean; project?: Project; userStatusLine?: string; dir?: string } = {}) {
+async function setup(extra: { setupCommand?: string; silent?: boolean; project?: Project; userStatusLine?: string; dir?: string; server?: { devCommand?: string; portBase?: number } } = {}) {
   sd = extra.dir ?? sessionDir(t.paths, ID)
   cwd = join(t.tmp, 'work dir')
   await mkdir(sd, { recursive: true })
   await mkdir(sessionDir(t.paths, ID), { recursive: true }) // the events file's folder
   await mkdir(cwd, { recursive: true })
-  await writeEnv(extra.project ?? project, extra.setupCommand, extra.userStatusLine)
+  await writeEnv(extra.project ?? project, extra.setupCommand, extra.userStatusLine, extra.server)
   const hook = hookCommandFor(join(t.paths.binDir, 'pitwall-hook'), eventsFile(t.paths, ID), ID)
   const statusLine = statusLineCommandFor(join(t.paths.binDir, 'pitwall-statusline'), sd)
   await writeFile(join(sd, 'hooks.json'), JSON.stringify(buildHookSettings(hook, statusLine)))
@@ -284,5 +284,36 @@ describe('pitwall-launch', () => {
       await t.tmux.sendKeys('pw-s', ['echo "S:$GIT_SSH_COMMAND"', 'Enter'])
       return (await t.tmux.capturePane('pw-s')).includes("S:ssh -i '")
     }, 8000, 'identity echoed in shell')
+  })
+  describe('server entrypoint', () => {
+    const startServer = () => t.tmux.newSession({ name: 'pw-v', cwd, argv: [join(t.paths.binDir, 'pitwall-server'), sd] })
+    const serverPane = () => t.tmux.capturePane('pw-v')
+    const waitServer = (s: string) => waitFor(async () => (await serverPane()).includes(s), 8000, `"${s}" in server pane`)
+
+    test('runs the dev command with PORT set to PITWALL_PORT, and offers a restart when it exits', async () => {
+      await setup({ server: { devCommand: 'printf "port=%s id=%s" "$PORT" "$PITWALL_SESSION_ID"', portBase: 40010 } })
+      await startServer()
+      await waitServer('port=40010 id=uuid-1')
+      await waitServer('Dev server exited (code 0). Press Enter to start it again.')
+      expect(await serverPane()).toContain('▸ printf')
+    })
+
+    test('a PORT in the project environment wins over PITWALL_PORT', async () => {
+      await setup({
+        project: { ...project, extraEnv: [{ key: 'PORT', value: '3999' }] },
+        server: { devCommand: 'printf "port=%s" "$PORT"', portBase: 40010 }
+      })
+      await startServer()
+      await waitServer('port=3999')
+    })
+
+    test('Enter starts it again with the command re-read from env.sh', async () => {
+      await setup({ server: { devCommand: 'printf "first-run"; exit 3', portBase: 40010 } })
+      await startServer()
+      await waitServer('Dev server exited (code 3)')
+      await writeEnv(project, undefined, undefined, { devCommand: 'printf "second-run"', portBase: 40010 })
+      await t.tmux.sendKeys('pw-v', ['Enter'])
+      await waitServer('second-run')
+    })
   })
 })

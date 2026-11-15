@@ -232,6 +232,23 @@ describe('ProjectService', () => {
     expect(store.state.subProjects[0].setupCommand).toBe('pnpm i')
   })
 
+  test('updateSubProject sets, changes and clears devCommand, and rewrites the running sessions only on a change', async () => {
+    const p = await svc.createProject(input())
+    picked = t.tmp
+    const r = await svc.addFolder(p.id)
+    if (r.status !== 'added') throw new Error('x')
+    updated = []
+    await svc.updateSubProject(r.subProject.id, { devCommand: 'pnpm dev' })
+    expect(store.state.subProjects[0].devCommand).toBe('pnpm dev')
+    expect(updated).toEqual([p.id])
+    await svc.updateSubProject(r.subProject.id, { devCommand: 'pnpm dev' })
+    expect(updated).toEqual([p.id])
+    await svc.updateSubProject(r.subProject.id, { devCommand: '  ' })
+    expect(store.state.subProjects[0].devCommand).toBeUndefined()
+    expect(updated).toEqual([p.id, p.id])
+    await expect(svc.updateSubProject(r.subProject.id, { devCommand: 5 as unknown as string })).rejects.toThrow('Dev command must be text.')
+  })
+
   test('mute and unmute; editing the project keeps it muted', async () => {
     const p = await svc.createProject(input())
     expect(p.muted).toBeUndefined()

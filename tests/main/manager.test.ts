@@ -10,7 +10,7 @@ import { SessionManager } from '../../src/main/sessions/manager'
 import { PortAllocator } from '../../src/main/ports'
 import { KeyedMutex } from '../../src/main/sessions/mutex'
 import { Store } from '../../src/main/store'
-import { claudeTmuxName, shellTmuxName } from '../../src/main/tmux'
+import { claudeTmuxName, serverTmuxName, shellTmuxName } from '../../src/main/tmux'
 import type { Notifier } from '../../src/main/notifier'
 import type { HookEvent, Project, Session, SubProject } from '../../src/shared/types'
 import { makeTestEnv } from '../helpers/env'
@@ -380,6 +380,17 @@ describe('SessionManager', () => {
     expect(await t.backend.hasSession(claudeTmuxName(res.sessionId))).toBe(true)
     await waitFor(async () => (await readFile(t.env.STUB_CLAUDE_LOG, 'utf8')).includes('--resume'), 8000, '--resume')
     expect(m2.snapshot().sessions).toHaveLength(1)
+  })
+
+  test('ensureTerminalTarget creates the server session only for a folder with a dev command', async () => {
+    await addSession('a')
+    const m = await ready()
+    await expect(m.ensureTerminalTarget('a', 'server')).rejects.toThrow('No dev server command is set for this folder.')
+    expect(await t.backend.hasSession(serverTmuxName('a'))).toBe(false)
+    await store.update((d) => { d.subProjects[0].devCommand = 'echo dev' })
+    await m.ensureTerminalTarget('a', 'server')
+    expect(await t.backend.hasSession(serverTmuxName('a'))).toBe(true)
+    await m.ensureTerminalTarget('a', 'server')
   })
 
   test('ensureTerminalTarget creates shell session lazily', async () => {

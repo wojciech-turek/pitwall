@@ -1,7 +1,15 @@
+import type { TermKind } from '@shared/types'
 import type { Exec } from './exec'
 
 export const claudeTmuxName = (sessionId: string): string => `pw-${sessionId}`
 export const shellTmuxName = (sessionId: string): string => `pw-${sessionId}-sh`
+
+export const serverTmuxName = (sessionId: string): string => `pw-${sessionId}-srv`
+
+export function tmuxNameFor(sessionId: string, kind: TermKind): string {
+  if (kind === 'claude') return claudeTmuxName(sessionId)
+  return kind === 'shell' ? shellTmuxName(sessionId) : serverTmuxName(sessionId)
+}
 
 // Exact-match session target that is also valid where tmux wants a pane.
 const pane = (name: string): string => `=${name}:`

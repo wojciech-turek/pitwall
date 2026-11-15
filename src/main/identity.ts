@@ -123,6 +123,8 @@ export function buildSessionEnv(input: {
   claudeBin: string
   ghBin: string
   setupCommand?: string
+  /** The folder's dev command, run by pitwall-server. */
+  devCommand?: string
   /** The user's own status line command, run by pitwall-statusline. */
   userStatusLine?: string
   /** Windows: Git Bash, which runs the user's status line as Claude Code would (else PowerShell does). */
@@ -156,6 +158,7 @@ export function buildSessionEnv(input: {
   })
   if (input.portBase !== undefined) env.PITWALL_PORT = String(input.portBase)
   if (input.setupCommand) env.PITWALL_SETUP_COMMAND = input.setupCommand
+  if (input.devCommand) env.PITWALL_DEV_COMMAND = input.devCommand
   if (input.userStatusLine) env.PITWALL_USER_STATUSLINE = input.userStatusLine
   if (input.userStatusLine && input.gitBash) env.PITWALL_GIT_BASH = input.gitBash
   return env

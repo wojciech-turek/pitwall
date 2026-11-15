@@ -123,7 +123,8 @@ export class ProjectService {
     return { ok: true }
   }
 
-  async updateSubProject(id: string, patch: { setupCommand?: string; teardownCommand?: string }): Promise<void> {
+  async updateSubProject(id: string, patch: { setupCommand?: string; teardownCommand?: string; devCommand?: string }): Promise<void> {
+    let rewrite: string | undefined
     await this.deps.store.update((d) => {
       const sp = d.subProjects.find((s) => s.id === id)
       if (!sp) return
@@ -136,7 +137,16 @@ export class ProjectService {
         if (patch.teardownCommand.trim()) sp.teardownCommand = patch.teardownCommand
         else delete sp.teardownCommand
       }
+      if (patch.devCommand !== undefined) {
+        if (typeof patch.devCommand !== 'string') throw new Error('Dev command must be text.')
+        const before = sp.devCommand
+        if (patch.devCommand.trim()) sp.devCommand = patch.devCommand
+        else delete sp.devCommand
+        // Running sessions read it from env.sh, so they need it rewritten.
+        if (sp.devCommand !== before) rewrite = sp.projectId
+      }
     })
+    if (rewrite) await this.deps.onProjectUpdated?.(rewrite)
   }
 
   private project(id: string): Project | undefined {

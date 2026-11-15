@@ -10,6 +10,7 @@ import { buildMenuTemplate } from './menu'
 import { GitClient } from './git'
 import { ChangesService } from './changes'
 import { PrPoller } from './pr'
+import { ServerWatcher } from './server-watch'
 import { registerIpc } from './ipc'
 import { electronNotifier } from './notifier'
 import { resolvePaths, sessionDir } from './paths'
@@ -60,6 +61,7 @@ let manager: SessionManager | null = null
 let disposeIpc: (() => void) | null = null
 let disposeChanges: (() => void) | null = null
 let disposePr: (() => void) | null = null
+let disposeServers: (() => void) | null = null
 let disposeUsage: (() => void) | null = null
 let disposeUpdates: (() => void) | null = null
 let refreshBadge: (() => void) | null = null
@@ -232,6 +234,9 @@ async function bootstrap(): Promise<void> {
   const pr = new PrPoller({ store, manager: mgr, git, exec, env, paths, notifier })
   pr.start()
   disposePr = () => pr.stop()
+  const servers = new ServerWatcher({ store, manager: mgr, backend, exec })
+  servers.start()
+  disposeServers = () => servers.stop()
   const usage = new UsageTracker({
     file: paths.usageFile,
     sessionDirs: () => store.state.sessions.filter((s) => s.archivedAt === undefined).map((s) => sessionDir(paths, s.id))
@@ -304,6 +309,8 @@ if (!isPrimaryInstance) {
     disposeChanges = null
     disposePr?.()
     disposePr = null
+    disposeServers?.()
+    disposeServers = null
     disposeUsage?.()
     disposeUsage = null
     disposeUpdates?.()
