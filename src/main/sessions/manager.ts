@@ -17,7 +17,7 @@ import { isAnswerInput } from './input'
 import { notificationBody } from './notify-text'
 import { resumeSession } from './resume'
 import {
-  assertSessionFolder, launchTmuxFor, prepareNewSession, startSession, usesHostLauncher, writeSessionFiles, type StarterDeps
+  assertSessionFolder, launchTmuxFor, prepareNewSession, startSession, takenPorts, usesHostLauncher, writeSessionFiles, type StarterDeps
 } from './starter'
 
 type Deps = StarterDeps & {
@@ -395,7 +395,16 @@ export class SessionManager {
     const s = this.session(id) // re-read: track() may have just recorded a new conversation id
     if (!s) return
     try {
-      await writeSessionFiles(s, this.deps)
+      let session = s
+      if (this.deps.ports && s.portBase === undefined) {
+        const portBase = await this.deps.ports.allocate(takenPorts(this.deps))
+        await this.deps.store.update((d) => {
+          const x = d.sessions.find((y) => y.id === id)
+          if (x) x.portBase = portBase
+        })
+        session = this.session(id) ?? s
+      }
+      await writeSessionFiles(session, this.deps)
     } catch {
       // relaunchIfMissing reports it if the session actually needs these files now
     }

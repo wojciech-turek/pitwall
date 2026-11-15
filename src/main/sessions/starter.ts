@@ -16,6 +16,7 @@ import {
 import { buildSessionEnv, claudeConfigDir, getGhToken, renderEnvFile } from '../identity'
 import { eventsFile, sessionDir, type AppPaths } from '../paths'
 import { findGitBash, windowsPowerShell } from '../platform'
+import type { PortAllocator } from '../ports'
 import { newId, type Store } from '../store'
 import { claudeTmuxName } from '../tmux'
 import type { KeyedMutex } from './mutex'
@@ -35,6 +36,8 @@ export interface StarterDeps {
   platform?: NodeJS.Platform
   /** What starts Claude (see launcherChoice). Default: the host's launcher on Windows, pitwall-launch elsewhere. */
   launcher?: LauncherChoice
+  /** Gives each session its block of ports. Without one, sessions get none. */
+  ports?: PortAllocator
 }
 
 /** True when the host's launcher runs this app's sessions (Windows; PITWALL_LAUNCHER=host elsewhere). */
@@ -104,6 +107,11 @@ export async function prepareNewSession(subProjectId: string, deps: StarterDeps)
   return { kind: 'repo', hasCommits, baseBranch: main, defaultBranch: main, branches: await deps.git.listBranches(sp.repoRoot) }
 }
 
+/** The portBase of every live session: blocks that are in use. */
+export function takenPorts(deps: Pick<StarterDeps, 'store'>): number[] {
+  return deps.store.state.sessions.filter((s) => s.archivedAt === undefined && s.portBase !== undefined).map((s) => s.portBase!)
+}
+
 export async function writeSessionFiles(session: Session, deps: StarterDeps): Promise<void> {
   const sp = findSubProject(deps, session.subProjectId)
   const project = deps.store.state.projects.find((p) => p.id === sp.projectId)
@@ -115,6 +123,7 @@ export async function writeSessionFiles(session: Session, deps: StarterDeps): Pr
   const env = buildSessionEnv({
     project,
     session,
+    portBase: session.portBase,
     rootPath: sp.repoRoot ?? sp.path,
     sessionDir: dir,
     eventsFile: events,
@@ -304,6 +313,7 @@ export async function startSessionLocked(
     if (input.continueClaudeId && input.continuedFrom) session.continuedFrom = input.continuedFrom
 
     await run('files', async () => {
+      if (deps.ports) session.portBase = await deps.ports.allocate(takenPorts(deps))
       await writeSessionFiles(session, deps)
       // A conversation to continue exists already: the launcher resumes it (as after resuming an archived session).
       if (input.continueClaudeId) await writeFile(join(dir, 'started'), '')

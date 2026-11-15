@@ -83,6 +83,11 @@ describe('identity', () => {
     expect(bad('1BAD')).toThrow(/invalid/)
   })
 
+  test('portBase becomes PITWALL_PORT, only when there is one', () => {
+    expect(buildSessionEnv({ ...base, portBase: 40030 }).PITWALL_PORT).toBe('40030')
+    expect('PITWALL_PORT' in buildSessionEnv(base)).toBe(false)
+  })
+
   test('the user status line is passed on as PITWALL_USER_STATUSLINE, only when there is one', () => {
     expect(buildSessionEnv({ ...base, userStatusLine: '~/.claude/line.sh --x' }).PITWALL_USER_STATUSLINE).toBe('~/.claude/line.sh --x')
     expect('PITWALL_USER_STATUSLINE' in buildSessionEnv({ ...base, userStatusLine: '' })).toBe(false)

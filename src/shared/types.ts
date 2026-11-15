@@ -39,6 +39,8 @@ export interface Session {
    * then has Claude rebuild its system prompt for this session's folder, with a note (continue-note.txt).
    */
   continuedFrom?: string
+  /** The first of the session's block of 10 ports, exported as $PITWALL_PORT. */
+  portBase?: number
 }
 export interface AppSettings {
   monoFont: string; monoFontSize: number

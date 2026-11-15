@@ -14,6 +14,7 @@ import { registerIpc } from './ipc'
 import { electronNotifier } from './notifier'
 import { resolvePaths, sessionDir } from './paths'
 import { appUserModelId } from './platform'
+import { PortAllocator } from './ports'
 import { ProjectService } from './projects'
 import { PtyBridge } from './pty-bridge'
 import { installResources, resourcesDir } from './resources'
@@ -204,7 +205,7 @@ async function bootstrap(): Promise<void> {
   const launcher = launcherChoice(process.env)
   // Searches every session's conversation (⌘K) and a folder's (Continue a conversation).
   const history = new SessionHistory(() => historySources(mgr.snapshot(), home, env))
-  const mgr = new SessionManager({ store, paths, git, backend, exec, env, home, mutex, notifier, launcher, history })
+  const mgr = new SessionManager({ store, paths, git, backend, exec, env, home, mutex, notifier, launcher, history, ports: new PortAllocator() })
   manager = mgr
   await mgr.init()
 

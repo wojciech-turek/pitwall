@@ -9,6 +9,7 @@ import { forwardSlashes } from '../../src/main/hooks/settings'
 import { sessionDir } from '../../src/main/paths'
 import { KeyedMutex } from '../../src/main/sessions/mutex'
 import { prepareNewSession, startSession, writeSessionFiles, type StarterDeps } from '../../src/main/sessions/starter'
+import { PortAllocator } from '../../src/main/ports'
 import { Store } from '../../src/main/store'
 import type { SessionBackend } from '../../src/main/backend'
 import { claudeTmuxName } from '../../src/main/tmux'
@@ -113,6 +114,17 @@ describe('startSession', () => {
     expect(progress.at(-1)?.message).toBe('Started — answer any prompt in the terminal')
     expect(res).toEqual({ ok: true, sessionId: s.id })
     expect(r.root).toBeTruthy()
+  })
+
+  test('with a port allocator, a new session gets its own block, exported as PITWALL_PORT', async () => {
+    const { sp } = await addRepo()
+    deps = mkDeps({ ports: new PortAllocator({ isFree: async () => true }) }, deps.env)
+    const a = await start(input(sp))
+    const b = await start(input(sp, { title: 'Second one' }))
+    expect(a.ok && b.ok).toBe(true)
+    const [s1, s2] = store.state.sessions
+    expect([s1.portBase, s2.portBase]).toEqual([40000, 40010])
+    expect(await readFile(join(sessionDir(t.paths, s1.id), 'env.sh'), 'utf8')).toContain("export PITWALL_PORT='40000'")
   })
 
   test('project with no ssh key and no gh account starts; GH_TOKEN unset', async () => {

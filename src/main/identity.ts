@@ -115,6 +115,8 @@ export function envVarNameError(key: string): string | null {
 export function buildSessionEnv(input: {
   project: Project
   session: Pick<Session, 'id' | 'title'>
+  /** The session's first port, exported as PITWALL_PORT. */
+  portBase?: number
   rootPath: string
   sessionDir: string
   eventsFile: string
@@ -152,6 +154,7 @@ export function buildSessionEnv(input: {
     PITWALL_EVENTS_FILE: input.eventsFile,
     PITWALL_CLAUDE_BIN: input.claudeBin
   })
+  if (input.portBase !== undefined) env.PITWALL_PORT = String(input.portBase)
   if (input.setupCommand) env.PITWALL_SETUP_COMMAND = input.setupCommand
   if (input.userStatusLine) env.PITWALL_USER_STATUSLINE = input.userStatusLine
   if (input.userStatusLine && input.gitBash) env.PITWALL_GIT_BASH = input.gitBash
