@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, test } from 'vitest'
 import { exec } from '../../src/main/exec'
-import { PrPoller, fetchPr, summarizeChecks } from '../../src/main/pr'
+import { PrPoller, failingChecks, fetchOpenThreads, fetchPr, parsePrUrl, summarizeChecks } from '../../src/main/pr'
 import type { AppPaths } from '../../src/main/paths'
 import type { SessionManager } from '../../src/main/sessions/manager'
 import type { Store } from '../../src/main/store'
@@ -80,14 +80,66 @@ describe('fetchPr', () => {
   })
 })
 
+describe('failingChecks', () => {
+  test('lists failed CheckRuns and StatusContexts, not passing or pending ones', () => {
+    expect(failingChecks([
+      { name: 'build', detailsUrl: 'u', status: 'COMPLETED', conclusion: 'FAILURE' },
+      { context: 'ci/lint', targetUrl: 'v', state: 'ERROR' },
+      { name: 'ok', detailsUrl: 'w', status: 'COMPLETED', conclusion: 'SUCCESS' },
+      { name: 'slow', status: 'IN_PROGRESS', conclusion: '' },
+      { context: 'ci/wait', state: 'PENDING' },
+      { name: 'bare', conclusion: 'TIMED_OUT' }
+    ])).toEqual([{ name: 'build', url: 'u' }, { name: 'ci/lint', url: 'v' }, { name: 'bare' }])
+  })
+})
+
+describe('parsePrUrl', () => {
+  test('reads owner and repo from a GitHub PR url', () => {
+    expect(parsePrUrl('https://github.com/o/r/pull/12')).toEqual({ owner: 'o', repo: 'r' })
+    expect(parsePrUrl('https://gitlab.com/x')).toBeNull()
+  })
+})
+
+describe('fetchOpenThreads', () => {
+  const nodes = [
+    { isResolved: false, isOutdated: false }, { isResolved: true, isOutdated: false },
+    { isResolved: false, isOutdated: true }, { isResolved: false, isOutdated: false }
+  ]
+  const o = { ghBin: 'gh', cwd: '/w', token: 'tok', owner: 'o', repo: 'r', number: 12, env: { PATH: '/x' } }
+  test('counts unresolved, current threads and sends the query as gh api graphql', async () => {
+    const seen: { args: string[]; env?: Record<string, string> }[] = []
+    const ex = async (_f: string, args: string[], opts?: { env?: Record<string, string> }) => {
+      seen.push({ args, env: opts?.env })
+      return { code: 0, stdout: JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { nodes } } } } }), stderr: '' }
+    }
+    expect(await fetchOpenThreads({ ...o, exec: ex })).toBe(2)
+    expect(seen[0].args.slice(0, 2)).toEqual(['api', 'graphql'])
+    expect(seen[0].args).toContain('owner=o')
+    expect(seen[0].args).toContain('name=r')
+    expect(seen[0].args).toContain('number=12')
+    expect(seen[0].env?.GH_TOKEN).toBe('tok')
+  })
+  test('a failed gh, bad json or a missing path gives null', async () => {
+    expect(await fetchOpenThreads({ ...o, exec: async () => ({ code: 1, stdout: '', stderr: 'x' }) })).toBeNull()
+    expect(await fetchOpenThreads({ ...o, exec: async () => ({ code: 0, stdout: 'nope', stderr: '' }) })).toBeNull()
+    expect(await fetchOpenThreads({ ...o, exec: async () => ({ code: 0, stdout: '{"data":{}}', stderr: '' }) })).toBeNull()
+  })
+})
+
 function setup(o: { remote?: boolean; ghAccount?: string; pr?: Session['pr']; archived?: boolean; muted?: boolean } = {}) {
   const calls: { args: string[]; env?: Record<string, string> }[] = []
   let json: unknown[] = []
   let ghFails = false
+  let threads: number | null = null
   const fakeExec = async (file: string, args: string[], opts?: { env?: Record<string, string> }) => {
     calls.push({ args, env: opts?.env })
     if (args[0] === 'auth') return { code: 0, stdout: 'tok\n', stderr: '' }
     if (ghFails) return { code: 1, stdout: '', stderr: 'offline' }
+    if (args[0] === 'api') {
+      if (threads === null) return { code: 1, stdout: '', stderr: 'graphql down' }
+      const nodes = Array.from({ length: threads }, () => ({ isResolved: false, isOutdated: false }))
+      return { code: 0, stdout: JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { nodes } } } } }), stderr: '' }
+    }
     return { code: 0, stdout: JSON.stringify(json), stderr: '' }
   }
   const mk = (id: string): Session => ({
@@ -120,7 +172,7 @@ function setup(o: { remote?: boolean; ghAccount?: string; pr?: Session['pr']; ar
     notifier, intervalMs: 60_000, debounceMs: 20
   })
   const emit = (id: string, e: string) => cbs.forEach((cb) => cb(id, { c: id, t: 1, e }))
-  return { poller, calls, notes, state, emit, setJson: (j: unknown[]) => { json = j }, setGhFails: (f: boolean) => { ghFails = f } }
+  return { poller, calls, notes, state, emit, setJson: (j: unknown[]) => { json = j }, setGhFails: (f: boolean) => { ghFails = f }, setThreads: (n: number | null) => { threads = n } }
 }
 
 const listCalls = <T extends { args: string[] }>(c: T[]) => c.filter((x) => x.args[0] === 'pr')
@@ -250,5 +302,47 @@ describe('PrPoller', () => {
     t.poller.stop()
     expect(t.state.sessions[0].pr).toMatchObject({ number: 7, checks: 'pending' })
     expect(t.state.sessions[0].pr?.draft).toBeUndefined()
+  })
+
+  test('checks turning failing notify once; a muted project gets nothing', async () => {
+    const passing = { number: 9, url: 'https://github.com/o/r/pull/9', title: 'X', state: 'OPEN' as const, checks: 'passing' as const, updatedAt: 1 }
+    const failingJson = [{ number: 9, url: passing.url, title: 'X', state: 'OPEN', updatedAt: '2026-10-30T10:00:00Z',
+      statusCheckRollup: [{ name: 'build', detailsUrl: 'u', status: 'COMPLETED', conclusion: 'FAILURE' }] }]
+    const t = setup({ pr: passing })
+    t.setJson(failingJson)
+    t.poller.start()
+    await waitFor(async () => t.state.sessions[0].pr?.checks === 'failing' && !!t.state.sessions[1].pr)
+    t.poller.stop()
+    expect(t.state.sessions[0].pr?.failing).toEqual([{ name: 'build', url: 'u' }])
+    expect(t.notes.filter((n) => n.sessionId === 's1' && n.title === 'PR #9: checks failing')).toHaveLength(1)
+    expect(t.notes.find((n) => n.sessionId === 's1')).toMatchObject({ body: 'T s1' })
+
+    const m = setup({ pr: passing, muted: true })
+    m.setJson(failingJson)
+    m.poller.start()
+    await waitFor(async () => m.state.sessions[0].pr?.checks === 'failing')
+    m.poller.stop()
+    expect(m.notes).toEqual([])
+  })
+
+  test('open review threads are stored, new ones notify, and a failed lookup keeps the old count', async () => {
+    const before = { number: 9, url: 'https://github.com/o/r/pull/9', title: 'X', state: 'OPEN' as const, checks: 'none' as const, updatedAt: 1, openThreads: 1 }
+    const json = [{ number: 9, url: before.url, title: 'X', state: 'OPEN', updatedAt: '2026-10-30T10:00:00Z', statusCheckRollup: [] }]
+    const t = setup({ pr: before })
+    t.setJson(json)
+    t.setThreads(3)
+    t.poller.start()
+    await waitFor(async () => t.state.sessions[0].pr?.openThreads === 3)
+    t.poller.stop()
+    expect(t.notes.filter((n) => n.sessionId === 's1')).toEqual([{ sessionId: 's1', title: 'PR #9: new review comments', body: 'T s1' }])
+
+    const k = setup({ pr: { ...before, title: 'old title' } })
+    k.setJson(json)
+    k.setThreads(null)
+    k.poller.start()
+    await waitFor(async () => k.state.sessions[0].pr?.title === 'X')
+    k.poller.stop()
+    expect(k.state.sessions[0].pr?.openThreads).toBe(1)
+    expect(k.notes).toEqual([])
   })
 })

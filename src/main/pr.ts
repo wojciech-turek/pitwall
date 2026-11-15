@@ -26,6 +26,52 @@ export function summarizeChecks(rollup: unknown[]): ChecksState {
   return 'passing'
 }
 
+const MAX_FAILING = 10
+
+/** The failed entries of statusCheckRollup, by name: a CheckRun has `name`/`detailsUrl`, a StatusContext `context`/`targetUrl`. */
+export function failingChecks(rollup: unknown[]): { name: string; url?: string }[] {
+  const out: { name: string; url?: string }[] = []
+  for (const c of rollup) {
+    const o = (c ?? {}) as Record<string, unknown>
+    if (![str(o.conclusion), str(o.state)].some((v) => FAILING.has(v))) continue
+    const name = typeof o.name === 'string' && o.name ? o.name : typeof o.context === 'string' ? o.context : ''
+    if (!name) continue
+    const url = typeof o.detailsUrl === 'string' && o.detailsUrl ? o.detailsUrl : typeof o.targetUrl === 'string' ? o.targetUrl : ''
+    out.push(url ? { name, url } : { name })
+    if (out.length === MAX_FAILING) break
+  }
+  return out
+}
+
+export function parsePrUrl(url: string): { owner: string; repo: string } | null {
+  const m = /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/\d+/.exec(url)
+  return m ? { owner: m[1], repo: m[2] } : null
+}
+
+const THREADS_QUERY =
+  'query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved isOutdated}}}}}'
+
+/** Review threads still open on the current diff; null when GitHub couldn't say. */
+export async function fetchOpenThreads(o: {
+  ghBin: string; cwd: string; token: string; owner: string; repo: string; number: number; exec: Exec; env: Record<string, string>
+}): Promise<number | null> {
+  const r = await o.exec(
+    o.ghBin,
+    ['api', 'graphql', '-f', `query=${THREADS_QUERY}`, '-f', `owner=${o.owner}`, '-f', `name=${o.repo}`, '-F', `number=${o.number}`],
+    { cwd: o.cwd, env: { ...o.env, GH_TOKEN: o.token } }
+  )
+  if (r.code !== 0) return null
+  try {
+    const j = JSON.parse(r.stdout) as { data?: { repository?: { pullRequest?: { reviewThreads?: { nodes?: unknown } } } } }
+    const nodes = j?.data?.repository?.pullRequest?.reviewThreads?.nodes
+    if (!Array.isArray(nodes)) return null
+    return nodes.filter((n) => {
+      const t = (n ?? {}) as Record<string, unknown>
+      return t.isResolved === false && t.isOutdated === false
+    }).length
+  } catch { return null }
+}
+
 /** The branch's newest PR; 'none' when GitHub has none for it; null when the lookup failed. */
 export async function fetchPr(o: {
   ghBin: string; cwd: string; branch: string; token: string; exec: Exec; env: Record<string, string>
@@ -53,12 +99,15 @@ export async function fetchPr(o: {
     updatedAt: Number.isNaN(updated) ? Date.now() : updated
   }
   if (p.isDraft === true) pr.draft = true
+  const failing = failingChecks(Array.isArray(p.statusCheckRollup) ? p.statusCheckRollup : [])
+  if (failing.length) pr.failing = failing
   return pr
 }
 
 const same = (a: PrInfo | undefined, b: PrInfo): boolean =>
   !!a && a.number === b.number && a.state === b.state && a.checks === b.checks && a.title === b.title && a.url === b.url &&
-  a.draft === b.draft
+  a.draft === b.draft && a.openThreads === b.openThreads &&
+  (a.failing ?? []).map((f) => f.name).join('\n') === (b.failing ?? []).map((f) => f.name).join('\n')
 
 export class PrPoller {
   private tokens = new Map<string, { token: string; at: number }>()
@@ -161,6 +210,13 @@ export class PrPoller {
       })
       return
     }
+    if (pr.state === 'OPEN') {
+      const repo = parsePrUrl(pr.url)
+      const n = repo ? await fetchOpenThreads({ ghBin: paths.ghBin, cwd: dir, token, ...repo, number: pr.number, exec, env }) : null
+      const count = n ?? before?.openThreads
+      if (count !== undefined) pr.openThreads = count
+      if (this.stopped) return
+    }
     if (same(before, pr)) return
     await store.update((d) => {
       const t = d.sessions.find((x) => x.id === sessionId)
@@ -170,6 +226,13 @@ export class PrPoller {
     const muted = store.state.projects.find((p) => p.id === sub.projectId)?.muted === true
     if (before && before.state !== 'MERGED' && pr.state === 'MERGED' && !muted) {
       notifier.notify({ sessionId, title: `PR #${pr.number} merged`, body: `Archive "${s.title}"?` })
+    }
+    if (!muted && pr.state === 'OPEN' && pr.checks === 'failing' && before?.checks !== 'failing') {
+      notifier.notify({ sessionId, title: `PR #${pr.number}: checks failing`, body: s.title })
+    }
+    // Only when the count was known before: the first poll after an update has nothing to compare with.
+    if (!muted && before?.openThreads !== undefined && pr.openThreads !== undefined && pr.openThreads > before.openThreads) {
+      notifier.notify({ sessionId, title: `PR #${pr.number}: new review comments`, body: s.title })
     }
   }
 }

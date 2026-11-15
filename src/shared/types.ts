@@ -15,6 +15,10 @@ export interface PrInfo {
   number: number; url: string; title: string; state: PrState; checks: ChecksState; updatedAt: number
   /** Opened as a draft and not yet marked ready for review. */
   draft?: boolean
+  /** Checks that failed, by name (at most 10), with a link to each when GitHub gave one. */
+  failing?: { name: string; url?: string }[]
+  /** Review threads still open on the current diff; set only while the PR is open. */
+  openThreads?: number
 }
 export interface Session {
   id: string; subProjectId: string; title: string; slug: string; claudeSessionId: string; cwd: string
