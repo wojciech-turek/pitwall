@@ -4,6 +4,7 @@ import { defaultAccountDir, isPinned, sessionAccountId, DEFAULT_ACCOUNT_ID, type
 import { copyProjectEntry, profileFile } from '../account-folders'
 import { writeFileAtomic } from '../atomic'
 import type { Store } from '../store'
+import { STATUSLINE_FILE } from '../usage'
 import type { ContinueScheduler, Timers } from './continue-at'
 import type { SessionManager } from './manager'
 import type { AppSnapshot, HookEvent, Project, Session, SessionView } from '@shared/types'
@@ -253,6 +254,7 @@ export class AccountMover {
     })
     if (limitHit) this.continueAfter.add(s.id)
     try {
+      await this.dropUsageReport(s.id)
       await this.writeMarker(s.id, from)
       this.armWait(s.id)
       await this.deps.manager.restartClaude(s.id)
@@ -270,6 +272,11 @@ export class AccountMover {
   private trustFolders(s: Session): string[] {
     const sp = this.deps.store.state.subProjects.find((x) => x.id === s.subProjectId)
     return [...new Set([sp?.repoRoot, sp?.path, s.worktreePath, s.cwd].filter((x): x is string => !!x))]
+  }
+
+  /** The session's last usage report belongs to the account it ran on: gone, so it never counts for the next one. */
+  private dropUsageReport(id: string): Promise<void> {
+    return rm(join(this.deps.sessionDir(id), STATUSLINE_FILE), { force: true })
   }
 
   private async writeMarker(id: string, from: string): Promise<void> {
@@ -342,6 +349,7 @@ export class AccountMover {
       delete x.movedFrom
     })
     await rm(join(this.deps.sessionDir(id), MOVED_FROM_FILE), { force: true })
+    await this.dropUsageReport(id)
     return from
   }
 

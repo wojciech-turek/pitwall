@@ -489,3 +489,16 @@ test("the trust entry Claude keeps for a worktree is its repo's: that is what go
   expect(Object.keys(profile.projects)).toEqual(['/repos/main'])
 })
 
+test("a moved session's last usage report is dropped: it was the old account's, and must not show as the new one's", async () => {
+  // Seen in the real app: after a move the new account showed the old account's 89%.
+  await add(mkSession('s1'))
+  const report = join(sessionDirOf('s1'), 'statusline.json')
+  writeFileSync(report, '{"rate_limits":{}}')
+  await mover.request('s1', 'a1')
+  expect(existsSync(report)).toBe(false)
+  writeFileSync(report, '{"rate_limits":{}}') // what it reported on the new account before the move failed
+  emit('s1', 'pitwall:move-failed', { code: 1 })
+  await settle()
+  expect(existsSync(report)).toBe(false)
+})
+

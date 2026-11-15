@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { UsageWindow } from '@shared/types'
 import Menu, { type MenuItem } from './Menu'
-import { panelMode, panelRows, switchAccount, useAccounts, type AccountRow } from '../state/accounts'
+import { __pushAccounts, panelMode, panelRows, switchAccount, useAccounts, type AccountRow } from '../state/accounts'
 import { cleanIpcError } from '../state/errors'
 import { useSnapStore } from '../state/snapshot'
 import { useToast } from '../state/toast'
@@ -60,7 +60,11 @@ export default function AccountsPanel(): React.JSX.Element {
   // Re-render each minute: reset times pass and "updated … ago" ages without new data.
   const [, setTick] = useState(0)
   useEffect(() => {
-    const t = setInterval(() => setTick((n) => n + 1), 60_000)
+    // And ask again who is signed in where: a login changed outside Pitwall (`/login` in a terminal) changes no state of ours.
+    const t = setInterval(() => {
+      setTick((n) => n + 1)
+      void window.pitwall.getAccounts().then(__pushAccounts, () => undefined)
+    }, 60_000)
     return () => clearInterval(t)
   }, [])
   const selectedId = useUi((s) => s.selectedSessionId)
