@@ -119,6 +119,19 @@ export interface GhAccount { login: string; active: boolean; ok: boolean }
 /** One Claude subscription limit window, from Claude Code's status line. */
 export interface UsageWindow { usedPercentage: number; /** ms */ resetsAt: number }
 export interface ClaudeUsage { fiveHour?: UsageWindow; sevenDay?: UsageWindow; /** When Claude reported it (ms). */ updatedAt: number }
+/** What a group of processes costs. `cpu` is `ps %cpu` summed, so 100 is one core. */
+export interface ProcStats { cpu: number; rssBytes: number; procs: number }
+/** What Pitwall, each session and the Mac are spending, sampled every few seconds. Keys of `sessions` are session ids. */
+export interface SystemStats {
+  at: number
+  pressure: 'normal' | 'warn' | 'critical'
+  swapUsedBytes: number
+  memTotalBytes: number
+  diskFreeBytes: number
+  diskTotalBytes: number
+  pitwall: ProcStats
+  sessions: Record<string, ProcStats>
+}
 export interface RepoIdentity { sshCommand?: string; name?: string; email?: string }
 /** A published release. `notes` is untrusted Markdown from GitHub: never render it as HTML. */
 export interface ReleaseInfo { version: string; name: string; notes: string; url: string; publishedAt: number }

@@ -1,5 +1,5 @@
 import type {
-  AppSettings, AppSnapshot, ArchiveCheck, ArchiveResult, ChangedFile, ClaudeUsage, ConversationList, ConversationMatch, EnvVar, FileContent, FileEntry, GhAccount, GitIdentity, HistoryHit, NewSessionDefaults, NewSessionInput, Project, RepoIdentity,
+  AppSettings, AppSnapshot, ArchiveCheck, ArchiveResult, ChangedFile, ClaudeUsage, SystemStats, ConversationList, ConversationMatch, EnvVar, FileContent, FileEntry, GhAccount, GitIdentity, HistoryHit, NewSessionDefaults, NewSessionInput, Project, RepoIdentity,
   StartProgress, StartResult, StrayWorktree, SubProject, TermKind, UpdateState
 } from './types'
 
@@ -96,6 +96,9 @@ export interface PitwallApi {
   onFocusSession(cb: (sessionId: string) => void): () => void
   /** Claude subscription usage, or null until Claude has reported any. */
   getUsage(): Promise<ClaudeUsage | null>
+  /** The latest CPU, memory and disk figures, or null before the first sample (and always on Windows). */
+  getSystemStats(): Promise<SystemStats | null>
+  onSystemStats(cb: (s: SystemStats) => void): () => void
   /**
    * Build version, whether this is a dev (unpackaged) run, and whether it looks for updates at all (a dev build only
    * when pointed at a feed with PITWALL_RELEASES_URL).
@@ -164,6 +167,7 @@ export const IPC = {
   openInCursor: 'pitwall:openInCursor',
   setSettings: 'pitwall:setSettings',
   getUsage: 'pitwall:getUsage',
+  getSystemStats: 'pitwall:getSystemStats',
   appInfo: 'pitwall:appInfo',
   getUpdateState: 'pitwall:getUpdateState',
   checkForUpdates: 'pitwall:checkForUpdates',
@@ -175,5 +179,6 @@ export const IPC = {
   focusSession: 'pitwall:focusSession',
   menuCommand: 'pitwall:menuCommand',
   usage: 'pitwall:usage',
+  systemStats: 'pitwall:systemStats',
   updateState: 'pitwall:updateState'
 } as const

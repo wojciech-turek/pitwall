@@ -11,6 +11,16 @@ export function tmuxNameFor(sessionId: string, kind: TermKind): string {
   return kind === 'shell' ? shellTmuxName(sessionId) : serverTmuxName(sessionId)
 }
 
+/** The reverse of `tmuxNameFor`. Suffixes are read from the end, so an id may contain `-`. */
+export function sessionIdFromTmuxName(name: string): { id: string; kind: TermKind } | null {
+  if (!name.startsWith('pw-')) return null
+  const rest = name.slice(3)
+  for (const [suffix, kind] of [['-srv', 'server'], ['-sh', 'shell']] as const) {
+    if (rest.endsWith(suffix) && rest.length > suffix.length) return { id: rest.slice(0, -suffix.length), kind }
+  }
+  return rest ? { id: rest, kind: 'claude' } : null
+}
+
 // Exact-match session target that is also valid where tmux wants a pane.
 const pane = (name: string): string => `=${name}:`
 
@@ -60,6 +70,20 @@ export class Tmux {
       if (dead !== '0' || !Number.isInteger(Number(server)) || !Number.isInteger(Number(pane))) continue
       out.serverPid = Number(server)
       if (Number(pane) > 1) out.panePids.push(Number(pane))
+    }
+    return out
+  }
+
+  /** Every live pane's first process by session name, over all sessions at once; empty with no server. */
+  async listAllPanes(): Promise<{ serverPid: number | null; panes: Map<string, number[]> }> {
+    const out = { serverPid: null as number | null, panes: new Map<string, number[]>() }
+    const r = await this.run(['list-panes', '-a', '-F', '#{session_name} #{pane_dead} #{pid} #{pane_pid}'])
+    if (r.code !== 0) return out
+    for (const line of r.stdout.split('\n')) {
+      const [name, dead, server, panePid] = line.trim().split(/\s+/)
+      if (!name || dead !== '0' || !Number.isInteger(Number(server)) || !Number.isInteger(Number(panePid))) continue
+      out.serverPid = Number(server)
+      if (Number(panePid) > 1) out.panes.set(name, [...(out.panes.get(name) ?? []), Number(panePid)])
     }
     return out
   }

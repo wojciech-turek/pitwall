@@ -23,6 +23,7 @@ import { APP_VERSION } from '@shared/version'
 import { PARK_AFTER_MS } from '@shared/parking'
 import type { UpdateChecker } from './updates'
 import type { UsageTracker } from './usage'
+import type { SystemMonitor } from './system-monitor'
 import type { PrPoller } from './pr'
 import { checksMessage, fetchReviewThreads, reviewsMessage } from './pr-feedback'
 
@@ -41,6 +42,7 @@ export interface IpcDeps {
   mutex: KeyedMutex
   history: Pick<SessionHistory, 'search' | 'forgetFiles'>
   usage: Pick<UsageTracker, 'current' | 'onChange'>
+  systemStats: Pick<SystemMonitor, 'current' | 'onChange'>
   updates: Pick<UpdateChecker, 'state' | 'checkNow' | 'onChange' | 'hasFeed'>
   pr: Pick<PrPoller, 'feedbackContext'>
   /** True for an unpackaged (dev) run. */
@@ -71,6 +73,7 @@ export function registerIpc(d: IpcDeps): () => void {
 
   handle(IPC.getSnapshot, () => manager.snapshot())
   handle(IPC.getUsage, () => d.usage.current())
+  handle(IPC.getSystemStats, () => d.systemStats.current())
   handle(IPC.appInfo, () => ({ version: APP_VERSION, dev: d.dev, updateFeed: d.updates.hasFeed(), parkAfterMs: parkAfterMs() }))
   handle(IPC.getUpdateState, () => d.updates.state())
   handle(IPC.checkForUpdates, () => d.updates.checkNow())
@@ -214,10 +217,12 @@ export function registerIpc(d: IpcDeps): () => void {
 
   const unsub = manager.onSnapshot((s) => send(IPC.snapshot, s))
   const unsubUsage = d.usage.onChange((u) => send(IPC.usage, u))
+  const unsubStats = d.systemStats.onChange((s) => send(IPC.systemStats, s))
   const unsubUpdates = d.updates.onChange((u) => send(IPC.updateState, u))
   return () => {
     unsub()
     unsubUsage()
+    unsubStats()
     unsubUpdates()
     for (const ch of Object.values(IPC)) {
       ipcMain.removeHandler(ch)

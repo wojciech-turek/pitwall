@@ -76,6 +76,8 @@ const api: PitwallApi = {
   setSettings: (s) => ipcRenderer.invoke(IPC.setSettings, s),
   onFocusSession,
   getUsage: () => ipcRenderer.invoke(IPC.getUsage),
+  getSystemStats: () => ipcRenderer.invoke(IPC.getSystemStats),
+  onSystemStats: (cb) => subscribe(IPC.systemStats, cb),
   appInfo: () => ipcRenderer.invoke(IPC.appInfo),
   onUsage: (cb) => subscribe(IPC.usage, cb),
   getUpdateState: () => ipcRenderer.invoke(IPC.getUpdateState),

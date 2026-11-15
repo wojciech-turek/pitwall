@@ -1,5 +1,6 @@
+import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { app, BrowserWindow, dialog, Menu, nativeImage, powerMonitor, shell } from 'electron'
 import { IPC } from '@shared/api'
 import { launcherChoice, sessionBackendKind, type SessionBackend } from './backend'
@@ -29,6 +30,7 @@ import { Tmux } from './tmux'
 import { TmuxBackend } from './tmux-backend'
 import { releasesUrl, UpdateChecker } from './updates'
 import { UsageTracker } from './usage'
+import { SystemMonitor } from './system-monitor'
 import { isViewing, viewingAfter, type ViewingEvent } from './viewing'
 import { windowChrome } from './window-chrome'
 import { APP_VERSION } from '@shared/version'
@@ -65,6 +67,7 @@ let disposeChanges: (() => void) | null = null
 let disposePr: (() => void) | null = null
 let disposeServers: (() => void) | null = null
 let disposeUsage: (() => void) | null = null
+let disposeSystemStats: (() => void) | null = null
 let disposeUpdates: (() => void) | null = null
 let disposeCli: (() => void) | null = null
 let refreshBadge: (() => void) | null = null
@@ -267,6 +270,20 @@ async function bootstrap(): Promise<void> {
   await usage.load()
   usage.start()
   disposeUsage = () => usage.stop()
+  // statfs needs a path that exists: the worktrees folder may not yet.
+  let diskPath = paths.worktreesRoot
+  while (!existsSync(diskPath) && dirname(diskPath) !== diskPath) diskPath = dirname(diskPath)
+  const systemStats = new SystemMonitor({
+    exec, backend, diskPath,
+    liveSessionIds: () => store.state.sessions.filter((s) => s.archivedAt === undefined).map((s) => s.id),
+    appMetrics: () => {
+      let cpu = 0, kb = 0, procs = 0
+      for (const m of app.getAppMetrics()) { cpu += m.cpu.percentCPUUsage; kb += m.memory.workingSetSize; procs++ }
+      return { cpu, rssBytes: kb * 1024, procs }
+    }
+  })
+  if (process.platform !== 'win32') systemStats.start()
+  disposeSystemStats = () => systemStats.stop()
   // A dev build looks for releases only when pointed at a feed (PITWALL_RELEASES_URL).
   const updates = new UpdateChecker({
     current: APP_VERSION,
@@ -284,7 +301,7 @@ async function bootstrap(): Promise<void> {
   powerMonitor.on('resume', onResume)
   disposeUpdates = () => { powerMonitor.removeListener('resume', onResume); updates.stop() }
   disposeIpc = registerIpc({
-    manager: mgr, changes, store, git, backend, projects, bridge, paths, exec, env, home, mutex, history, usage, updates, pr, send, dev: DEV,
+    manager: mgr, changes, store, git, backend, projects, bridge, paths, exec, env, home, mutex, history, usage, systemStats, updates, pr, send, dev: DEV,
     launcher,
     onViewing: (ids) => {
       visibleIds = ids
@@ -336,6 +353,8 @@ if (!isPrimaryInstance) {
     disposeServers = null
     disposeUsage?.()
     disposeUsage = null
+    disposeSystemStats?.()
+    disposeSystemStats = null
     disposeUpdates?.()
     disposeUpdates = null
     disposeCli?.()

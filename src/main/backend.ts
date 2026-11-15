@@ -43,6 +43,11 @@ export interface SessionBackend {
    * started each pane (`paneStarts`, ms), so a pane pid reused since can be told apart (Windows).
    */
   processRoots(name: string): Promise<{ serverPid: number | null; panePids: number[]; paneStarts?: number[] }>
+  /**
+   * Every live pane's first process, by session name, and the server's pid, for resource sampling in one call. Absent
+   * where not supported (the host); `serverPid` is null when there is no server.
+   */
+  listPaneRoots?(): Promise<{ serverPid: number | null; panes: Map<string, number[]> }>
   /** A missing session gives an attachment that exits at once (or a rejection). */
   attach(name: string, cols: number, rows: number, h: AttachHandlers): Promise<Attachment>
   /** Ends every session and the backend's server. Never called on quit: agents must outlive the app. */

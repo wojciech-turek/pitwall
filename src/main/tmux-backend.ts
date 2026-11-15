@@ -40,6 +40,10 @@ export class TmuxBackend implements SessionBackend {
     return this.tmux.listPanePids(name)
   }
 
+  listPaneRoots(): Promise<{ serverPid: number | null; panes: Map<string, number[]> }> {
+    return this.tmux.listAllPanes()
+  }
+
   /** Spawns before returning (no await first), so a caller's last check before calling still holds at the spawn. */
   async attach(name: string, cols: number, rows: number, h: AttachHandlers): Promise<Attachment> {
     const cmd = this.tmux.attachCommand(name)
