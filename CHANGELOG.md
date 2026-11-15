@@ -6,7 +6,7 @@ All notable changes to Pitwall are listed here, newest first. Pitwall shows thes
 
 ### Added
 
-- **A session that hits a usage limit can continue by itself.** The header offers "Continue at 3:05 PM"; click it and Pitwall types `continue` when the limit resets, if the session is still waiting then.
+- **Continue when a limit resets.** A session Claude stopped at a limit shows "Claude stopped at a limit." and offers "Continue at 3:05 PM"; click it and Pitwall types `continue` then, if the session is still waiting.
 - **Review an agent's changes and send the review in one go.** Select lines in a diff, add a comment, and "Send review to agent" pastes every comment into Claude's prompt.
 - **Failing checks and open review comments on a session's PR** show above its terminal, and "Send to agent" hands them over.
 - **A Server tab for your dev server.** Set a folder's dev command, and each session runs it in its own tab, next to Claude and Shell, with a button to open it in the browser.
@@ -20,6 +20,7 @@ All notable changes to Pitwall are listed here, newest first. Pitwall shows thes
 
 ### Changed
 
+- **The usage meter shows each Claude account.** Projects that use their own `CLAUDE_CONFIG_DIR` get their own 5-hour and weekly bars, named by the account's email, with the selected session's account on top.
 - **A subagent still working in the background no longer marks its session as Working** after Claude's reply. Its own row shows it's running.
 
 ### Fixed

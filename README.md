@@ -189,7 +189,7 @@ On Windows the same shortcuts use Ctrl instead of âŒ˜ (`Ctrl+K`, `Ctrl+Enter`, â
 - **Denying a permission can leave a session on Working.** Claude Code reports nothing when you answer "No", so press Esc to clear it.
 - **Identity changes apply when an agent restarts.** After editing a project, exit Claude in a session and press Enter.
 - **A pane that moves when you split or close another one is redrawn.** Open files keep their unsaved text, but lose undo history.
-- **With several Claude accounts** (a project's `CLAUDE_CONFIG_DIR`), the usage meter shows whichever session replied last.
+- **With several Claude accounts** (a project's `CLAUDE_CONFIG_DIR`), the usage meter shows each account's limits, named by its email, with the selected session's account first.
 - **Archiving stops what the session started, unless it fully detached.** Processes that leave the session (e.g. Docker containers) aren't stopped automatically; that's what the teardown command is for.
 
 ## Development
