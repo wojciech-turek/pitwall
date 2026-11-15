@@ -159,7 +159,9 @@ try {
         if ($rb.Length -gt 65536) { $cut = New-Object byte[] 65536; [System.Array]::Copy($rb, $cut, 65536); $rb = $cut }
         [System.IO.File]::WriteAllBytes($tmp, $rb)
         $dst = [System.IO.Path]::Combine($dir, 'last-reply.txt')
-        if ([System.IO.File]::Exists($dst)) { [System.IO.File]::Replace($tmp, $dst, $null) } else { [System.IO.File]::Move($tmp, $dst) }
+        # No backup file: PowerShell would pass $null to a .NET string parameter as "" (an invalid path), so a real null.
+        $noBackup = [System.Management.Automation.Language.NullString]::Value
+        if ([System.IO.File]::Exists($dst)) { [System.IO.File]::Replace($tmp, $dst, $noBackup) } else { [System.IO.File]::Move($tmp, $dst) }
       } catch {
         try { [System.IO.File]::Delete($tmp) } catch { }
       }
