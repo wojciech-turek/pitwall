@@ -242,7 +242,8 @@ export class AccountMover {
     // The folder's trust and allowed tools go with it, so Claude doesn't stop at the trust prompt there. Only into an
     // added account's profile: Pitwall never edits the default one (~/.claude.json), where Claude asks again if it must.
     if (to !== DEFAULT_ACCOUNT_ID) {
-      await copyProjectEntry(profileFile(this.dirOf(from), home), profileFile(this.dirOf(to), home), s.cwd).catch(() => undefined)
+      const [source, dest] = [profileFile(this.dirOf(from), home), profileFile(this.dirOf(to), home)]
+      for (const folder of this.trustFolders(s)) await copyProjectEntry(source, dest, folder).catch(() => undefined)
     }
     await this.patch(s.id, (x) => {
       if (to === DEFAULT_ACCOUNT_ID) delete x.account
@@ -260,6 +261,15 @@ export class AccountMover {
       throw e
     }
     this.deps.onRestarted?.(s.id)
+  }
+
+  /**
+   * The folders Claude may keep the session's trust under. For a worktree that is the main repo's folder, not the
+   * worktree's (seen with real Claude Code); for a plain folder, the folder itself.
+   */
+  private trustFolders(s: Session): string[] {
+    const sp = this.deps.store.state.subProjects.find((x) => x.id === s.subProjectId)
+    return [...new Set([sp?.repoRoot, sp?.path, s.worktreePath, s.cwd].filter((x): x is string => !!x))]
   }
 
   private async writeMarker(id: string, from: string): Promise<void> {

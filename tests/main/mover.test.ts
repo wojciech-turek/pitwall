@@ -475,3 +475,17 @@ describe('review fixes', () => {
     })
   })
 })
+
+test("the trust entry Claude keeps for a worktree is its repo's: that is what goes with a moved session", async () => {
+  // Seen with real Claude Code: a session in a worktree is trusted under the main repo's folder, not the worktree's.
+  writeFileSync(join(home, '.claude.json'), JSON.stringify({
+    oauthAccount: { emailAddress: 'me@x.com' },
+    projects: { '/repos/main': { hasTrustDialogAccepted: true }, '/w': { hasTrustDialogAccepted: true }, '/unrelated': { hasTrustDialogAccepted: true } }
+  }))
+  await store.update((d) => { d.subProjects[0] = { ...d.subProjects[0], kind: 'repo', repoRoot: '/repos/main', path: '/repos/main/pkg' } })
+  await add(mkSession('s1', { cwd: '/wt/s1/pkg', worktreePath: '/wt/s1' }))
+  await mover.request('s1', 'a1')
+  const profile = JSON.parse(readFileSync(join(acctDir, '.claude.json'), 'utf8'))
+  expect(Object.keys(profile.projects)).toEqual(['/repos/main'])
+})
+
