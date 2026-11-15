@@ -11,6 +11,7 @@ export class GitError extends Error {
 }
 
 export type FolderInfo = { kind: 'repo'; repoRoot: string; relPath: string } | { kind: 'folder' }
+export interface WorktreeEntry { path: string; prunable: boolean; branch?: string; head?: string; detached: boolean }
 type Status = 'M' | 'A' | 'D' | '?'
 
 const firstLine = (s: string) => s.trim().split('\n')[0] ?? ''
@@ -153,15 +154,40 @@ export class GitClient {
     await this.run(repoRoot, ['worktree', 'remove', ...(force ? ['--force'] : []), path], WORKTREE_TIMEOUT_MS)
   }
 
-  /** The repo's worktrees; `prunable`: its folder is gone (or unreachable), so `git worktree prune` would drop it. */
-  async listWorktrees(repoRoot: string): Promise<{ path: string; prunable: boolean }[]> {
-    const list: { path: string; prunable: boolean }[] = []
+  /**
+   * The repo's worktrees, the main checkout first; `prunable`: its folder is gone (or unreachable), so
+   * `git worktree prune` would drop it. `branch` is unset (and `detached` true) for a detached HEAD.
+   */
+  async listWorktrees(repoRoot: string): Promise<WorktreeEntry[]> {
+    const list: WorktreeEntry[] = []
     for (const line of (await this.run(repoRoot, ['worktree', 'list', '--porcelain'])).split('\n')) {
       const cur = list.at(-1)
-      if (line.startsWith('worktree ')) list.push({ path: fromGit(line.slice(9), this.platform), prunable: false })
-      else if (cur && (line === 'prunable' || line.startsWith('prunable '))) cur.prunable = true
+      if (line.startsWith('worktree ')) list.push({ path: fromGit(line.slice(9), this.platform), prunable: false, detached: false })
+      else if (!cur) continue
+      else if (line === 'prunable' || line.startsWith('prunable ')) cur.prunable = true
+      else if (line.startsWith('HEAD ')) cur.head = line.slice(5)
+      else if (line.startsWith('branch refs/heads/')) cur.branch = line.slice(18)
+      else if (line === 'detached') cur.detached = true
     }
     return list
+  }
+
+  /** Whether `branch` is already part of `into` (merge-base --is-ancestor), so nothing on it would be lost. */
+  isAncestor(repoRoot: string, branch: string, into: string): Promise<boolean> {
+    return this.ok(repoRoot, ['merge-base', '--is-ancestor', `refs/heads/${branch}`, into])
+  }
+
+  /** Whether the worktree has uncommitted or untracked changes. A status that fails counts as dirty. */
+  async isDirty(dir: string): Promise<boolean> {
+    const r = await this.raw(dir, ['status', '--porcelain']).catch(() => null)
+    return !r || r.code !== 0 || r.stdout.trim().length > 0
+  }
+
+  /** When the worktree's HEAD commit was made (ms), or null. */
+  async lastCommitAt(dir: string): Promise<number | null> {
+    const r = await this.raw(dir, ['log', '-1', '--format=%ct']).catch(() => null)
+    const n = r && r.code === 0 ? Number(r.stdout.trim()) : NaN
+    return Number.isFinite(n) && n > 0 ? n * 1000 : null
   }
 
   /** When the branch's oldest reflog entry was written (ms), or null if git keeps no reflog for it. */
@@ -174,6 +200,11 @@ export class GitClient {
 
   async deleteBranch(repoRoot: string, name: string): Promise<void> {
     await this.run(repoRoot, ['branch', '-D', name])
+  }
+
+  /** Deletes a branch only if it is merged (`git branch -d`); git refuses otherwise, and so do we. */
+  async deleteMergedBranch(repoRoot: string, name: string): Promise<void> {
+    await this.run(repoRoot, ['branch', '-d', name])
   }
 
   async hasRemote(dir: string): Promise<boolean> {

@@ -3,11 +3,13 @@ import type { SessionView } from '@shared/types'
 import { LineCounts } from './ChangesTab'
 import PrBadge from './PrBadge'
 import StatusIcon from './StatusIcon'
-import { PinIcon } from './Icons'
+import { ChevronIcon, PinIcon } from './Icons'
 import Menu from './Menu'
 import HoverCard, { useHoverCard } from './HoverCard'
 import { useUi } from '../state/ui'
 import { SESSION_MIME } from '../state/dropZone'
+import { setSubagentsOpen, subagentSummary, useSubagentsOpen } from '../state/subagentsOpen'
+import { useHeavyLabel } from '../state/system'
 import { rowFaded, rowLineCounts } from '../state/badges'
 
 /** The chip under the cursor while a row is dragged (drawn behind the app; the drag image is taken from it). */
@@ -29,8 +31,10 @@ function setGhost(e: React.DragEvent<HTMLElement>, session: SessionView): void {
   setTimeout(() => ghost.remove(), 0)
 }
 
-export default function SessionRow({ session, onSelect, projectName, subProjectName }: {
+export default function SessionRow({ session, onSelect, projectName, subProjectName, depth = 0, startedBy }: {
   session: SessionView; onSelect: (id: string) => void; projectName?: string; subProjectName?: string
+  /** How many sessions above it started it (0 for a top-level session). */
+  depth?: number; startedBy?: string
 }): React.JSX.Element {
   const selected = useUi((s) => s.selectedSessionId === session.id)
   const visible = useUi((s) => s.visibleSessionIds.includes(session.id))
@@ -43,6 +47,7 @@ export default function SessionRow({ session, onSelect, projectName, subProjectN
   const setDraggingSession = useUi((s) => s.setDraggingSession)
   const paletteOpen = useUi((s) => s.palette !== null)
   const hover = useHoverCard(editing || dragging || paletteOpen)
+  const subsOpen = useSubagentsOpen(session.id)
 
   useEffect(() => {
     if (editing) { done.current = false; input.current?.select() }
@@ -61,9 +66,10 @@ export default function SessionRow({ session, onSelect, projectName, subProjectN
   }
 
   const counts = rowLineCounts(session)
+  const heavy = useHeavyLabel(session.id)
   return (
     <div className={`row session-row${selected ? ' selected' : visible ? ' visible' : ''}${dragging ? ' dragging' : ''}${rowFaded(session) ? ' faded' : ''}`}
-      data-testid="session-row" data-status={session.status} data-session-id={session.id} {...hover.bind}
+      data-testid="session-row" data-status={session.status} data-session-id={session.id} data-depth={depth} {...hover.bind}
       draggable={!editing}
       onDragStart={(e) => {
         e.dataTransfer.setData(SESSION_MIME, session.id)
@@ -86,7 +92,20 @@ export default function SessionRow({ session, onSelect, projectName, subProjectN
       ) : (
         <span className="row-title">{session.title}</span>
       )}
+      {!editing && !!session.subagents?.length && (
+        <>
+          <button className={`subagents-toggle${subsOpen ? ' open' : ''}`} data-testid="subagents-toggle"
+            title={subsOpen ? 'Hide subagents' : 'Show subagents'} aria-label={subsOpen ? 'Hide subagents' : 'Show subagents'}
+            aria-expanded={subsOpen}
+            onClick={(e) => { e.stopPropagation(); setSubagentsOpen(session.id, !subsOpen) }}
+            onDoubleClick={(e) => e.stopPropagation()}>
+            <ChevronIcon />
+          </button>
+          <span className="subagents-summary" data-testid="subagents-summary">{subagentSummary(session.subagents)}</span>
+        </>
+      )}
       {!editing && session.pinned && <span className="pin-mark" data-testid="pin-mark" title="Pinned"><PinIcon /></span>}
+      {!editing && heavy && <span className="heavy-chip" data-testid="heavy-chip" title="Using a lot of memory or CPU">{heavy}</span>}
       {!editing && session.pr && <PrBadge pr={session.pr} />}
       {!editing && counts && <LineCounts additions={counts.additions} deletions={counts.deletions} />}
       {!editing && (
@@ -103,7 +122,7 @@ export default function SessionRow({ session, onSelect, projectName, subProjectN
           ]} />
         </span>
       )}
-      {hover.rect && <HoverCard session={session} rect={hover.rect} projectName={projectName} subProjectName={subProjectName} />}
+      {hover.rect && <HoverCard session={session} rect={hover.rect} projectName={projectName} subProjectName={subProjectName} startedBy={startedBy} />}
     </div>
   )
 }

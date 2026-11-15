@@ -38,6 +38,9 @@ for (let i = 0; i + 1 < args.length; i++) {
   if (args[i] === '--session-id' || args[i] === '--resume') id = args[i + 1]
   if (args[i] === '--append-system-prompt-file') note = args[i + 1]
 }
+// A positional prompt is what follows `--`; Claude takes it as the first typed line.
+const dd = args.indexOf('--')
+const prompt = dd >= 0 ? args[dd + 1] : undefined
 // Like Claude, reads the file given with --append-system-prompt-file; its text is logged as NOTE=.
 if (env.STUB_CLAUDE_LOG && note) {
   let text
@@ -126,6 +129,15 @@ function statusline() {
 if (env.STUB_CLAUDE_SILENT !== '1') emit({ hook_event_name: 'SessionStart', session_id: id, source: 'startup' })
 console.log('STUB CLAUDE READY')
 
+/** A line typed to Claude: it echoes it back. */
+function typed(line) {
+  emit({ hook_event_name: 'UserPromptSubmit', session_id: id })
+  console.log(`echo: ${line}`)
+  emit({ hook_event_name: 'Stop', session_id: id, last_assistant_message: `echo: ${line}` })
+  statusline()
+}
+if (prompt) typed(prompt)
+
 const lines = createInterface({ input: process.stdin, crlfDelay: Infinity })
 lines.on('line', (line) => {
   switch (line) {
@@ -140,11 +152,21 @@ lines.on('line', (line) => {
     case 'clear':
       emit({ hook_event_name: 'SessionStart', session_id: `${id}-cleared`, source: 'clear' })
       break
+    case 'subagent':
+      // Like Claude running one Agent-tool subagent for two seconds.
+      emit({ hook_event_name: 'PreToolUse', session_id: id, tool_name: 'Agent', tool_input: { description: 'Stub task' } })
+      emit({ hook_event_name: 'SubagentStart', session_id: id, agent_id: 'stub-1', agent_type: 'Explore' })
+      setTimeout(() => {
+        emit({ hook_event_name: 'SubagentStop', session_id: id, agent_id: 'stub-1', agent_type: 'Explore', last_assistant_message: 'done' })
+        emit({ hook_event_name: 'Stop', session_id: id })
+      }, 2000)
+      break
+    case 'limit':
+      // Like Claude stopping a turn at a usage limit.
+      emit({ hook_event_name: 'StopFailure', session_id: id, error: 'rate_limit', last_assistant_message: 'API Error: Rate limit reached' })
+      break
     default:
-      emit({ hook_event_name: 'UserPromptSubmit', session_id: id })
-      console.log(`echo: ${line}`)
-      emit({ hook_event_name: 'Stop', session_id: id, last_assistant_message: `echo: ${line}` })
-      statusline()
+      typed(line)
   }
 })
 lines.on('close', () => process.exit(0))

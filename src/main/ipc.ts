@@ -1,3 +1,4 @@
+import { dirname } from 'node:path'
 import { ipcMain, shell } from 'electron'
 import { IPC } from '@shared/api'
 import type { NewSessionInput, StartResult, TermKind } from '@shared/types'
@@ -7,6 +8,7 @@ import type { Exec } from './exec'
 import { formatAgentReference, listSessionFiles, readForEditor, writeFromEditor } from './files'
 import type { GitClient } from './git'
 import { settingsFrom, type Store } from './store'
+import { findStrayWorktrees, knownLiveWorktrees, removeStrayWorktrees, strayCandidates, worktreeSize } from './stray-worktrees'
 import { claudeTmuxName } from './tmux'
 import type { SessionHistory } from './history'
 import { listGhAccounts, listSshKeys } from './identity'
@@ -18,8 +20,13 @@ import { archiveSession, checkArchive } from './sessions/archive'
 import type { SessionManager } from './sessions/manager'
 import type { KeyedMutex } from './sessions/mutex'
 import { APP_VERSION } from '@shared/version'
+import { PARK_AFTER_MS } from '@shared/parking'
 import type { UpdateChecker } from './updates'
 import type { UsageTracker } from './usage'
+import type { SystemMonitor } from './system-monitor'
+import type { PrPoller } from './pr'
+import type { ContinueScheduler } from './sessions/continue-at'
+import { checksMessage, fetchReviewThreads, reviewsMessage } from './pr-feedback'
 
 export interface IpcDeps {
   manager: SessionManager
@@ -36,7 +43,10 @@ export interface IpcDeps {
   mutex: KeyedMutex
   history: Pick<SessionHistory, 'search' | 'forgetFiles'>
   usage: Pick<UsageTracker, 'current' | 'onChange'>
+  systemStats: Pick<SystemMonitor, 'current' | 'onChange'>
   updates: Pick<UpdateChecker, 'state' | 'checkNow' | 'onChange' | 'hasFeed'>
+  pr: Pick<PrPoller, 'feedbackContext'>
+  continueAt: Pick<ContinueScheduler, 'schedule' | 'cancel'>
   /** True for an unpackaged (dev) run. */
   dev: boolean
   /** What starts Claude (archiving relaunches it when the worktree can't be removed). */
@@ -45,6 +55,15 @@ export interface IpcDeps {
   send: (channel: string, ...args: unknown[]) => void
   /** The sessions visible in the renderer's panes; main combines them with window focus. */
   onViewing: (sessionIds: string[]) => void
+}
+
+/** A paste while Claude asks a question (or for permission) would land in the answer. */
+const ANSWER_FIRST = 'Claude is waiting for your answer. Answer it first, then send this.'
+
+/** How long a hidden terminal waits before parking; PITWALL_PARK_AFTER_MS (an integer of at least 100) overrides, for tests. */
+function parkAfterMs(): number {
+  const n = Number(process.env.PITWALL_PARK_AFTER_MS)
+  return Number.isInteger(n) && n >= 100 ? n : PARK_AFTER_MS
 }
 
 /** Registers every IPC handler and wires manager snapshots to the renderer. Returns a disposer. */
@@ -59,7 +78,8 @@ export function registerIpc(d: IpcDeps): () => void {
 
   handle(IPC.getSnapshot, () => manager.snapshot())
   handle(IPC.getUsage, () => d.usage.current())
-  handle(IPC.appInfo, () => ({ version: APP_VERSION, dev: d.dev, updateFeed: d.updates.hasFeed() }))
+  handle(IPC.getSystemStats, () => d.systemStats.current())
+  handle(IPC.appInfo, () => ({ version: APP_VERSION, dev: d.dev, updateFeed: d.updates.hasFeed(), parkAfterMs: parkAfterMs() }))
   handle(IPC.getUpdateState, () => d.updates.state())
   handle(IPC.checkForUpdates, () => d.updates.checkNow())
   handle(IPC.listSshKeys, () => listSshKeys(paths.sshDir))
@@ -71,11 +91,12 @@ export function registerIpc(d: IpcDeps): () => void {
   handle(IPC.confirmAddFolder, (projectId: string, path: string, overwrite: boolean) =>
     projects.confirmAddFolder(projectId, path, overwrite))
   handle(IPC.removeSubProject, (id: string) => projects.removeSubProject(id))
-  handle(IPC.updateSubProject, (id: string, patch: { setupCommand?: string; teardownCommand?: string }) => projects.updateSubProject(id, patch))
+  handle(IPC.updateSubProject, (id: string, patch: { setupCommand?: string; teardownCommand?: string; devCommand?: string }) => projects.updateSubProject(id, patch))
   handle(IPC.prepareNewSession, (id: string) => manager.prepareNew(id))
   // Only continueConversation continues an outside conversation: it checks it and keeps Claude to the worktree.
+  // Only the pitwall command (over its socket) says who started a session or gives it a first prompt.
   handle(IPC.startSession, (i: NewSessionInput) =>
-    manager.start({ ...i, continueClaudeId: undefined, continuedFrom: undefined }, (p) => send(IPC.startProgress, p)))
+    manager.start({ ...i, continueClaudeId: undefined, continuedFrom: undefined, createdBy: undefined, initialPrompt: undefined }, (p) => send(IPC.startProgress, p)))
   handle(IPC.renameSession, (id: string, title: string) => manager.rename(id, title))
   handle(IPC.setProjectMuted, (id: string, muted: boolean) => projects.setProjectMuted(id, muted === true))
   handle(IPC.markSessionUnread, (id: string) => manager.markUnread(id))
@@ -95,9 +116,42 @@ export function registerIpc(d: IpcDeps): () => void {
   handle(IPC.readFile, (id: string, rel: string) => readForEditor(sessionFolder(id).cwd, rel))
   handle(IPC.writeFile, (id: string, rel: string, content: string, mtime?: number) =>
     writeFromEditor(sessionFolder(id).cwd, rel, content, mtime))
+  const needsYou = (id: string): boolean => manager.snapshot().sessions.find((x) => x.id === id)?.status === 'needs_you'
   handle(IPC.sendToAgent, async (id: string, text: string) => {
     sessionFolder(id)
+    if (needsYou(id)) throw new Error(ANSWER_FIRST)
     await backend.pasteText(claudeTmuxName(id), text) // bracketed paste, never Enter
+  })
+  const liveSession = (id: unknown): string => {
+    if (typeof id !== 'string' || !store.state.sessions.some((x) => x.id === id && x.archivedAt === undefined)) throw new Error('Session not found')
+    return id
+  }
+  handle(IPC.scheduleContinue, async (id: unknown) => ({ at: await d.continueAt.schedule(liveSession(id)) }))
+  handle(IPC.cancelContinue, (id: unknown) => d.continueAt.cancel(liveSession(id)))
+  handle(IPC.sendPrFeedback, async (id: unknown, what: unknown): Promise<{ ok: true; count: number } | { ok: false; message: string }> => {
+    if (typeof id !== 'string' || (what !== 'checks' && what !== 'reviews')) return { ok: false, message: 'Invalid request.' }
+    if (needsYou(id)) return { ok: false, message: ANSWER_FIRST }
+    const c = await d.pr.feedbackContext(id)
+    if (!c.ok) return c
+    let text: string
+    let count: number
+    if (what === 'checks') {
+      count = c.pr.failing?.length ?? 0
+      if (!count) return { ok: false, message: 'No failing checks on this PR.' }
+      text = checksMessage(c.pr)
+    } else {
+      const threads = await fetchReviewThreads({
+        ghBin: paths.ghBin, cwd: c.dir, token: c.token, owner: c.owner, repo: c.repo, number: c.pr.number, exec, env
+      })
+      if (!threads) return { ok: false, message: "Couldn't read the review comments from GitHub." }
+      if (!threads.length) return { ok: false, message: 'No unresolved review comments.' }
+      count = threads.length
+      text = reviewsMessage(c.pr, threads)
+    }
+    // Again right before pasting: fetching the comments takes a moment.
+    if (needsYou(id)) return { ok: false, message: ANSWER_FIRST }
+    await backend.pasteText(claudeTmuxName(id), text) // bracketed paste, never Enter
+    return { ok: true, count }
   })
   handle(IPC.listChanges, (id: string) => d.changes.list(id))
   handle(IPC.readDiff, (id: string, rel: string) => d.changes.readDiff(id, rel))
@@ -121,6 +175,27 @@ export function registerIpc(d: IpcDeps): () => void {
     typeof id === 'string' && typeof claudeId === 'string' && typeof requestId === 'string'
       ? manager.continueConversation(id, claudeId, requestId, (p) => send(IPC.startProgress, p))
       : { ok: false, step: 'identity', error: 'Invalid request.' })
+  // A repo folder's worktrees no session owns. Sessions of this app and of the sibling Pitwall data dirs are protected.
+  const strayOptions = async (subProjectId: unknown) => {
+    const sp = typeof subProjectId === 'string' ? store.state.subProjects.find((x) => x.id === subProjectId) : undefined
+    if (!sp || sp.kind !== 'repo' || !sp.repoRoot) return null
+    return { repoRoot: sp.repoRoot, liveWorktrees: await knownLiveWorktrees(store, dirname(paths.dataDir)), git, exec, env }
+  }
+  handle(IPC.listStrayWorktrees, async (id: unknown) => {
+    const o = await strayOptions(id)
+    return o ? findStrayWorktrees(o) : []
+  })
+  handle(IPC.worktreeSize, async (id: unknown, path: unknown): Promise<number | null> => {
+    const o = await strayOptions(id)
+    // Only a worktree of this folder that could be a stray: never `du` a path the renderer made up.
+    if (!o || typeof path !== 'string' || !(await strayCandidates(o)).includes(path)) return null
+    return worktreeSize(exec, path, env)
+  })
+  handle(IPC.removeStrayWorktrees, async (id: unknown, wanted: unknown, deleteBranches: unknown) => {
+    const o = await strayOptions(id)
+    if (!o || !Array.isArray(wanted) || !wanted.every((p) => typeof p === 'string')) return []
+    return removeStrayWorktrees({ ...o, paths: wanted as string[], deleteBranches: deleteBranches === true })
+  })
   handle(IPC.openExternal, async (url: string) => {
     // Only web links; never let the renderer open file: or custom-scheme URLs.
     if (/^https?:\/\//i.test(url)) await shell.openExternal(url)
@@ -138,9 +213,14 @@ export function registerIpc(d: IpcDeps): () => void {
   })
   handle(IPC.setSettings, async (s: unknown) => {
     const wasOn = store.state.settings.checkForUpdates !== false
+    const agentWas = store.state.settings.agentCli !== false
     const r = await store.update((d) => { d.settings = settingsFrom(s, d.settings) })
     // Turned back on: check now rather than up to a day later.
     if (!wasOn && store.state.settings.checkForUpdates !== false) void d.updates.checkNow()
+    // The agent note is in each session's files: rewrite them, so the change applies at their next launch.
+    if (agentWas !== (store.state.settings.agentCli !== false)) {
+      for (const p of store.state.projects) void manager.rewriteProjectSessionFiles(p.id)
+    }
     return r
   })
 
@@ -153,10 +233,12 @@ export function registerIpc(d: IpcDeps): () => void {
 
   const unsub = manager.onSnapshot((s) => send(IPC.snapshot, s))
   const unsubUsage = d.usage.onChange((u) => send(IPC.usage, u))
+  const unsubStats = d.systemStats.onChange((s) => send(IPC.systemStats, s))
   const unsubUpdates = d.updates.onChange((u) => send(IPC.updateState, u))
   return () => {
     unsub()
     unsubUsage()
+    unsubStats()
     unsubUpdates()
     for (const ch of Object.values(IPC)) {
       ipcMain.removeHandler(ch)

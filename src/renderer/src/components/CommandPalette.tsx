@@ -19,7 +19,7 @@ import { ChevronIcon, FileIcon, HistoryIcon } from './Icons'
 
 const SEARCH_DELAY_MS = 150
 const NO_SNAP: AppSnapshot = {
-  projects: [], subProjects: [], sessions: [], archived: [], settings: { monoFont: '', monoFontSize: 13, checkForUpdates: false }
+  projects: [], subProjects: [], sessions: [], archived: [], settings: { monoFont: '', monoFontSize: 13, checkForUpdates: false, agentCli: true }
 }
 const NO_ACTIONS: PaletteAction[] = []
 const MAX_FILES_NOTE = 'Showing the first 20,000 files.'

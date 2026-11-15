@@ -48,7 +48,9 @@ beforeEach(() => {
   history = { search: vi.fn(async () => []), forgetFiles: vi.fn() }
   registerIpc({
     manager, history,
-    usage: { current: () => null, onChange: () => () => {} },
+    pr: { feedbackContext: async () => ({ ok: false as const, message: 'x' }) },
+    usage: { current: () => [], onChange: () => () => {} },
+    systemStats: { current: () => null, onChange: () => () => {} },
     updates: { state: () => null, checkNow: async () => {}, onChange: () => () => {}, hasFeed: () => false },
     send: () => {}, onViewing: () => {}, env: {}, home: '/home/me', dev: false
   } as unknown as IpcDeps)
@@ -66,6 +68,14 @@ describe('IPC from the renderer', () => {
     expect(passed.continueClaudeId).toBeUndefined()
     expect(passed.continuedFrom).toBeUndefined()
     expect(passed).toEqual({ requestId: 'r', subProjectId: 'sp_1', title: 'Fix it', branchMode: 'new', branch: '' })
+  })
+
+  test('startSession cannot pass createdBy or initialPrompt: only the pitwall command may', async () => {
+    const input = { requestId: 'r', subProjectId: 'sp_1', title: 'T', branchMode: 'new', branch: '', createdBy: 's_x', initialPrompt: 'do evil' }
+    await call(IPC.startSession, input)
+    const passed = manager.start.mock.calls[0][0] as Record<string, unknown>
+    expect(passed.createdBy).toBeUndefined()
+    expect(passed.initialPrompt).toBeUndefined()
   })
 
   test('listConversations, searchConversations and continueConversation refuse arguments of the wrong type, never reaching the manager', async () => {
@@ -99,5 +109,91 @@ describe('IPC from the renderer', () => {
     await call(IPC.setSessionPinned, 's_1', 'yes')
     await call(IPC.setSessionPinned, 's_1', false)
     expect(manager.setPinned.mock.calls).toEqual([['s_1', true], ['s_1', false], ['s_1', false]])
+  })
+})
+
+describe('IPC: stray worktrees', () => {
+  const calls: string[][] = []
+  const store = { state: { sessions: [], subProjects: [
+    { id: 'sp_repo', kind: 'repo', repoRoot: '/r' }, { id: 'sp_plain', kind: 'folder' }
+  ] } }
+  const git = { listWorktrees: vi.fn(async () => [{ path: '/r', prunable: false, detached: false }, { path: '/w/a', prunable: false, detached: false, branch: 'a' }]) }
+  const exec = vi.fn(async (file: string, args: string[]) => { calls.push([file, ...args]); return { code: 0, stdout: '', stderr: '' } })
+
+  beforeEach(() => {
+    calls.length = 0
+    git.listWorktrees.mockClear()
+    registerIpc({
+      manager, history, store, git, exec, paths: { dataDir: '/nowhere/pitwall' },
+      pr: { feedbackContext: async () => ({ ok: false as const, message: 'x' }) },
+      usage: { current: () => [], onChange: () => () => {} },
+      systemStats: { current: () => null, onChange: () => () => {} },
+      updates: { state: () => null, checkNow: async () => {}, onChange: () => () => {}, hasFeed: () => false },
+      send: () => {}, onViewing: () => {}, env: {}, home: '/home/me', dev: false
+    } as unknown as IpcDeps)
+  })
+
+  test('worktreeSize measures only a path the folder could list as a stray', async () => {
+    expect(await call(IPC.worktreeSize, 'sp_repo', '/etc')).toBeNull()
+    expect(await call(IPC.worktreeSize, 'sp_repo', '/r')).toBeNull() // the main checkout
+    expect(await call(IPC.worktreeSize, 'sp_repo', '/w/a/../../etc')).toBeNull()
+    expect(await call(IPC.worktreeSize, 'sp_plain', '/w/a')).toBeNull()
+    expect(await call(IPC.worktreeSize, 'nope', '/w/a')).toBeNull()
+    for (const bad of [undefined, null, 1, {}, ['/w/a']]) expect(await call(IPC.worktreeSize, 'sp_repo', bad)).toBeNull()
+    expect(calls.filter((c) => c[0] === 'du')).toEqual([])
+    await call(IPC.worktreeSize, 'sp_repo', '/w/a')
+    expect(calls.filter((c) => c[0] === 'du')).toEqual([['du', '-sk', '/w/a']])
+  })
+
+  test('arguments of the wrong type never reach git: nothing is listed or removed', async () => {
+    for (const bad of [undefined, null, 1, {}, ['sp_repo']]) {
+      expect(await call(IPC.listStrayWorktrees, bad)).toEqual([])
+      expect(await call(IPC.removeStrayWorktrees, bad, ['/w/a'], true)).toEqual([])
+    }
+    for (const bad of [undefined, null, 'x', 1, [1], ['/w/a', 2], {}]) {
+      expect(await call(IPC.removeStrayWorktrees, 'sp_repo', bad, true)).toEqual([])
+    }
+    expect(await call(IPC.listStrayWorktrees, 'sp_plain')).toEqual([])
+    expect(await call(IPC.removeStrayWorktrees, 'sp_plain', ['/w/a'], true)).toEqual([])
+    expect(git.listWorktrees).not.toHaveBeenCalled()
+  })
+})
+
+describe('IPC: pasting into a session that needs you', () => {
+  const ANSWER_FIRST = 'Claude is waiting for your answer. Answer it first, then send this.'
+  const pasted: string[] = []
+  let status = 'needs_you'
+  const store = { state: { sessions: [{ id: 's_1', subProjectId: 'sp_1', cwd: '/w' }], subProjects: [{ id: 'sp_1', kind: 'folder' }] } }
+  const pr = {
+    number: 3, url: 'https://github.com/o/r/pull/3', title: 't', state: 'OPEN', checks: 'failing', updatedAt: 0, failing: [{ name: 'build' }]
+  }
+
+  beforeEach(() => {
+    pasted.length = 0
+    status = 'needs_you'
+    registerIpc({
+      manager: { ...manager, snapshot: () => ({ sessions: [{ id: 's_1', status }] }) },
+      history, store, paths: { dataDir: '/nowhere/pitwall', ghBin: 'gh' },
+      backend: { pasteText: async (_n: string, x: string) => { pasted.push(x) } },
+      pr: { feedbackContext: async () => ({ ok: true as const, pr, dir: '/w', token: 't', owner: 'o', repo: 'r' }) },
+      usage: { current: () => [], onChange: () => () => {} },
+      systemStats: { current: () => null, onChange: () => () => {} },
+      updates: { state: () => null, checkNow: async () => {}, onChange: () => () => {}, hasFeed: () => false },
+      send: () => {}, onViewing: () => {}, env: {}, home: '/home/me', dev: false
+    } as unknown as IpcDeps)
+  })
+
+  test('Send to agent (a review, a file reference) and PR feedback are refused, so the paste never lands in an answer', async () => {
+    await expect(call(IPC.sendToAgent, 's_1', 'Review of your changes')).rejects.toThrow(ANSWER_FIRST)
+    expect(await call(IPC.sendPrFeedback, 's_1', 'checks')).toEqual({ ok: false, message: ANSWER_FIRST })
+    expect(pasted).toEqual([])
+  })
+
+  test('once Claude is no longer asking, both paste', async () => {
+    status = 'working'
+    await call(IPC.sendToAgent, 's_1', 'look at @a.ts')
+    expect(await call(IPC.sendPrFeedback, 's_1', 'checks')).toEqual({ ok: true, count: 1 })
+    expect(pasted).toHaveLength(2)
+    expect(pasted[0]).toBe('look at @a.ts')
   })
 })

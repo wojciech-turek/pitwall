@@ -297,6 +297,35 @@ describe('paths git prints, on Windows', () => {
     expect(fromGit('/Users/w/repo', 'darwin')).toBe('/Users/w/repo')
   })
 
+  test('listWorktrees: path, branch, head and detached from the porcelain output, main checkout first', async () => {
+    const { root, git, sh } = await setup()
+    const a = addWt(root, 'a')
+    const d = addWt(root, 'd')
+    await git.addWorktree({ repoRoot: root, path: a, branch: 'feat/a', mode: 'new', base: 'main' })
+    await sh(root, 'worktree', 'add', '--detach', d, 'main')
+    const head = await sh(root, 'rev-parse', 'HEAD')
+    const list = await git.listWorktrees(root)
+    expect(list).toHaveLength(3)
+    expect(list[0]).toEqual({ path: root, prunable: false, branch: 'main', head, detached: false })
+    expect(list[1]).toMatchObject({ path: await realpath(a), branch: 'feat/a', head, detached: false, prunable: false })
+    expect(list[2]).toMatchObject({ path: await realpath(d), head, detached: true })
+    expect(list[2].branch).toBeUndefined()
+  })
+
+  test('deleteMergedBranch deletes a merged branch and refuses an unmerged one (no -D)', async () => {
+    const { root, git, sh } = await setup()
+    await sh(root, 'branch', 'merged')
+    await sh(root, 'checkout', '-q', '-b', 'unmerged')
+    await writeFile(join(root, 'u.txt'), 'u\n')
+    await sh(root, 'add', '-A')
+    await sh(root, 'commit', '-m', 'u')
+    await sh(root, 'checkout', '-q', 'main')
+    await git.deleteMergedBranch(root, 'merged')
+    expect(await git.branchExists(root, 'merged')).toBe(false)
+    await expect(git.deleteMergedBranch(root, 'unmerged')).rejects.toBeInstanceOf(GitError)
+    expect(await git.branchExists(root, 'unmerged')).toBe(true)
+  })
+
   test('samePath: separators, letter case and a trailing separator on Windows; exact elsewhere', () => {
     expect(samePath('C:/Users/Me/repo', 'c:\\users\\me\\repo\\', 'win32')).toBe(true)
     expect(samePath('C:\\a\\b', 'C:\\a\\bb', 'win32')).toBe(false)
@@ -314,7 +343,8 @@ describe('paths git prints, on Windows', () => {
     const git = new GitClient(exec, {}, 'win32')
     expect(await git.detectFolder('C:\\Users\\me\\repo\\sub\\dir')).toEqual({ kind: 'repo', repoRoot: 'C:\\Users\\me\\repo', relPath: 'sub/dir' })
     expect(await git.listWorktrees('C:\\Users\\me\\repo')).toEqual([
-      { path: 'C:\\Users\\me\\repo', prunable: false }, { path: 'C:\\Users\\me\\pitwall\\worktrees\\r\\x', prunable: true }
+      { path: 'C:\\Users\\me\\repo', prunable: false, head: '1', branch: 'main', detached: false },
+      { path: 'C:\\Users\\me\\pitwall\\worktrees\\r\\x', prunable: true, head: '2', branch: 'pitwall/x', detached: false }
     ])
     expect(await git.listBranches('C:\\Users\\me\\repo')).toEqual([
       { name: 'main', checkedOutAt: 'C:\\Users\\me\\repo' }, { name: 'pitwall/x', checkedOutAt: 'C:\\Users\\me\\pitwall\\worktrees\\r\\x' }

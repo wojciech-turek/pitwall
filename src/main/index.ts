@@ -1,19 +1,24 @@
+import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { app, BrowserWindow, dialog, Menu, nativeImage, powerMonitor, shell } from 'electron'
 import { IPC } from '@shared/api'
-import { launcherChoice, sessionBackendKind, type SessionBackend } from './backend'
-import { exec } from './exec'
+import { chooseBackend, launcherChoice, readRecordedBackend, recordBackend, type SessionBackend } from './backend'
+import { exec, findExecutable } from './exec'
 import { historySources, SessionHistory } from './history'
-import { HostBackend } from './host-backend'
+import { HostBackend, hostAlive } from './host-backend'
 import { buildMenuTemplate } from './menu'
 import { GitClient } from './git'
 import { ChangesService } from './changes'
 import { PrPoller } from './pr'
+import { ServerWatcher } from './server-watch'
 import { registerIpc } from './ipc'
 import { electronNotifier } from './notifier'
+import { cliSocketPath, loadCliKey } from './cli/auth'
+import { CliServer } from './cli/server'
 import { resolvePaths, sessionDir } from './paths'
 import { appUserModelId } from './platform'
+import { PortAllocator } from './ports'
 import { ProjectService } from './projects'
 import { PtyBridge } from './pty-bridge'
 import { installResources, resourcesDir } from './resources'
@@ -24,7 +29,10 @@ import { Store } from './store'
 import { Tmux } from './tmux'
 import { TmuxBackend } from './tmux-backend'
 import { releasesUrl, UpdateChecker } from './updates'
+import { accountKey, accountLabel } from './accounts'
 import { UsageTracker } from './usage'
+import { ContinueScheduler } from './sessions/continue-at'
+import { SystemMonitor } from './system-monitor'
 import { isViewing, viewingAfter, type ViewingEvent } from './viewing'
 import { windowChrome } from './window-chrome'
 import { APP_VERSION } from '@shared/version'
@@ -59,8 +67,12 @@ let manager: SessionManager | null = null
 let disposeIpc: (() => void) | null = null
 let disposeChanges: (() => void) | null = null
 let disposePr: (() => void) | null = null
+let disposeServers: (() => void) | null = null
 let disposeUsage: (() => void) | null = null
+let disposeContinueAt: (() => void) | null = null
+let disposeSystemStats: (() => void) | null = null
 let disposeUpdates: (() => void) | null = null
+let disposeCli: (() => void) | null = null
 let refreshBadge: (() => void) | null = null
 
 const send = (channel: string, ...args: unknown[]): void => {
@@ -166,12 +178,22 @@ function focusSession(sessionId: string): void {
 }
 
 /**
- * tmux on Pitwall's private socket, or (PITWALL_SESSION_BACKEND=host) the Pitwall host: this executable run as Node
+ * tmux on Pitwall's private socket, or (PITWALL_SESSION_BACKEND=host, or no tmux installed; see chooseBackend) the Pitwall host: this executable run as Node
  * on out/host/index.js, one per data dir, so a dev build and the installed app never share agents.
  */
-function createBackend(env: Record<string, string>): SessionBackend {
-  if (sessionBackendKind(process.env) === 'tmux') {
-    return new TmuxBackend(new Tmux({ socket: paths.tmuxSocket, confPath: paths.tmuxConf, env, exec }), env)
+async function createBackend(env: Record<string, string>, store: Store): Promise<SessionBackend> {
+  const file = join(paths.dataDir, 'backend.json')
+  const tmuxPath = findExecutable('tmux', env.PATH)
+  const recorded = await readRecordedBackend(file)
+  const liveSessions = store.state.sessions.filter((s) => s.archivedAt === undefined).length
+  const choice = chooseBackend({
+    env: process.env, platform: process.platform, tmuxPath, recorded, liveSessions,
+    // Only asked when it can decide anything: no record, and sessions to keep.
+    hostAlive: !WINDOWS && recorded === null && liveSessions > 0 && await hostAlive(paths.dataDir)
+  })
+  if (choice.record) await recordBackend(file, choice.kind, recorded)
+  if (choice.kind === 'tmux') {
+    return new TmuxBackend(new Tmux({ socket: paths.tmuxSocket, confPath: paths.tmuxConf, env, exec, tmuxBin: tmuxPath ?? undefined }), env)
   }
   return new HostBackend({
     dataDir: paths.dataDir,
@@ -190,7 +212,7 @@ async function bootstrap(): Promise<void> {
   await installResources(paths)
   const store = await Store.open(paths.stateFile)
   const git = new GitClient(exec, env)
-  const backend = createBackend(env)
+  const backend = await createBackend(env, store)
   const notifier = electronNotifier(focusSession, paths.notificationsDisabled, {
     window: () => win, quiet: QUIET,
     // The red dot is drawn on the icon the Dock shows: the bundle's (the same artwork), or a dev run's own.
@@ -204,9 +226,29 @@ async function bootstrap(): Promise<void> {
   const launcher = launcherChoice(process.env)
   // Searches every session's conversation (⌘K) and a folder's (Continue a conversation).
   const history = new SessionHistory(() => historySources(mgr.snapshot(), home, env))
-  const mgr = new SessionManager({ store, paths, git, backend, exec, env, home, mutex, notifier, launcher, history })
+  // The `pitwall` command (not on Windows: no unix sockets): its key signs each session's token, so load it first.
+  let cliKey: Buffer | undefined
+  if (!WINDOWS) {
+    try {
+      cliKey = await loadCliKey(paths.cliKey)
+    } catch (e) {
+      console.error('pitwall command key unavailable:', e)
+    }
+  }
+  const cliJs = join(import.meta.dirname, '../cli/index.js')
+  const mgr = new SessionManager({ store, paths, git, backend, exec, env, home, mutex, notifier, launcher, history, ports: new PortAllocator(), cliKey, cliJs })
   manager = mgr
   await mgr.init()
+  // The `pitwall` command's socket: sessions ask Pitwall to start and watch helper sessions. Not on Windows (no unix sockets).
+  if (cliKey) {
+    try {
+      const cli = new CliServer({ key: cliKey, socketPath: cliSocketPath(paths.dataDir), manager: mgr })
+      await cli.start()
+      disposeCli = () => { void cli.stop() }
+    } catch (e) {
+      console.error('pitwall command server did not start:', e)
+    }
+  }
 
   const projects = new ProjectService({
     store, git, exec, env, home,
@@ -231,13 +273,36 @@ async function bootstrap(): Promise<void> {
   const pr = new PrPoller({ store, manager: mgr, git, exec, env, paths, notifier })
   pr.start()
   disposePr = () => pr.stop()
+  const servers = new ServerWatcher({ store, manager: mgr, backend, exec })
+  servers.start()
+  disposeServers = () => servers.stop()
   const usage = new UsageTracker({
     file: paths.usageFile,
-    sessionDirs: () => store.state.sessions.filter((s) => s.archivedAt === undefined).map((s) => sessionDir(paths, s.id))
+    defaultAccount: resolve(env.CLAUDE_CONFIG_DIR || join(home, '.claude')),
+    labelFor: (k) => accountLabel(k, home),
+    sessions: () => store.state.sessions.filter((s) => s.archivedAt === undefined).flatMap((s) => {
+      const sp = store.state.subProjects.find((x) => x.id === s.subProjectId)
+      const project = store.state.projects.find((p) => p.id === sp?.projectId)
+      return project ? [{ dir: sessionDir(paths, s.id), account: accountKey(project, home, env) }] : []
+    })
   })
   await usage.load()
   usage.start()
   disposeUsage = () => usage.stop()
+  // statfs needs a path that exists: the worktrees folder may not yet.
+  let diskPath = paths.worktreesRoot
+  while (!existsSync(diskPath) && dirname(diskPath) !== diskPath) diskPath = dirname(diskPath)
+  const systemStats = new SystemMonitor({
+    exec, backend, diskPath,
+    liveSessionIds: () => store.state.sessions.filter((s) => s.archivedAt === undefined).map((s) => s.id),
+    appMetrics: () => {
+      let cpu = 0, kb = 0, procs = 0
+      for (const m of app.getAppMetrics()) { cpu += m.cpu.percentCPUUsage; kb += m.memory.workingSetSize; procs++ }
+      return { cpu, rssBytes: kb * 1024, procs }
+    }
+  })
+  if (process.platform !== 'win32') systemStats.start()
+  disposeSystemStats = () => systemStats.stop()
   // A dev build looks for releases only when pointed at a feed (PITWALL_RELEASES_URL).
   const updates = new UpdateChecker({
     current: APP_VERSION,
@@ -254,8 +319,17 @@ async function bootstrap(): Promise<void> {
   const onResume = (): void => updates.start()
   powerMonitor.on('resume', onResume)
   disposeUpdates = () => { powerMonitor.removeListener('resume', onResume); updates.stop() }
+  const continueAt = new ContinueScheduler({
+    store, manager: mgr,
+    usageFor: (id) => {
+      const s = mgr.snapshot().sessions.find((x) => x.id === id)
+      return s?.account ? usage.current().find((a) => a.account === s.account)?.usage : undefined
+    }
+  })
+  continueAt.start()
+  disposeContinueAt = () => continueAt.stop()
   disposeIpc = registerIpc({
-    manager: mgr, changes, store, git, backend, projects, bridge, paths, exec, env, home, mutex, history, usage, updates, send, dev: DEV,
+    manager: mgr, changes, store, git, backend, projects, bridge, paths, exec, env, home, mutex, history, usage, systemStats, updates, pr, continueAt, send, dev: DEV,
     launcher,
     onViewing: (ids) => {
       visibleIds = ids
@@ -303,10 +377,18 @@ if (!isPrimaryInstance) {
     disposeChanges = null
     disposePr?.()
     disposePr = null
+    disposeServers?.()
+    disposeServers = null
     disposeUsage?.()
     disposeUsage = null
+    disposeContinueAt?.()
+    disposeContinueAt = null
+    disposeSystemStats?.()
+    disposeSystemStats = null
     disposeUpdates?.()
     disposeUpdates = null
+    disposeCli?.()
+    disposeCli = null
     manager?.dispose()
   })
 

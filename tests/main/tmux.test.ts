@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { exec } from '../../src/main/exec'
-import { claudeTmuxName, shellTmuxName } from '../../src/main/tmux'
-import { access } from 'node:fs/promises'
+import { claudeTmuxName, serverTmuxName, shellTmuxName, tmuxNameFor } from '../../src/main/tmux'
+import { access, readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { makeTestEnv, tmuxSocketPath } from '../helpers/env'
 import { waitFor } from '../helpers/wait'
 
@@ -13,6 +14,10 @@ describe('Tmux', () => {
   test('names', () => {
     expect(claudeTmuxName('abc')).toBe('pw-abc')
     expect(shellTmuxName('abc')).toBe('pw-abc-sh')
+    expect(serverTmuxName('abc')).toBe('pw-abc-srv')
+    expect(tmuxNameFor('a', 'claude')).toBe('pw-a')
+    expect(tmuxNameFor('a', 'shell')).toBe('pw-a-sh')
+    expect(tmuxNameFor('a', 'server')).toBe('pw-a-srv')
   })
 
   test('new/list/capture/kill on private socket', async () => {
@@ -23,6 +28,27 @@ describe('Tmux', () => {
     await t.tmux.killSession('pw-a')
     expect(await t.tmux.hasSession('pw-a')).toBe(false)
     await t.tmux.killSession('pw-a') // missing is ignored
+  })
+
+  test('listAllPanes: every live pane by session name in one call; dead panes skipped; no server is empty', async () => {
+    expect(await t.tmux.listAllPanes()).toEqual({ serverPid: null, panes: new Map() })
+    await t.tmux.newSession({ name: 'pw-a', cwd: t.tmp, argv: ['sleep', '30'] })
+    await t.tmux.newSession({ name: 'pw-a-sh', cwd: t.tmp, argv: ['sleep', '30'] })
+    const r = await t.tmux.listAllPanes()
+    expect([...r.panes.keys()].sort()).toEqual(['pw-a', 'pw-a-sh'])
+    expect(r.serverPid).toBeGreaterThan(1)
+    for (const pids of r.panes.values()) expect(pids).toHaveLength(1)
+    const one = await t.tmux.listPanePids('pw-a')
+    expect(r.panes.get('pw-a')).toEqual(one.panePids)
+    expect(r.serverPid).toBe(one.serverPid)
+  })
+
+  test('listAllPanes skips a dead pane (remain-on-exit)', async () => {
+    await t.tmux.newSession({ name: 'pw-keep', cwd: t.tmp, argv: ['sleep', '30'] })
+    await t.tmux.newSession({ name: 'pw-dead', cwd: t.tmp, argv: ['sh', '-c', 'exit 0'] })
+    // The test conf may not keep dead panes; either way a dead one must not be listed.
+    await waitFor(async () => !(await t.tmux.listAllPanes()).panes.has('pw-dead'), 8000, 'dead pane not listed')
+    expect((await t.tmux.listAllPanes()).panes.has('pw-keep')).toBe(true)
   })
 
   test('test cleanup kills the server and removes its socket file', async () => {
@@ -53,6 +79,14 @@ describe('Tmux', () => {
     await t.tmux.newSession({ name: 'pw-p', cwd: t.tmp, argv: ['cat'] })
     await t.tmux.pasteText('pw-p', 'hello @x')
     await waitFor(async () => (await t.tmux.capturePane('pw-p')).includes('hello @x'), 8000, 'pasted text')
+  })
+
+  test('pasteText drops bracketed-paste markers from the text, so a paste can never end itself and press Enter', async () => {
+    const out = join(t.tmp, 'pasted.txt')
+    await t.tmux.newSession({ name: 'pw-b', cwd: t.tmp, argv: ['sh', '-c', `cat > '${out}'`] })
+    await t.tmux.pasteText('pw-b', 'before\x1b[201~after\x1b[200~end\n')
+    await waitFor(async () => (await readFile(out, 'utf8').catch(() => '')).includes('end'), 8000, 'pasted line')
+    expect(await readFile(out, 'utf8')).toBe('beforeafterend\n')
   })
 
   test('sendKeys and attachCommand', async () => {

@@ -1,5 +1,7 @@
+import { accountKey } from '../accounts'
 import { writeFileAtomic } from '../atomic'
-import { join } from 'node:path'
+import { readFile, stat } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { countStatuses, displayStatus, initialRuntime, reduceRuntime } from '@shared/runtime'
 import type {
   AppSnapshot, ConversationList, ConversationMatch, DisplayStatus, HookEvent, NewSessionDefaults, NewSessionInput, Session,
@@ -11,13 +13,13 @@ import { appendEvent, EventTailer } from '../hooks/events'
 import type { Notifier } from '../notifier'
 import { eventsFile, sessionDir } from '../paths'
 import { shellTabArgv } from '../platform'
-import { claudeTmuxName, shellTmuxName } from '../tmux'
+import { claudeTmuxName, serverTmuxName, shellTmuxName } from '../tmux'
 import { Conversations } from './continue'
 import { isAnswerInput } from './input'
 import { notificationBody } from './notify-text'
 import { resumeSession } from './resume'
 import {
-  assertSessionFolder, launchTmuxFor, prepareNewSession, startSession, usesHostLauncher, writeSessionFiles, type StarterDeps
+  assertSessionFolder, launchTmuxFor, prepareNewSession, startSession, takenPorts, usesHostLauncher, writeSessionFiles, type StarterDeps
 } from './starter'
 
 type Deps = StarterDeps & {
@@ -25,7 +27,7 @@ type Deps = StarterDeps & {
   /** Searches the folders' conversations; default: one of its own over this manager's sessions. */
   history?: Pick<SessionHistory, 'search' | 'searchFiles'>
 }
-type Extras = Partial<Pick<SessionView, 'diffStat' | 'liveBranch'>>
+type Extras = Partial<Pick<SessionView, 'diffStat' | 'liveBranch' | 'server'>>
 
 const FIRST_EVENT_TIMEOUT_MS = 20000
 export const START_WARNING =
@@ -56,6 +58,8 @@ export class SessionManager {
   private clearing = new Set<string>()
   private warnings = new Map<string, string>()
   private errors = new Map<string, string>()
+  /** Project id -> its account, cleared whenever the store changes (an env edit can move a project). */
+  private accounts = new Map<string, string>()
   private snapshotCbs = new Set<(s: AppSnapshot) => void>()
   private eventCbs = new Set<(id: string, ev: HookEvent) => void>()
   private waiters = new Map<string, Set<() => void>>()
@@ -75,6 +79,7 @@ export class SessionManager {
 
   async init(): Promise<void> {
     this.unsubStore = this.deps.store.onChange(() => {
+      this.accounts.clear()
       this.updateBadge() // a project may have been muted or unmuted
       this.publish()
     })
@@ -82,7 +87,8 @@ export class SessionManager {
       try {
         await this.track(s.id)
         await this.refreshSessionFiles(s.id)
-        await this.relaunchIfMissing(s)
+        // As it is now: track() may have recorded a conversation id, refreshSessionFiles a port block.
+        await this.relaunchIfMissing(this.session(s.id) ?? s)
       } catch (e) {
         // One broken session must not block the rest; the error shows on that session.
         this.errors.set(s.id, e instanceof Error ? e.message : String(e))
@@ -108,6 +114,18 @@ export class SessionManager {
 
   // ---- queries -----------------------------------------------------------
 
+  private accountOf(subProjectId: string): string | undefined {
+    const st = this.deps.store.state
+    const project = st.projects.find((p) => p.id === st.subProjects.find((x) => x.id === subProjectId)?.projectId)
+    if (!project) return undefined
+    let key = this.accounts.get(project.id)
+    if (key === undefined) {
+      key = accountKey(project, this.deps.home, this.deps.env)
+      this.accounts.set(project.id, key)
+    }
+    return key
+  }
+
   snapshot(): AppSnapshot {
     const st = this.deps.store.state
     const sessions: SessionView[] = this.active().map((s) => {
@@ -119,6 +137,8 @@ export class SessionManager {
         status: this.statusOf(s.id),
         ...this.extras.get(s.id)
       }
+      const account = this.accountOf(s.subProjectId)
+      if (account) view.account = account
       if (rt.needsInput) view.needsInput = rt.needsInput
       if (rt.activity === 'exited' && rt.exitCode !== undefined) view.exitCode = rt.exitCode
       if (rt.lastEventAt) view.lastActivityAt = rt.lastEventAt
@@ -127,6 +147,8 @@ export class SessionManager {
       const warning = this.warnings.get(s.id)
       if (warning) view.startWarning = warning
       if (rt.warnings) view.launchWarnings = Object.values(rt.warnings)
+      if (rt.limitHit) view.limitHit = true
+      if (rt.subagents?.length) view.subagents = rt.subagents.map((x) => ({ ...x }))
       return view
     })
     return {
@@ -233,6 +255,43 @@ export class SessionManager {
     }).catch(() => {}).finally(() => { this.clearing.delete(sessionId) })
   }
 
+  /**
+   * Types `text` into the session's Claude and presses Enter (paste first, so newlines don't submit early). Logs
+   * pitwall:sent first and reads it back, so the session is working before this returns: a `wait` straight after
+   * never mistakes the previous reply for the answer. Refuses (throws) unless Claude is idle at its prompt with no
+   * subagent at work, checked right before typing: Enter must never answer a question or land mid-turn.
+   */
+  async sendText(id: string, text: string): Promise<void> {
+    const s = this.session(id)
+    if (!s || s.archivedAt !== undefined) throw new Error('Session not found.')
+    const status = this.statusOf(id)
+    if (status !== 'read' && status !== 'unread') throw new Error(`${s.title} is busy (${status}); wait for it first.`)
+    if (this.tracked.get(id)?.rt.subagents?.some((x) => x.state === 'running' || x.needsYou)) {
+      throw new Error(`${s.title} has a subagent still at work; wait for it first.`)
+    }
+    await appendEvent(eventsFile(this.deps.paths, id), { c: id, t: this.now(), e: 'pitwall:sent' })
+    await this.tracked.get(id)?.tailer.sync()
+    await this.deps.backend.pasteText(claudeTmuxName(id), text)
+    await this.deps.backend.sendKeys(claudeTmuxName(id), ['Enter'])
+  }
+
+  /**
+   * Claude's whole last reply, which the hook keeps in last-reply.txt beside the events (whose Stop has only its
+   * first 300 characters), when it is newer than the latest prompt: an older one answers an earlier turn.
+   */
+  async lastReply(id: string): Promise<string | undefined> {
+    const file = join(dirname(eventsFile(this.deps.paths, id)), 'last-reply.txt')
+    try {
+      const { mtimeMs } = await stat(file)
+      const promptAt = this.tracked.get(id)?.rt.lastPromptAt
+      if (promptAt !== undefined && mtimeMs <= promptAt) return undefined
+      // The hook caps it at 64 KB, which can cut a character in two.
+      return (await readFile(file, 'utf8')).replace(/\uFFFD$/, '')
+    } catch {
+      return undefined
+    }
+  }
+
   userInput(sessionId: string, kind: TermKind, data: string): void {
     if (kind !== 'claude') return
     // Keys only: terminal-generated replies (focus, device and cursor reports) all start with ESC.
@@ -270,9 +329,19 @@ export class SessionManager {
     if (!s) throw new Error('Session not found.')
     const { backend, paths } = this.deps
     if (kind === 'claude') return this.relaunchIfMissing(s)
-    const name = shellTmuxName(sessionId)
+    const server = kind === 'server'
+    const name = server ? serverTmuxName(sessionId) : shellTmuxName(sessionId)
+    if (server) {
+      const sp = this.deps.store.state.subProjects.find((x) => x.id === s.subProjectId)
+      if (!sp?.devCommand) throw new Error('No dev server command is set for this folder.')
+      if (usesHostLauncher(this.deps)) throw new Error("The Server tab isn't available on Windows yet.")
+    }
     if (await backend.hasSession(name)) return
     await assertSessionFolder(s.cwd)
+    if (server) {
+      await backend.newSession({ name, cwd: s.cwd, argv: [join(paths.binDir, 'pitwall-server'), sessionDir(paths, sessionId)] })
+      return
+    }
     if (usesHostLauncher(this.deps)) {
       // The session's identity, then PowerShell (pwsh if installed) on Windows, as pitwall-shell does elsewhere.
       const argv = shellTabArgv(this.deps.platform ?? process.platform, this.deps.env, isFile)
@@ -395,7 +464,16 @@ export class SessionManager {
     const s = this.session(id) // re-read: track() may have just recorded a new conversation id
     if (!s) return
     try {
-      await writeSessionFiles(s, this.deps)
+      let session = s
+      if (this.deps.ports && s.portBase === undefined) {
+        const portBase = await this.deps.ports.allocate(takenPorts(this.deps))
+        await this.deps.store.update((d) => {
+          const x = d.sessions.find((y) => y.id === id)
+          if (x) x.portBase = portBase
+        })
+        session = this.session(id) ?? s
+      }
+      await writeSessionFiles(session, this.deps)
     } catch {
       // relaunchIfMissing reports it if the session actually needs these files now
     }
@@ -465,7 +543,13 @@ export class SessionManager {
     this.publish()
   }
 
+  /** A helper another session started, finished while that session is still live: it has nothing to tell the user yet. */
+  private quietChild(s: Session, status: DisplayStatus): boolean {
+    return status === 'unread' && !!s.createdBy && this.active().some((x) => x.id === s.createdBy)
+  }
+
   private maybeNotify(s: Session, status: DisplayStatus, rt: SessionRuntime): void {
+    if (this.quietChild(s, status)) return
     if (this.viewing.focused && this.viewing.ids.has(s.id)) return
     if (this.isMuted(s)) return
     const sp = this.deps.store.state.subProjects.find((x) => x.id === s.subProjectId)
@@ -479,7 +563,7 @@ export class SessionManager {
   }
 
   private updateBadge(): void {
-    const c = countStatuses(this.active().filter((s) => !this.isMuted(s)).map((s) => ({ status: this.statusOf(s.id) })))
+    const c = countStatuses(this.active().filter((s) => !this.isMuted(s) && !this.quietChild(s, this.statusOf(s.id))).map((s) => ({ status: this.statusOf(s.id) })))
     this.deps.notifier.setBadge(c.needsYou + c.unread)
   }
 

@@ -4,8 +4,9 @@ import { clearDraft, clearSessionDrafts } from '../editor/drafts'
 import * as L from './layout'
 import type { Layout, Zone } from './layout'
 import type { PaletteMode } from './palette'
+import { platform } from '../platform'
 
-export type MainTab = { id: 'claude' } | { id: 'shell' } | { id: string; kind: 'file' | 'diff'; path: string }
+export type MainTab = { id: 'claude' } | { id: 'shell' } | { id: 'server' } | { id: string; kind: 'file' | 'diff'; path: string }
 
 export type DialogState =
   | { type: 'project'; projectId?: string }
@@ -15,8 +16,10 @@ export type DialogState =
   | { type: 'resume'; sessionId: string }
   | { type: 'conversations'; subProjectId: string }
   | { type: 'subproject-settings'; subProjectId: string }
+  | { type: 'stray-worktrees'; subProjectId: string }
   | { type: 'settings' }
   | { type: 'update' }
+  | { type: 'review-comment'; sessionId: string; path: string; fromLine: number; toLine: number; quote: string }
   | { type: 'discard-file'; sessionId: string; tabId: string; name: string }
 
 export interface UiState {
@@ -62,6 +65,23 @@ export interface UiState {
   setDirty(tabKey: string, dirty: boolean): void
   /** Forget tabs, drafts and dirty flags of a session that no longer exists (archived). */
   forgetSession(sessionId: string): void
+}
+
+/** The tabs to show: the Server tab (when the folder has a dev command) sits after Shell, before open files. */
+/** The Server tab is shown for folders with a dev command, except on Windows. */
+export const showsServerTab = (devCommand: string | undefined): boolean => !!devCommand && platform() !== 'win32'
+
+export function withServerTab(tabs: MainTab[], enabled: boolean): MainTab[] {
+  const rest = tabs.filter((t) => t.id !== 'server')
+  if (!enabled) return rest
+  const at = rest.findIndex((t) => t.id !== 'claude' && t.id !== 'shell')
+  const server: MainTab = { id: 'server' }
+  return at < 0 ? [...rest, server] : [...rest.slice(0, at), server, ...rest.slice(at)]
+}
+
+/** The tab that is really showing: the stored active one, or the first when it isn't among the shown tabs (a hidden Server tab reads as Claude). */
+export function effectiveTab(active: string, shown: MainTab[]): string {
+  return (shown.find((t) => t.id === active) ?? shown[0]).id
 }
 
 const defaultTabs = (): MainTab[] => [{ id: 'claude' }, { id: 'shell' }]
@@ -150,7 +170,7 @@ export const useUi = create<UiState>()((set, get) => ({
     }),
   closeTab: (sessionId, tabId) =>
     set((s) => {
-      if (tabId === 'claude' || tabId === 'shell') return s
+      if (tabId === 'claude' || tabId === 'shell' || tabId === 'server') return s
       const cur = s.tabs[sessionId]
       const idx = cur?.findIndex((t) => t.id === tabId) ?? -1
       if (!cur || idx < 0) return s

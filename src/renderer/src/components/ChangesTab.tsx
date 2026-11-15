@@ -1,8 +1,13 @@
 import { useEffect, useState } from 'react'
-import type { AppSnapshot, ChangedFile } from '@shared/types'
+import type { AppSnapshot, ChangedFile, ReviewComment } from '@shared/types'
 import { useUi } from '../state/ui'
 import { cleanIpcError } from '../state/errors'
 import { useDiskRefresh } from '../state/refresh'
+import { useReview } from '../state/review'
+import { useToast } from '../state/toast'
+import { formatReview } from '@shared/review-text'
+import { platform } from '../platform'
+import { requestFocus } from '../terminal/termCache'
 
 const STATUS_COLOR: Record<ChangedFile['status'], string> = {
   M: 'var(--st-needs)', A: 'var(--st-unread)', '?': 'var(--st-unread)', D: 'var(--st-exited)'
@@ -18,12 +23,16 @@ export function LineCounts({ additions, deletions }: { additions: number; deleti
   )
 }
 
+const NO_COMMENTS: ReviewComment[] = []
+
 export default function ChangesTab({ snap, sessionId }: { snap: AppSnapshot; sessionId: string }): React.JSX.Element {
   const tick = useDiskRefresh(snap, sessionId)
   const [data, setData] = useState<{ baseLabel: string; files: ChangedFile[] } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const openTab = useUi((s) => s.openTab)
   const activeId = useUi((s) => s.activeTab[sessionId])
+  const comments = useReview((s) => s.byId[sessionId]) ?? NO_COMMENTS
+  const [sending, setSending] = useState(false)
 
   useEffect(() => { setData(null); setError(null) }, [sessionId])
   useEffect(() => {
@@ -54,6 +63,39 @@ export default function ChangesTab({ snap, sessionId }: { snap: AppSnapshot; ses
           </div>
         )
       })}
+      {comments.length > 0 && (
+        <div className="review-list" data-testid="review-list">
+          <div className="panel-note">Review · {comments.length} {comments.length === 1 ? 'comment' : 'comments'}</div>
+          {comments.map((c) => (
+            <div key={c.id} className="review-item" data-testid="review-item">
+              <div className="review-where">
+                <span>{c.path} ({c.fromLine === c.toLine ? `line ${c.fromLine}` : `lines ${c.fromLine}-${c.toLine}`})</span>
+                <button className="review-x" aria-label="Remove comment" data-testid="review-remove"
+                  onClick={() => useReview.getState().remove(sessionId, c.id)}>{'✕'}</button>
+              </div>
+              <div className="review-note">{c.note}</div>
+            </div>
+          ))}
+          <div className="review-actions">
+            <button className="btn primary" data-testid="review-send" disabled={sending} onClick={() => void send()}>Send review to agent</button>
+            <button className="btn" data-testid="review-clear" onClick={() => useReview.getState().clear(sessionId)}>Clear</button>
+          </div>
+        </div>
+      )}
     </div>
   )
+
+  async function send(): Promise<void> {
+    setSending(true)
+    try {
+      await window.pitwall.sendToAgent(sessionId, formatReview(comments, platform()))
+      useUi.getState().setActiveTab(sessionId, 'claude')
+      requestFocus(sessionId, 'claude')
+      useReview.getState().clear(sessionId)
+    } catch (e) {
+      useToast.getState().show(`Could not send the review: ${cleanIpcError(e)}`)
+    } finally {
+      setSending(false)
+    }
+  }
 }

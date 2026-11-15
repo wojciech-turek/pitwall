@@ -2,6 +2,29 @@
 
 All notable changes to Pitwall are listed here, newest first. Pitwall shows these notes when an update is available, before you download it.
 
+## [Unreleased]
+
+### Added
+
+- **Continue when a limit resets.** A session Claude stopped at a limit shows "Claude stopped at a limit." and offers "Continue at 3:05 PM"; click it and Pitwall types `continue` then, if the session is still idle.
+- **Review an agent's changes and send the review in one go.** Select lines in a diff, add a comment, and "Send review to agent" pastes every comment into Claude's prompt.
+- **Failing checks and open review comments on a session's PR** show above its terminal, and "Send to agent" pastes them into Claude's prompt.
+- **A Server tab for your dev server, with ports of its own.** Set a folder's dev command, and each session runs it in its own tab, next to Claude and Shell, with a button to open it in the browser. Each session gets `$PITWALL_PORT` and the 9 after it, so dev servers in different sessions don't collide.
+- **`.worktreeinclude`.** List gitignored files such as `.env.local` there, and every new worktree gets a copy.
+- **See a session's subagents.** While Claude runs subagents, each one hangs under its session in the sidebar, showing what it's doing and when it's done. Click the arrow to fold them away. A subagent still working in the background no longer marks its session as Working after Claude's reply; its own row shows it's running.
+- **Agents can start sessions of their own.** Claude in a Pitwall session can use the `pitwall` command (`pitwall new` and friends) to hand work to a helper, which gets its own branch and worktree and hangs under the session that started it, in the sidebar and in ⌘J order; the hover card says who started it. A finished helper stays quiet, with no notification and no Dock badge, while the session that started it is still open; one that needs you still tells you. `pitwall wait` prints the helper's full reply. Turn it off in Settings. macOS only.
+- **Clean up worktrees.** A folder's ⋯ menu lists worktrees agents made outside Pitwall and removes the ones that are merged and unchanged. It never touches worktrees with changes or anything running, or any of your sessions' worktrees.
+- **See what each session costs.** Hover a session for its CPU and memory. A session using a lot shows it on its row, and the title bar warns when your Mac runs short of memory or disk, with the biggest sessions one click away. Mac only, and only with tmux.
+
+### Changed
+
+- **tmux is now optional on macOS.** Without it, Pitwall keeps your agents running in its own background process, as it does on Windows. If you have tmux, nothing changes.
+- **The usage meter shows each Claude account.** Projects that use their own `CLAUDE_CONFIG_DIR` get their own 5-hour and weekly bars, named by the account's email, with the selected session's account on top.
+
+### Fixed
+
+- **Typing stays quick with many sessions open.** A terminal you haven't looked at for a minute stops receiving output in the background, and catches up instantly when you open it again.
+
 ## [0.3.5] - 2026-11-04
 
 ### Added

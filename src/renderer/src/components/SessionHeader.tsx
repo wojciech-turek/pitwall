@@ -1,8 +1,12 @@
+import { useState } from 'react'
 import type { SessionView, SubProject } from '@shared/types'
 import { STATUS_LABEL } from '@shared/runtime'
+import { resetTimeFor } from '@shared/reset-time'
 import { useUi } from '../state/ui'
 import { useToast } from '../state/toast'
 import { cleanIpcError } from '../state/errors'
+import { requestFocus } from '../terminal/termCache'
+import { useUsage } from '../state/usage'
 import PrBadge from './PrBadge'
 import StatusIcon from './StatusIcon'
 
@@ -15,6 +19,63 @@ export async function openInCursor(sessionId: string): Promise<void> {
   } catch (e) {
     toast(cleanIpcError(e))
   }
+}
+
+/** Pastes the PR's failing checks or review comments into the agent's prompt, then shows it. */
+async function sendPrFeedback(sessionId: string, what: 'checks' | 'reviews'): Promise<void> {
+  const toast = useToast.getState().show
+  try {
+    const r = await window.pitwall.sendPrFeedback(sessionId, what)
+    if (!r.ok) { toast(r.message); return }
+    useUi.getState().setActiveTab(sessionId, 'claude')
+    requestFocus(sessionId, 'claude')
+  } catch (e) {
+    toast(cleanIpcError(e))
+  }
+}
+
+function PrFeedbackBanner({ testId, text, sessionId, what }: {
+  testId: string; text: string; sessionId: string; what: 'checks' | 'reviews'
+}): React.JSX.Element {
+  const [sending, setSending] = useState(false)
+  return (
+    <div className="banner warn" role="status" data-testid={`${testId}-banner`}>
+      <span>{text}</span>
+      <button className="btn" data-testid={`${testId}-send`} disabled={sending}
+        onClick={() => { setSending(true); void sendPrFeedback(sessionId, what).finally(() => setSending(false)) }}>Send to agent</button>
+    </div>
+  )
+}
+
+const shortTime = (at: number): string => new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+
+/** A session Claude stopped at a usage limit: offers to type "continue" when the limit resets. */
+function LimitBanner({ session }: { session: SessionView }): React.JSX.Element {
+  const usage = useUsage()
+  const [busy, setBusy] = useState(false)
+  const run = (fn: () => Promise<unknown>): void => {
+    setBusy(true)
+    void fn().catch((e) => useToast.getState().show(cleanIpcError(e))).finally(() => setBusy(false))
+  }
+  return (
+    <div className="banner warn" role="status" data-testid="limit-banner">
+      {session.continueAt !== undefined ? (
+        <>
+          <span>Will type "continue" at {shortTime(session.continueAt)}.</span>
+          <button className="btn" data-testid="continue-cancel" disabled={busy}
+            onClick={() => run(() => window.pitwall.cancelContinue(session.id))}>Cancel</button>
+        </>
+      ) : (
+        <>
+          <span>Claude stopped at a limit.</span>
+          <button className="btn" data-testid="continue-at" disabled={busy}
+            onClick={() => run(() => window.pitwall.scheduleContinue(session.id))}>
+            Continue at {shortTime(resetTimeFor(usage.find((a) => a.account === session.account)?.usage, Date.now()))}
+          </button>
+        </>
+      )}
+    </div>
+  )
 }
 
 export default function SessionHeader({ session, subProject, multi = false, onClose }: {
@@ -50,6 +111,15 @@ export default function SessionHeader({ session, subProject, multi = false, onCl
           <button className="btn" data-testid="pr-archive" onClick={() => openDialog({ type: 'archive', sessionId: session.id })}>Archive…</button>
         </div>
       )}
+      {session.pr?.state === 'OPEN' && session.pr.checks === 'failing' && !!session.pr.failing?.length && (
+        <PrFeedbackBanner testId="pr-checks" sessionId={session.id} what="checks"
+          text={`Checks failing on PR #${session.pr.number}: ${session.pr.failing.map((f) => f.name).join(', ')}`} />
+      )}
+      {session.pr?.state === 'OPEN' && (session.pr.openThreads ?? 0) > 0 && (
+        <PrFeedbackBanner testId="pr-reviews" sessionId={session.id} what="reviews"
+          text={`${session.pr.openThreads} unresolved review comment${session.pr.openThreads === 1 ? '' : 's'} on PR #${session.pr.number}`} />
+      )}
+      {session.limitHit && <LimitBanner session={session} />}
       {session.startWarning && <div className="banner warn" role="status" data-testid="start-warning">{session.startWarning}</div>}
       {session.launchWarnings?.map((w) => <div key={w} className="banner warn" role="status" data-testid="launch-warning">{w}</div>)}
       {session.lastError && <div className="banner error" role="alert" data-testid="last-error">{session.lastError}</div>}

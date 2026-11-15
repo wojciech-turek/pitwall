@@ -7,7 +7,9 @@ export interface Project { id: string; name: string; identity: GitIdentity; extr
 export type SubProjectKind = 'repo' | 'folder'
 export interface SubProject {
   id: string; projectId: string; name: string; path: string; kind: SubProjectKind
-  repoRoot?: string; relPath?: string; setupCommand?: string; teardownCommand?: string; createdAt: number
+  repoRoot?: string; relPath?: string; setupCommand?: string; teardownCommand?: string
+  /** Starts the folder's dev server in a session's Server tab. */
+  devCommand?: string; createdAt: number
 }
 export type PrState = 'OPEN' | 'CLOSED' | 'MERGED'
 export type ChecksState = 'passing' | 'failing' | 'pending' | 'none'
@@ -15,7 +17,13 @@ export interface PrInfo {
   number: number; url: string; title: string; state: PrState; checks: ChecksState; updatedAt: number
   /** Opened as a draft and not yet marked ready for review. */
   draft?: boolean
+  /** Checks that failed, by name (at most 10), with a link to each when GitHub gave one. */
+  failing?: { name: string; url?: string }[]
+  /** Review threads still open on the current diff; set only while the PR is open. */
+  openThreads?: number
 }
+/** An unresolved, current review thread on a PR (each body cut to 2000 characters). */
+export interface ReviewThread { path: string; line: number | null; comments: { author: string; body: string }[] }
 export interface Session {
   id: string; subProjectId: string; title: string; slug: string; claudeSessionId: string; cwd: string
   worktreePath?: string; branch?: string; branchCreatedByPitwall: boolean; baseBranch?: string; baseCommit?: string
@@ -33,16 +41,25 @@ export interface Session {
    * then has Claude rebuild its system prompt for this session's folder, with a note (continue-note.txt).
    */
   continuedFrom?: string
+  /** The first of the session's block of 10 ports, exported as $PITWALL_PORT. */
+  portBase?: number
+  /** When Pitwall will type "continue" (ms): the limit Claude stopped at resets then. */
+  continueAt?: number
+  /** The id of the session that started this one with the `pitwall` command. */
+  createdBy?: string
 }
 export interface AppSettings {
   monoFont: string; monoFontSize: number
   /** Look for newer releases on GitHub, about once a day. */
   checkForUpdates: boolean
+  /** Tell agents about the `pitwall` command (so they start helper sessions with it). Not offered on Windows. */
+  agentCli: boolean
 }
 export const DEFAULT_SETTINGS: AppSettings = {
   monoFont: '"SF Mono","JetBrains Mono",Menlo,monospace',
   monoFontSize: 13,
-  checkForUpdates: true
+  checkForUpdates: true,
+  agentCli: true
 }
 export interface PersistedState {
   version: 1; projects: Project[]; subProjects: SubProject[]; sessions: Session[]; settings: AppSettings
@@ -52,18 +69,39 @@ export interface HookEvent {
   src?: string | null; reason?: string | null; msg?: string | null; err?: string | null; code?: number | null; mode?: string | null
   /** pitwall:warning: what the warning is about (one banner per kind). */
   kind?: string | null
+  /** Subagent id and type: on SubagentStart/Stop, and on tool events fired inside a subagent. */
+  aid?: string | null; at?: string | null
+  /** PreToolUse of the Agent tool: the task description, up to 120 characters. */
+  desc?: string | null
 }
 export type Activity = 'starting' | 'idle' | 'working' | 'needs_input' | 'exited'
 export type NeedsInputReason = 'permission' | 'question' | 'other'
+/** One run of a subagent, kept so the sidebar can list what a session's helpers are doing. */
+export interface SubagentRun {
+  id: string; type: string; description?: string; state: 'running' | 'done'; startedAt: number; endedAt?: number
+  lastTool?: string; needsYou?: boolean; lastMessage?: string
+}
 export interface SessionRuntime {
   activity: Activity; needsInput?: NeedsInputReason; claudeSessionId?: string
   firstEventSeen: boolean; lastEventAt?: number; lastFinishedAt?: number; lastMessage?: string; lastError?: string; exitCode?: number
   /** What the launcher warned about since Claude last started, by kind (pitwall:warning). */
   warnings?: Record<string, string>
+  /** What the session was doing before a subagent needed the user; restored once that is answered. */
+  resumeActivity?: Activity
+  /** Claude stopped its last turn at a usage limit. */
+  limitHit?: boolean
+  /** The newest subagent runs, oldest first. */
+  subagents?: SubagentRun[]
+  /** Agent-tool descriptions waiting for their SubagentStart, oldest first, at most 20. */
+  agentDescs?: string[]
+  /** The launcher passed Claude a first prompt that it hasn't submitted yet (pitwall:prompt-pending). */
+  promptPending?: boolean
+  /** When Claude last took a prompt (UserPromptSubmit). */
+  lastPromptAt?: number
 }
 export type DisplayStatus = 'starting' | 'working' | 'needs_you' | 'unread' | 'read' | 'exited'
 export interface ChangedFile { path: string; status: 'M' | 'A' | 'D' | '?'; additions: number; deletions: number; binary: boolean }
-export type TermKind = 'claude' | 'shell'
+export type TermKind = 'claude' | 'shell' | 'server'
 export interface FileEntry { path: string; status?: 'M' | 'A' | 'D' | '?' }
 export type FileContent =
   | { kind: 'text'; content: string; mtimeMs: number }
@@ -75,8 +113,16 @@ export interface SessionView extends Session {
   exitCode?: number
   diffStat?: { additions: number; deletions: number }; liveBranch?: string; startWarning?: string
   lastActivityAt?: number
+  /** The Claude account (config folder) this session's project uses. */
+  account?: string
+  /** The Server tab's dev server: whether it runs and the ports it listens on. Absent when the folder has no dev command. */
+  server?: { running: boolean; ports: number[] }
   /** The launcher's warnings for this run of Claude (a terminal repaint can wipe its printed lines). */
   launchWarnings?: string[]
+  /** Claude stopped its last turn at a usage limit. */
+  limitHit?: boolean
+  /** The session's subagent runs (oldest first). */
+  subagents?: SubagentRun[]
 }
 export interface AppSnapshot {
   projects: Project[]; subProjects: SubProject[]; sessions: SessionView[]; archived: Session[]; settings: AppSettings
@@ -84,7 +130,22 @@ export interface AppSnapshot {
 export interface GhAccount { login: string; active: boolean; ok: boolean }
 /** One Claude subscription limit window, from Claude Code's status line. */
 export interface UsageWindow { usedPercentage: number; /** ms */ resetsAt: number }
+/** One Claude account's usage: `account` is its config folder, `label` its email or folder for display. */
+export interface AccountUsage { account: string; label: string; usage: ClaudeUsage }
 export interface ClaudeUsage { fiveHour?: UsageWindow; sevenDay?: UsageWindow; /** When Claude reported it (ms). */ updatedAt: number }
+/** What a group of processes costs. `cpu` is `ps %cpu` summed, so 100 is one core. */
+export interface ProcStats { cpu: number; rssBytes: number; procs: number }
+/** What Pitwall, each session and the Mac are spending, sampled every few seconds. Keys of `sessions` are session ids. */
+export interface SystemStats {
+  at: number
+  pressure: 'normal' | 'warn' | 'critical'
+  swapUsedBytes: number
+  memTotalBytes: number
+  diskFreeBytes: number
+  diskTotalBytes: number
+  pitwall: ProcStats
+  sessions: Record<string, ProcStats>
+}
 export interface RepoIdentity { sshCommand?: string; name?: string; email?: string }
 /** A published release. `notes` is untrusted Markdown from GitHub: never render it as HTML. */
 export interface ReleaseInfo { version: string; name: string; notes: string; url: string; publishedAt: number }
@@ -100,6 +161,9 @@ export interface NewSessionInput {
    */
   continueClaudeId?: string
   continuedFrom?: string
+  /** Set only by the command server, for a session started by another session (never by the renderer). */
+  createdBy?: string
+  initialPrompt?: string
 }
 export type StartResult = { ok: true; sessionId: string } | { ok: false; step: StartStep; error: string }
 export interface NewSessionDefaults {
@@ -149,6 +213,10 @@ export interface ConversationItem {
   recentlyActive?: boolean
 }
 /** Newest first; `truncated` when there were more than the 200 most recent outside conversations. */
+/** A worktree of a repo that no Pitwall session owns (an agent made it with `git worktree add`). */
+export interface StrayWorktree { path: string; branch?: string; merged: boolean; dirty: boolean; inUse: boolean; lastCommitAt: number | null
+  /** Pitwall couldn't check whether a process is using it (lsof failed): treated as in use. */
+  inUseUnknown?: boolean }
 export interface ConversationList { items: ConversationItem[]; truncated: boolean }
 /** A row of the folder's conversations that matches a search: title matches first, then the newest. */
 export interface ConversationMatch {
@@ -167,3 +235,6 @@ export type ArchiveResult =
   | { ok: false; needsConfirm: ArchiveCheck }
   | { ok: false; teardownFailed: { exitCode: number | null; timedOut: boolean; output: string } }
   | { ok: false; error: string }
+
+/** One comment on a line range of an agent's diff. `quote` is at most the first 3 selected lines, each cut to 160 characters. */
+export interface ReviewComment { id: string; path: string; fromLine: number; toLine: number; quote: string; note: string }

@@ -347,7 +347,8 @@ describe('continuing a conversation run outside Pitwall', () => {
     const dir = sessionDir(t.paths, s.id)
     const note = join(dir, 'continue-note.txt')
     expect(await readFile(note, 'utf8')).toBe(repoNote(r.root, s))
-    const flags = `--system-prompt-snapshot off --append-system-prompt-file ${note}`
+    // Claude appends system-note.txt: the continue note (the marker for snapshot off), then the agent note.
+    const flags = `--system-prompt-snapshot off --append-system-prompt-file ${join(dir, 'system-note.txt')}`
     expect((await launches())[0]).toBe(`--resume ${c.id} --settings ${join(dir, 'hooks.json')} ${flags}`)
     // Claude read the note (its path arrived whole, spaces and all).
     await waitFor(async () => (await notes()).length === 1, 8000, 'the note read')
@@ -373,7 +374,7 @@ describe('continuing a conversation run outside Pitwall', () => {
     const own = (await launches()).filter((l) => l.includes(normal.claudeSessionId))
     expect(own).toHaveLength(1)
     expect(own[0]).not.toContain('--system-prompt-snapshot')
-    expect(own[0]).not.toContain('--append-system-prompt-file')
+    expect(own[0]).toContain(`--append-system-prompt-file ${join(sessionDir(t.paths, normal.id), 'system-note.txt')}`) // the agent note only
     expect(await has(join(sessionDir(t.paths, normal.id), 'continue-note.txt'))).toBe(false)
   })
 

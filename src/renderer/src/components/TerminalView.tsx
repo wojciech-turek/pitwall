@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import '@xterm/xterm/css/xterm.css'
 import type { TermKind } from '@shared/types'
-import { attachTerminal, getTerminal, openPty, setTerminalFont, takePendingFocus } from '../terminal/termCache'
+import { attachTerminal, getTerminal, markHidden, markShown, openPty, setTerminalFont, takePendingFocus } from '../terminal/termCache'
 import { dropText } from '../terminal/paths'
 import { isSessionDrag } from '../state/dropZone'
 import { useUi } from '../state/ui'
@@ -16,6 +16,7 @@ export default function TerminalView({ sessionId, kind, fontFamily, fontSize }: 
     if (!el) return
     setTerminalFont(fontFamily, fontSize)
     const entry = attachTerminal(sessionId, kind, el)
+    markShown(sessionId, kind)
     let timer: ReturnType<typeof setTimeout> | undefined
     let first = true
 
@@ -34,7 +35,7 @@ export default function TerminalView({ sessionId, kind, fontFamily, fontSize }: 
     })
     ro.observe(el)
     fitNow()
-    return () => { ro.disconnect(); clearTimeout(timer) }
+    return () => { ro.disconnect(); clearTimeout(timer); markHidden(sessionId, kind) }
   }, [sessionId, kind, fontFamily, fontSize])
 
   // Dropped files: paste their escaped paths at the prompt (never Enter), like Terminal.app.
@@ -47,7 +48,7 @@ export default function TerminalView({ sessionId, kind, fontFamily, fontSize }: 
       filePaths: [...dt.files].map((f) => window.pitwall.pathForFile(f)),
       uriList: dt.getData('text/uri-list'),
       text: dt.getData('text/plain')
-    }, undefined, kind)
+    }, undefined, kind === 'claude' ? 'claude' : 'shell')
     if (!text) return
     const { term } = getTerminal(sessionId, kind)
     term.paste(text)

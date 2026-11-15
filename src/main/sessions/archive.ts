@@ -6,7 +6,7 @@ import { samePath } from '../git'
 import { buildSessionEnv, getGhToken, INHERITED_GH_TOKENS, withoutGhTokens } from '../identity'
 import { eventsFile, sessionDir } from '../paths'
 import type { PtyBridge } from '../pty-bridge'
-import { claudeTmuxName, shellTmuxName } from '../tmux'
+import { claudeTmuxName, serverTmuxName, shellTmuxName } from '../tmux'
 import type { SessionManager } from './manager'
 import { snapshotLeftovers, stopLeftovers, type LeftoverOptions } from './leftovers'
 import { runTeardown } from './teardown'
@@ -156,6 +156,7 @@ export async function archiveSession(
   const reattachable = (): void => {
     deps.ptyBridge.detach(sessionId, 'claude')
     deps.ptyBridge.detach(sessionId, 'shell')
+    deps.ptyBridge.detach(sessionId, 'server')
   }
   try {
     const f = find(sessionId, deps)
@@ -173,7 +174,8 @@ export async function archiveSession(
 
     const panes = [
       await deps.backend.processRoots(claudeTmuxName(s.id)),
-      await deps.backend.processRoots(shellTmuxName(s.id))
+      await deps.backend.processRoots(shellTmuxName(s.id)),
+      await deps.backend.processRoots(serverTmuxName(s.id))
     ]
     const serverPid = panes.find((p) => p.serverPid)?.serverPid ?? null
     const platform = deps.platform ?? process.platform
@@ -189,9 +191,11 @@ export async function archiveSession(
     const leftovers = await snapshotLeftovers(panes.flatMap((p) => p.panePids), serverPid, leftoverOptions)
     deps.ptyBridge.close(s.id, 'claude')
     deps.ptyBridge.close(s.id, 'shell')
+    deps.ptyBridge.close(s.id, 'server')
     terminalsClosed = true
     await deps.backend.killSession(claudeTmuxName(s.id))
     await deps.backend.killSession(shellTmuxName(s.id))
+    await deps.backend.killSession(serverTmuxName(s.id))
 
     const repoRoot = sp?.repoRoot
     if (sp?.teardownCommand?.trim() && !o.skipTeardown && (await exists(s.cwd))) {

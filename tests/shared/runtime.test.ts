@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import {
-  countStatuses, displayStatus, initialRuntime, nextAttention, reduceRuntime, sidebarOrder, STATUS_LABEL
+  countStatuses, displayStatus, initialRuntime, nextAttention, reduceRuntime, sessionDepth, sidebarOrder, STATUS_LABEL
 } from '../../src/shared/runtime'
 import type { HookEvent, SessionRuntime } from '../../src/shared/types'
 
@@ -18,6 +18,17 @@ describe('reduceRuntime', () => {
     expect(o).toMatchObject({ activity: 'working' })
     expect(o.needsInput).toBeUndefined()
     expect(o.lastError).toBeUndefined()
+  })
+  test('StopFailure at a usage limit sets limitHit; other failures do not; later activity clears it', () => {
+    const hit = r(rt({ activity: 'working' }), 'StopFailure', { err: 'rate_limit', msg: 'API Error: Rate limit reached' })
+    expect(hit.limitHit).toBe(true)
+    expect(r(rt({ activity: 'working' }), 'StopFailure', { err: 'server_error', msg: 'Usage limit reached' }).limitHit).toBe(true)
+    expect(r(rt({ activity: 'working' }), 'StopFailure', { err: 'server_error', msg: 'You hit your limit' }).limitHit).toBe(true)
+    expect(r(rt({ activity: 'working' }), 'StopFailure', { err: 'server_error', msg: 'oops' }).limitHit).toBeUndefined()
+    expect(r(hit, 'UserPromptSubmit').limitHit).toBeUndefined()
+    expect(r(hit, 'SessionStart', { src: 'startup' }).limitHit).toBeUndefined()
+    expect(r(hit, 'SessionStart', { src: 'compact' }).limitHit).toBe(true)
+    expect(r(hit, 'pitwall:exited', { code: 0 }).limitHit).toBeUndefined()
   })
   test('PreToolUse', () => {
     expect(r(rt({ activity: 'idle' }), 'PreToolUse', { tool: 'Bash' }).activity).toBe('working')
@@ -99,6 +110,35 @@ describe('reduceRuntime', () => {
     expect(o.activity).toBe('working')
     expect(o.needsInput).toBeUndefined()
     expect(r(rt({ activity: 'idle' }), 'pitwall:user-input').activity).toBe('idle')
+  })
+  test('pitwall:sent (Pitwall typed a message and pressed Enter): working at once, before its UserPromptSubmit', () => {
+    const o = r(rt({ activity: 'idle', lastFinishedAt: 50, lastMessage: 'done' }), 'pitwall:sent')
+    expect(o.activity).toBe('working')
+    expect(displayStatus(o, 0)).toBe('working')
+    expect(r(rt({ activity: 'needs_input', needsInput: 'question' }), 'pitwall:sent').needsInput).toBeUndefined()
+    expect(r(o, 'Stop', { msg: 'answered' })).toMatchObject({ activity: 'idle', lastMessage: 'answered' })
+  })
+  test('pitwall:prompt-pending: a first prompt is coming, so SessionStart keeps the session working until it is answered', () => {
+    let o = r(r(initialRuntime, 'pitwall:launch', { mode: 'new' }), 'pitwall:prompt-pending')
+    expect(o.promptPending).toBe(true)
+    o = r(o, 'SessionStart', { src: 'startup' })
+    expect(o.activity).toBe('working')
+    expect(o.promptPending).toBe(true)
+    o = r(o, 'UserPromptSubmit')
+    expect(o.activity).toBe('working')
+    expect(o.promptPending).toBeUndefined()
+    expect(r(o, 'Stop', { msg: 'hi' }).activity).toBe('idle')
+    // Without the flag, SessionStart is idle as ever.
+    expect(r(r(initialRuntime, 'pitwall:launch', { mode: 'new' }), 'SessionStart', { src: 'startup' }).activity).toBe('idle')
+  })
+  test('pitwall:prompt-pending is dropped by Stop, SessionEnd, pitwall:exited and the next launch', () => {
+    const p = r(rt({ activity: 'starting' }), 'pitwall:prompt-pending')
+    expect(r(p, 'Stop').promptPending).toBeUndefined()
+    expect(r(p, 'SessionEnd', { reason: 'prompt_input_exit' }).promptPending).toBeUndefined()
+    expect(r(p, 'pitwall:exited', { code: 0 }).promptPending).toBeUndefined()
+    expect(r(p, 'pitwall:launch', { mode: 'resume' }).promptPending).toBeUndefined()
+    // After the exit, a relaunch's SessionStart is idle again.
+    expect(r(r(p, 'pitwall:exited', { code: 0 }), 'SessionStart', { src: 'resume' }).activity).toBe('idle')
   })
   test('sid updates claudeSessionId', () => {
     expect(r(initialRuntime, 'PreToolUse', { sid: 'abc' }).claudeSessionId).toBe('abc')
@@ -203,5 +243,178 @@ describe('selectors', () => {
     })
     // A pinned session never leaves its folder: b2 stays under b.
     expect(out.map((x) => x.id)).toEqual(['a2', 'a4', 'a1', 'a3', 'b2', 'b1'])
+  })
+})
+
+describe('sessions under the one that started them', () => {
+  const snap = (sessions: any[]) => ({
+    projects: [{ id: 'p1', createdAt: 1 } as any], subProjects: [{ id: 'f', projectId: 'p1', name: 'f' } as any],
+    sessions: sessions.map((x) => ({ subProjectId: 'f', ...x }))
+  })
+  const ids = (sessions: any[]) => sidebarOrder(snap(sessions)).map((x) => x.id)
+
+  test('children come right after their parent, recursively, each level in its own order', () => {
+    expect(ids([
+      { id: 'X', createdAt: 1 }, { id: 'P', createdAt: 2 }, { id: 'C2', createdAt: 5, createdBy: 'P' },
+      { id: 'G', createdAt: 9, createdBy: 'C1' }, { id: 'C1', createdAt: 3, createdBy: 'P' }
+    ])).toEqual(['X', 'P', 'C1', 'G', 'C2'])
+  })
+  test('a pinned child stays under its parent; pinning orders siblings only', () => {
+    expect(ids([
+      { id: 'P', createdAt: 2 }, { id: 'Q', createdAt: 3 }, { id: 'C1', createdAt: 4, createdBy: 'P' },
+      { id: 'C2', createdAt: 5, createdBy: 'P', pinned: true }
+    ])).toEqual(['P', 'C2', 'C1', 'Q'])
+  })
+  test('a child whose parent is not listed sorts as a normal session', () => {
+    expect(ids([
+      { id: 'C1', createdAt: 3, createdBy: 'P' }, { id: 'C2', createdAt: 1, createdBy: 'gone' }, { id: 'Z', createdAt: 2 }
+    ])).toEqual(['C2', 'Z', 'C1'])
+  })
+  test('a loop in createdBy still lists every session once', () => {
+    const out = ids([
+      { id: 'A', createdAt: 1, createdBy: 'B' }, { id: 'B', createdAt: 2, createdBy: 'A' },
+      { id: 'S', createdAt: 3, createdBy: 'S' }, { id: 'T', createdAt: 4 }
+    ])
+    expect([...out].sort()).toEqual(['A', 'B', 'S', 'T'])
+  })
+  test('sessionDepth counts live ancestors, capped at 3', () => {
+    const list = [
+      { id: 'a' }, { id: 'b', createdBy: 'a' }, { id: 'c', createdBy: 'b' }, { id: 'd', createdBy: 'c' },
+      { id: 'e', createdBy: 'd' }, { id: 'o', createdBy: 'gone' }, { id: 'x', createdBy: 'y' }, { id: 'y', createdBy: 'x' }
+    ] as any[]
+    const byId = new Map(list.map((x) => [x.id, x]))
+    const live = new Set(list.map((x) => x.id))
+    const d = (id: string) => sessionDepth(byId.get(id), live, byId)
+    expect([d('a'), d('b'), d('c'), d('d'), d('e'), d('o'), d('x')]).toEqual([0, 1, 2, 3, 3, 0, 3])
+  })
+})
+
+describe('subagent runs', () => {
+  const started = (aid = 'a', at = 'Explore') => r(r(rt({ activity: 'working' }), 'Stop'), 'SubagentStart', { aid, at, t: 200 })
+  test('SubagentStart adds a running run and leaves activity alone', () => {
+    const o = started()
+    expect(o.activity).toBe('idle')
+    expect(o.subagents).toEqual([{ id: 'a', type: 'Explore', state: 'running', startedAt: 200 }])
+  })
+  test('internal agents (empty type) never show', () => {
+    expect(r(rt({}), 'SubagentStart', { aid: 'x', at: '' }).subagents).toBeUndefined()
+  })
+  test('the same aid starting again updates the run', () => {
+    const done = r(started(), 'SubagentStop', { aid: 'a', t: 300 })
+    const o = r(done, 'SubagentStart', { aid: 'a', at: 'Explore', t: 400 })
+    expect(o.subagents).toHaveLength(1)
+    expect(o.subagents![0]).toMatchObject({ state: 'running', startedAt: 200 })
+    expect(o.subagents![0].endedAt).toBeUndefined()
+  })
+  test('a tool call inside a subagent records lastTool and keeps the parent idle', () => {
+    const o = r(started(), 'PreToolUse', { aid: 'a', tool: 'Bash' })
+    expect(o.activity).toBe('idle')
+    expect(o.subagents![0].lastTool).toBe('Bash')
+  })
+  test('a background subagent outlives the parent Stop', () => {
+    const o = r(r(rt({ activity: 'working' }), 'SubagentStart', { aid: 'a', at: 'Explore' }), 'Stop', { t: 500 })
+    expect(o.activity).toBe('idle')
+    expect(o.subagents![0].state).toBe('running')
+    expect(displayStatus(o, 0)).toBe('unread')
+  })
+  test('a permission prompt inside a subagent needs you; Post* clears the run', () => {
+    const o = r(started(), 'PermissionRequest', { aid: 'a', tool: 'Bash' })
+    expect(o).toMatchObject({ activity: 'needs_input', needsInput: 'permission' })
+    expect(o.subagents![0].needsYou).toBe(true)
+    const p = r(o, 'PostToolUse', { aid: 'a', tool: 'Bash' })
+    expect(p.subagents![0].needsYou).toBe(false)
+    expect(p.activity).toBe('idle')
+    expect(p.needsInput).toBeUndefined()
+    expect(p.resumeActivity).toBeUndefined()
+  })
+  test('a background subagent answered: the parent returns to unread', () => {
+    const o = r(started(), 'PermissionRequest', { aid: 'a', tool: 'Bash' })
+    const p = r(o, 'PostToolUse', { aid: 'a', tool: 'Bash' })
+    expect(displayStatus(p, 0)).toBe('unread')
+  })
+  test('the same with a typed answer in between', () => {
+    const o = r(started(), 'PermissionRequest', { aid: 'a', tool: 'Bash' })
+    const w = r(o, 'pitwall:user-input')
+    expect(w.activity).toBe('working')
+    expect(r(w, 'PostToolUse', { aid: 'a', tool: 'Bash' }).activity).toBe('idle')
+  })
+  test('a foreground subagent answered: the parent goes back to working', () => {
+    let o = r(rt({ activity: 'idle' }), 'UserPromptSubmit')
+    o = r(o, 'SubagentStart', { aid: 'a', at: 'Explore' })
+    o = r(o, 'PermissionRequest', { aid: 'a', tool: 'Bash' })
+    expect(o.activity).toBe('needs_input')
+    expect(r(o, 'PostToolUse', { aid: 'a' }).activity).toBe('working')
+  })
+  test('two runs needing you: the parent resumes only after both', () => {
+    let o = r(r(started(), 'SubagentStart', { aid: 'b', at: 'Plan' }), 'PermissionRequest', { aid: 'a', tool: 'Bash' })
+    o = r(o, 'PermissionRequest', { aid: 'b', tool: 'Bash' })
+    o = r(o, 'PostToolUse', { aid: 'a' })
+    expect(o.activity).toBe('needs_input')
+    expect(r(o, 'PostToolUse', { aid: 'b' }).activity).toBe('idle')
+  })
+  test('the permission Notification Claude sends without an agent id (~6 s after the subagent\'s PermissionRequest) keeps the resume', () => {
+    let o = r(started(), 'PermissionRequest', { aid: 'a', tool: 'Bash' })
+    expect(o.resumeActivity).toBe('idle')
+    o = r(o, 'Notification', { nt: 'permission_prompt' }) // no aid
+    expect(o).toMatchObject({ activity: 'needs_input', needsInput: 'permission', resumeActivity: 'idle' })
+    const p = r(o, 'PostToolUse', { aid: 'a', tool: 'Bash' })
+    expect(p.activity).toBe('idle')
+    expect(displayStatus(p, 0)).toBe('unread')
+  })
+  test('a parent event while a subagent question is pending drops the resume', () => {
+    const o = r(r(started(), 'PermissionRequest', { aid: 'a', tool: 'Bash' }), 'UserPromptSubmit')
+    expect(o.resumeActivity).toBeUndefined()
+  })
+  test('a permission Notification inside a subagent needs you; idle_prompt does not', () => {
+    const o = r(started(), 'Notification', { aid: 'a', nt: 'permission_prompt' })
+    expect(o.activity).toBe('needs_input')
+    expect(o.subagents![0].needsYou).toBe(true)
+    expect(r(started(), 'Notification', { aid: 'a', nt: 'idle_prompt' }).activity).toBe('idle')
+  })
+  test('SubagentStop marks the run done; unknown ids are ignored', () => {
+    const o = r(started(), 'SubagentStop', { aid: 'a', msg: 'found it', t: 300 })
+    expect(o.subagents![0]).toMatchObject({ state: 'done', endedAt: 300, lastMessage: 'found it', needsYou: false })
+    expect(r(o, 'SubagentStop', { aid: 'zz' }).subagents).toEqual(o.subagents)
+  })
+  test('the Agent tool description goes to the next run', () => {
+    const o = r(rt({ activity: 'working' }), 'PreToolUse', { tool: 'Agent', desc: 'Find things' })
+    expect(o.activity).toBe('working')
+    expect(o.agentDescs).toEqual(['Find things'])
+    const s = r(o, 'SubagentStart', { aid: 'a', at: 'Explore' })
+    expect(s.subagents![0].description).toBe('Find things')
+    expect(s.agentDescs).toEqual([])
+  })
+  test('agentDescs keep the newest 20, runs the newest 30', () => {
+    let o = rt({})
+    for (let i = 0; i < 25; i++) o = r(o, 'PreToolUse', { tool: 'Agent', desc: `d${i}` })
+    expect(o.agentDescs).toHaveLength(20)
+    expect(o.agentDescs![0]).toBe('d5')
+    let q = rt({})
+    for (let i = 0; i < 35; i++) q = r(q, 'SubagentStart', { aid: `a${i}`, at: 'X' })
+    expect(q.subagents).toHaveLength(30)
+    expect(q.subagents![0].id).toBe('a5')
+  })
+  test('UserPromptSubmit drops done runs only', () => {
+    const two = r(started('b'), 'SubagentStart', { aid: 'c', at: 'Plan' })
+    const o = r(r(two, 'SubagentStop', { aid: 'b' }), 'UserPromptSubmit')
+    expect(o.subagents!.map((x) => x.id)).toEqual(['c'])
+  })
+  test('SessionStart (not compact) and pitwall:exited clear runs and descs', () => {
+    const base = { ...started(), agentDescs: ['x'] }
+    expect(r(base, 'SessionStart', { src: 'compact' }).subagents).toHaveLength(1)
+    for (const o of [r(base, 'SessionStart', { src: 'startup' }), r(base, 'pitwall:exited')]) {
+      expect(o.subagents).toBeUndefined()
+      expect(o.agentDescs).toBeUndefined()
+    }
+  })
+  test('the reducer does not mutate the old runs', () => {
+    const before = started()
+    const copy = JSON.parse(JSON.stringify(before))
+    r(r(before, 'PreToolUse', { aid: 'a', tool: 'Bash' }), 'SubagentStop', { aid: 'a' })
+    expect(before).toEqual(copy)
+  })
+  test('aid events still record lastEventAt and firstEventSeen', () => {
+    const o = r(rt({}), 'SubagentStart', { aid: 'a', at: 'X', sid: 'S', t: 777 })
+    expect(o).toMatchObject({ lastEventAt: 777, firstEventSeen: true, claudeSessionId: 'S' })
   })
 })

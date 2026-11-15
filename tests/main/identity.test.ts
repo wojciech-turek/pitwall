@@ -83,6 +83,22 @@ describe('identity', () => {
     expect(bad('1BAD')).toThrow(/invalid/)
   })
 
+  test('the pitwall command: socket, token, node, client and bin dir, only when given', () => {
+    const cli = { socket: '/d/cli.sock', token: 'abc', node: '/app/node', js: '/app/out/cli/index.js', dir: '/d/cli-bin' }
+    const env = buildSessionEnv({ ...base, cli })
+    expect(env.PITWALL_CLI_SOCKET).toBe('/d/cli.sock')
+    expect(env.PITWALL_CLI_TOKEN).toBe('abc')
+    expect(env.PITWALL_NODE).toBe('/app/node')
+    expect(env.PITWALL_CLI_JS).toBe('/app/out/cli/index.js')
+    expect(env.PITWALL_CLI_DIR).toBe('/d/cli-bin')
+    expect(Object.keys(buildSessionEnv(base)).filter((k) => k.startsWith('PITWALL_CLI') || k === 'PITWALL_NODE')).toEqual([])
+  })
+
+  test('portBase becomes PITWALL_PORT, only when there is one', () => {
+    expect(buildSessionEnv({ ...base, portBase: 40030 }).PITWALL_PORT).toBe('40030')
+    expect('PITWALL_PORT' in buildSessionEnv(base)).toBe(false)
+  })
+
   test('the user status line is passed on as PITWALL_USER_STATUSLINE, only when there is one', () => {
     expect(buildSessionEnv({ ...base, userStatusLine: '~/.claude/line.sh --x' }).PITWALL_USER_STATUSLINE).toBe('~/.claude/line.sh --x')
     expect('PITWALL_USER_STATUSLINE' in buildSessionEnv({ ...base, userStatusLine: '' })).toBe(false)

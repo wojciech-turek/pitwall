@@ -6,6 +6,8 @@ dir="$1"
 
 load_identity() {
   . "$dir/env.sh"
+  # The `pitwall` command (load_identity runs in a fresh subshell per launch, so this never stacks).
+  [ -n "$PITWALL_CLI_DIR" ] && PATH="$PITWALL_CLI_DIR:$PATH" && export PATH
   if [ -n "$PITWALL_GH_ACCOUNT" ]; then
     # Tokens inherited from the user's shell must not stand in for the project's account (gh prefers them, even
     # for `gh auth token`). Drop them, then re-apply env.sh so the project's own extra variables stay.
@@ -29,12 +31,19 @@ now() { echo $(($(date +%s) * 1000)); }
 log_event() { printf '%s\n' "$1" >> "$PITWALL_EVENTS_FILE"; }
 event_lines() { if [ -f "$PITWALL_EVENTS_FILE" ]; then wc -l < "$PITWALL_EVENTS_FILE" | tr -d ' '; else echo 0; fi; }
 
-# Claude with the given arguments. A conversation continued from outside Pitwall (continue-note.txt): Claude rebuilds
-# its system prompt for this folder, with the note, rather than reuse the recorded one (which names where it began).
+# Claude with the given arguments, then the first prompt if $first_prompt is set (it must come last).
+# system-note.txt is appended to Claude's system prompt (the continue note, if any, then the agent note). A
+# conversation continued from outside Pitwall (continue-note.txt) also has Claude rebuild its system prompt for this
+# folder rather than reuse the recorded one (which names where it began). Before system-note.txt existed, the
+# continue note was the whole of it.
 start_claude() {
-  if [ -e "$dir/continue-note.txt" ]; then
-    set -- "$@" --system-prompt-snapshot off --append-system-prompt-file "$dir/continue-note.txt"
-  fi
+  note=
+  if [ -e "$dir/system-note.txt" ]; then note="$dir/system-note.txt"
+  elif [ -e "$dir/continue-note.txt" ]; then note="$dir/continue-note.txt"; fi
+  if [ -e "$dir/continue-note.txt" ]; then set -- "$@" --system-prompt-snapshot off; fi
+  if [ -n "$note" ]; then set -- "$@" --append-system-prompt-file "$note"; fi
+  # After "--", so a prompt starting with a dash (a markdown bullet) is never read as an option.
+  if [ -n "$first_prompt" ]; then set -- "$@" -- "$first_prompt"; fi
   "$PITWALL_CLAUDE_BIN" "$@"
 }
 
@@ -48,7 +57,25 @@ has_transcript() {
 
 launch_new() {
   log_event "{\"c\":\"$PITWALL_SESSION_ID\",\"t\":$(now),\"e\":\"pitwall:launch\",\"mode\":\"new\"}"
+  # A first prompt from the `pitwall` command: given once, then renamed so a relaunch never repeats it.
+  first_prompt=
+  if [ -e "$dir/initial-prompt.txt" ]; then
+    first_prompt=$(cat "$dir/initial-prompt.txt")
+    mv "$dir/initial-prompt.txt" "$dir/initial-prompt.sent"
+    # The app keeps the session working through SessionStart, until this prompt's UserPromptSubmit.
+    [ -n "$first_prompt" ] && log_event "{\"c\":\"$PITWALL_SESSION_ID\",\"t\":$(now),\"e\":\"pitwall:prompt-pending\"}"
+  fi
+  prompt_from=$(event_lines)
   start_claude --session-id "$id" --settings "$dir/hooks.json" --name "$PITWALL_TITLE"
+  rc=$?
+  # No SessionStart: Claude never began the conversation (No, exit at the folder-trust prompt), so the prompt never
+  # reached it. Keep it for the next launch.
+  if [ -n "$first_prompt" ] && [ -e "$dir/initial-prompt.sent" ] &&
+    ! tail -n +"$((prompt_from + 1))" "$PITWALL_EVENTS_FILE" 2>/dev/null | grep -q '"e":"SessionStart"'; then
+    mv "$dir/initial-prompt.sent" "$dir/initial-prompt.txt"
+  fi
+  first_prompt=
+  return "$rc"
 }
 
 # One launch or resume; exits with claude's code. A subshell, so nothing from a previous env.sh lingers.

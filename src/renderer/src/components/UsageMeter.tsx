@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import type { UsageWindow } from '@shared/types'
-import { usageRow, useUsage } from '../state/usage'
+import { useSnapStore } from '../state/snapshot'
+import { useUi } from '../state/ui'
+import { orderAccounts, usageRow, useUsage } from '../state/usage'
 import { relativeTime } from './HoverCard'
 
 function Row({ label, name, testId, window: w, now }: {
@@ -28,14 +30,33 @@ export default function UsageMeter(): React.JSX.Element {
     const t = setInterval(() => setTick((n) => n + 1), 60_000)
     return () => clearInterval(t)
   }, [])
-  if (!usage) {
+  const selectedId = useUi((s) => s.selectedSessionId)
+  const selectedAccount = useSnapStore((s) => s.snap?.sessions.find((x) => x.id === selectedId)?.account)
+  if (usage.length === 0) {
     return <div className="usage-meter empty" data-testid="usage-meter">Usage shows after Claude's next reply</div>
   }
   const now = Date.now()
+  const list = orderAccounts(usage, selectedAccount)
+  const newest = Math.max(...list.map((x) => x.usage.updatedAt))
+  const title = `Claude usage · updated ${relativeTime(newest, now)}`
+  if (list.length === 1) {
+    const { usage: u } = list[0]
+    return (
+      <div className="usage-meter" data-testid="usage-meter" title={title}>
+        <Row label="5h" name="5-hour" testId="usage-5h" window={u.fiveHour} now={now} />
+        <Row label="Week" name="Weekly" testId="usage-week" window={u.sevenDay} now={now} />
+      </div>
+    )
+  }
   return (
-    <div className="usage-meter" data-testid="usage-meter" title={`Claude usage · updated ${relativeTime(usage.updatedAt, now)}`}>
-      <Row label="5h" name="5-hour" testId="usage-5h" window={usage.fiveHour} now={now} />
-      <Row label="Week" name="Weekly" testId="usage-week" window={usage.sevenDay} now={now} />
+    <div className="usage-meter" data-testid="usage-meter" title={title}>
+      {list.map(({ account, label, usage: u }, i) => (
+        <div key={account} className={i === 0 ? 'usage-account' : 'usage-account dim'}>
+          <div className="usage-account-label" data-testid="usage-account" title={account}>{label}</div>
+          <Row label="5h" name="5-hour" testId={i === 0 ? 'usage-5h' : `usage-5h-${i}`} window={u.fiveHour} now={now} />
+          <Row label="Week" name="Weekly" testId={i === 0 ? 'usage-week' : `usage-week-${i}`} window={u.sevenDay} now={now} />
+        </div>
+      ))}
     </div>
   )
 }

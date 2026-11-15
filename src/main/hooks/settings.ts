@@ -4,7 +4,8 @@ import { shellQuote } from '../identity'
 
 export const HOOK_EVENTS = [
   'SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PermissionRequest', 'PostToolUse',
-  'PostToolUseFailure', 'Notification', 'Stop', 'StopFailure', 'SessionEnd'
+  'PostToolUseFailure', 'Notification', 'Stop', 'StopFailure', 'SessionEnd',
+  'SubagentStart', 'SubagentStop'
 ] as const
 
 export function hookCommandFor(hookBin: string, eventsFile: string, sessionId: string): string {

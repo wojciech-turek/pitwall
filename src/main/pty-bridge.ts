@@ -1,6 +1,6 @@
 import type { TermKind } from '@shared/types'
 import type { Attachment, SessionBackend } from './backend'
-import { claudeTmuxName, shellTmuxName } from './tmux'
+import { tmuxNameFor } from './tmux'
 
 /** Characters typed into a terminal that is still attaching, kept for it (the excess is dropped). */
 export const MAX_TYPED = 1024 * 1024
@@ -41,7 +41,7 @@ export class PtyBridge {
     // (TmuxBackend spawns as soon as attach() is called, so this check still holds at the spawn.)
     if (this.disposed || this.opening.get(key) !== ticket) return
     this.kill(key)
-    const name = kind === 'claude' ? claudeTmuxName(id) : shellTmuxName(id)
+    const name = tmuxNameFor(id, kind)
     // Registered before attaching, so closing it meanwhile (or replacing it) is seen once attach() returns.
     const term: Term = {}
     this.terms.set(key, term)

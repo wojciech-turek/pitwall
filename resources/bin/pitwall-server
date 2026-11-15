@@ -1,0 +1,37 @@
+#!/bin/sh
+# pitwall Server tab entrypoint: usage pitwall-server <sessionDir>. Runs the folder's dev command with the session's
+# identity. Each run is a fresh subshell that re-reads env.sh, so an edited command applies the next time it starts.
+dir="$1"
+
+run_server() (
+  # An inherited PORT (the app's or the login shell's) must not stand in for this session's own port.
+  unset PORT
+  . "$dir/env.sh"
+  [ -n "$PITWALL_CLI_DIR" ] && PATH="$PITWALL_CLI_DIR:$PATH" && export PATH
+  if [ -n "$PITWALL_GH_ACCOUNT" ]; then
+    GH_TOKEN=$("${PITWALL_GH_BIN:-gh}" auth token --hostname github.com --user "$PITWALL_GH_ACCOUNT" 2>/dev/null)
+    if [ -n "$GH_TOKEN" ]; then
+      export GH_TOKEN
+    else
+      # Fail closed: signed-out gh beats gh silently acting as whichever account is active.
+      unset GH_TOKEN
+      export GH_CONFIG_DIR="$PITWALL_SESSION_DIR/gh-unauthenticated"
+      mkdir -p "$GH_CONFIG_DIR"
+      echo "pitwall: couldn't get a GitHub token for $PITWALL_GH_ACCOUNT — gh commands will run signed out. Check \`gh auth status\`."
+    fi
+  fi
+  # Only a PORT set in the project's environment variables (via env.sh) wins.
+  if [ -z "$PORT" ] && [ -n "$PITWALL_PORT" ]; then PORT="$PITWALL_PORT"; export PORT; fi
+  if [ -z "$PITWALL_DEV_COMMAND" ]; then
+    echo "No dev server command is set for this folder."
+    exit 1
+  fi
+  echo "▸ $PITWALL_DEV_COMMAND"
+  sh -c "$PITWALL_DEV_COMMAND"
+)
+
+while :; do
+  run_server
+  echo "Dev server exited (code $?). Press Enter to start it again."
+  read -r _ || exit 0
+done

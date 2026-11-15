@@ -1,6 +1,6 @@
 import type {
-  AppSettings, AppSnapshot, ArchiveCheck, ArchiveResult, ChangedFile, ClaudeUsage, ConversationList, ConversationMatch, EnvVar, FileContent, FileEntry, GhAccount, GitIdentity, HistoryHit, NewSessionDefaults, NewSessionInput, Project, RepoIdentity,
-  StartProgress, StartResult, SubProject, TermKind, UpdateState
+  AppSettings, AppSnapshot, ArchiveCheck, ArchiveResult, ChangedFile, AccountUsage, SystemStats, ConversationList, ConversationMatch, EnvVar, FileContent, FileEntry, GhAccount, GitIdentity, HistoryHit, NewSessionDefaults, NewSessionInput, Project, RepoIdentity,
+  StartProgress, StartResult, StrayWorktree, SubProject, TermKind, UpdateState
 } from './types'
 
 export interface ProjectInput { name: string; identity: GitIdentity; extraEnv: EnvVar[] }
@@ -27,7 +27,7 @@ export interface PitwallApi {
   addFolder(projectId: string): Promise<AddFolderResult>
   confirmAddFolder(projectId: string, path: string, overwriteIdentity: boolean): Promise<AddFolderResult>
   removeSubProject(id: string): Promise<{ ok: boolean; message?: string }>
-  updateSubProject(id: string, patch: { setupCommand?: string; teardownCommand?: string }): Promise<void>
+  updateSubProject(id: string, patch: { setupCommand?: string; teardownCommand?: string; devCommand?: string }): Promise<void>
   prepareNewSession(subProjectId: string): Promise<NewSessionDefaults>
   startSession(i: NewSessionInput): Promise<StartResult>
   onStartProgress(cb: (p: StartProgress) => void): () => void
@@ -51,6 +51,11 @@ export interface PitwallApi {
   writeFile(sessionId: string, rel: string, content: string, expectedMtimeMs?: number):
     Promise<{ ok: true; mtimeMs: number } | { ok: false; reason: 'changed_on_disk' }>
   sendToAgent(sessionId: string, text: string): Promise<void>
+  /** Pastes the PR's failing checks or open review comments into the session's prompt (no Enter). */
+  /** Types "continue" into the session when the limit it stopped at resets; resolves with that time (ms). */
+  scheduleContinue(sessionId: string): Promise<{ at: number }>
+  cancelContinue(sessionId: string): Promise<void>
+  sendPrFeedback(sessionId: string, what: 'checks' | 'reviews'): Promise<{ ok: true; count: number } | { ok: false; message: string }>
   listChanges(sessionId: string): Promise<{ base: string; baseLabel: string; files: ChangedFile[] }>
   readDiff(sessionId: string, rel: string): Promise<{ original: string; modified: string; binary: boolean; tooLarge: boolean }>
   checkArchive(sessionId: string): Promise<ArchiveCheck>
@@ -76,18 +81,33 @@ export interface PitwallApi {
    * progress arrives on onStartProgress.
    */
   continueConversation(subProjectId: string, claudeId: string, requestId: string): Promise<StartResult>
+  /**
+   * A repo folder's worktrees that no session owns (agents made them with `git worktree add`), never the main checkout,
+   * a session's, or one whose folder is gone.
+   */
+  listStrayWorktrees(subProjectId: string): Promise<StrayWorktree[]>
+  /** A stray worktree's size in bytes (`du`), or null. Only for a path listStrayWorktrees can return. */
+  worktreeSize(subProjectId: string, path: string): Promise<number | null>
+  /**
+   * Removes stray worktrees (never with force), and with deleteBranches their merged branches. Each is checked again
+   * first; one with changes, in use, unmerged or no longer a stray is refused, with a message.
+   */
+  removeStrayWorktrees(subProjectId: string, paths: string[], deleteBranches: boolean): Promise<{ path: string; ok: boolean; message?: string }[]>
   openExternal(url: string): Promise<void>
   openInCursor(sessionId: string): Promise<{ ok: boolean; message?: string }>
   setSettings(s: AppSettings): Promise<void>
   onFocusSession(cb: (sessionId: string) => void): () => void
-  /** Claude subscription usage, or null until Claude has reported any. */
-  getUsage(): Promise<ClaudeUsage | null>
+  /** Claude subscription usage, one entry per account that has reported any. */
+  getUsage(): Promise<AccountUsage[]>
+  /** The latest CPU, memory and disk figures, or null before the first sample (and always on Windows). */
+  getSystemStats(): Promise<SystemStats | null>
+  onSystemStats(cb: (s: SystemStats) => void): () => void
   /**
    * Build version, whether this is a dev (unpackaged) run, and whether it looks for updates at all (a dev build only
    * when pointed at a feed with PITWALL_RELEASES_URL).
    */
-  appInfo(): Promise<{ version: string; dev: boolean; updateFeed: boolean }>
-  onUsage(cb: (u: ClaudeUsage | null) => void): () => void
+  appInfo(): Promise<{ version: string; dev: boolean; updateFeed: boolean; parkAfterMs: number }>
+  onUsage(cb: (u: AccountUsage[]) => void): () => void
   /** What the last update check found (nothing until one succeeds). */
   getUpdateState(): Promise<UpdateState>
   /** Checks GitHub now, even with automatic checks off; never fails (a failed check leaves checkedAt as it was). */
@@ -132,6 +152,9 @@ export const IPC = {
   readFile: 'pitwall:readFile',
   writeFile: 'pitwall:writeFile',
   sendToAgent: 'pitwall:sendToAgent',
+  sendPrFeedback: 'pitwall:sendPrFeedback',
+  scheduleContinue: 'pitwall:scheduleContinue',
+  cancelContinue: 'pitwall:cancelContinue',
   listChanges: 'pitwall:listChanges',
   readDiff: 'pitwall:readDiff',
   checkArchive: 'pitwall:checkArchive',
@@ -142,10 +165,14 @@ export const IPC = {
   searchConversations: 'pitwall:searchConversations',
   forgetConversationText: 'pitwall:forgetConversationText',
   continueConversation: 'pitwall:continueConversation',
+  listStrayWorktrees: 'pitwall:listStrayWorktrees',
+  worktreeSize: 'pitwall:worktreeSize',
+  removeStrayWorktrees: 'pitwall:removeStrayWorktrees',
   openExternal: 'pitwall:openExternal',
   openInCursor: 'pitwall:openInCursor',
   setSettings: 'pitwall:setSettings',
   getUsage: 'pitwall:getUsage',
+  getSystemStats: 'pitwall:getSystemStats',
   appInfo: 'pitwall:appInfo',
   getUpdateState: 'pitwall:getUpdateState',
   checkForUpdates: 'pitwall:checkForUpdates',
@@ -157,5 +184,6 @@ export const IPC = {
   focusSession: 'pitwall:focusSession',
   menuCommand: 'pitwall:menuCommand',
   usage: 'pitwall:usage',
+  systemStats: 'pitwall:systemStats',
   updateState: 'pitwall:updateState'
 } as const

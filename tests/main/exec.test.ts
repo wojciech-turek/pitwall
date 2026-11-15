@@ -1,5 +1,8 @@
 import { expect, test } from 'vitest'
-import { exec } from '../../src/main/exec'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { delimiter, join } from 'node:path'
+import { exec, findExecutable } from '../../src/main/exec'
 import { WINDOWS } from '../helpers/processes'
 
 test.skipIf(WINDOWS)('returns code and output without throwing', async () => {
@@ -20,4 +23,29 @@ test('a program found by path: exit code, output, input and timeout (every platf
     .toEqual({ code: 3, stdout: 'hi\n', stderr: 'err\n' })
   expect((await node('process.stdin.pipe(process.stdout)', { input: 'abc' })).stdout).toBe('abc')
   expect((await node('setTimeout(() => {}, 5000)', { timeoutMs: 200 })).code).not.toBe(0)
+})
+
+test('findExecutable returns the first match on the path, or null', () => {
+  expect(findExecutable('tmux', '/a:/b', (p) => p === '/b/tmux')).toBe('/b/tmux')
+  expect(findExecutable('tmux', '/a:/b', (p) => p.endsWith('/tmux'))).toBe('/a/tmux')
+  expect(findExecutable('tmux', '/a:/b', () => false)).toBeNull()
+  expect(findExecutable('tmux', undefined, () => true)).toBeNull()
+  expect(findExecutable('tmux', '', () => true)).toBeNull()
+})
+test('findExecutable skips empty entries and checks real files with the execute bit', async () => {
+  const seen: string[] = []
+  findExecutable('x', `${delimiter}${delimiter}/a`, (p) => { seen.push(p); return false })
+  expect(seen).toEqual([join('/a', 'x')])
+  const dir = await mkdtemp(join(tmpdir(), 'pw-find-'))
+  try {
+    await writeFile(join(dir, 'tool'), '#!/bin/sh\n', { mode: 0o755 })
+    await writeFile(join(dir, 'plain'), 'x', { mode: 0o644 })
+    await mkdir(join(dir, 'adir'))
+    expect(findExecutable('tool', dir)).toBe(join(dir, 'tool'))
+    if (!WINDOWS) expect(findExecutable('plain', dir)).toBeNull()
+    expect(findExecutable('adir', dir)).toBeNull()
+    expect(findExecutable('nope', dir)).toBeNull()
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
 })

@@ -10,6 +10,8 @@ test('defaults', () => {
   expect(p.sessionsDir).toBe('/Users/w/Library/Application Support/pitwall/sessions')
   expect(p.binDir).toBe('/Users/w/Library/Application Support/pitwall/bin')
   expect(p.tmuxConf).toBe('/Users/w/Library/Application Support/pitwall/tmux.conf')
+  expect(p.cliKey).toBe('/Users/w/Library/Application Support/pitwall/cli.key')
+  expect(p.cliBinDir).toBe('/Users/w/Library/Application Support/pitwall/cli-bin')
   expect(p.worktreesRoot).toBe('/Users/w/pitwall/worktrees')
   expect(p.sshDir).toBe('/Users/w/.ssh')
   expect(p).toMatchObject({ tmuxSocket: 'pitwall', claudeBin: 'claude', ghBin: 'gh', notificationsDisabled: false })

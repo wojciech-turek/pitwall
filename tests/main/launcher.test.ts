@@ -23,21 +23,21 @@ const project: Project = {
   identity: { sshKeyPath: '/k/id', ghAccount: 'dev-work', gitName: 'Jane', gitEmail: 'm@x.io' }
 }
 
-async function writeEnv(p: Project, setupCommand?: string, userStatusLine?: string) {
+async function writeEnv(p: Project, setupCommand?: string, userStatusLine?: string, server?: { devCommand?: string; portBase?: number }) {
   const env = buildSessionEnv({
     project: p, session: { id: ID, title: TITLE }, rootPath: cwd, sessionDir: sd, eventsFile: eventsFile(t.paths, ID),
-    claudeBin: t.paths.claudeBin, ghBin: t.paths.ghBin, setupCommand, userStatusLine, home: t.tmp
+    claudeBin: t.paths.claudeBin, ghBin: t.paths.ghBin, setupCommand, userStatusLine, home: t.tmp, ...server
   })
   await writeFile(join(sd, 'env.sh'), renderEnvFile(env), { mode: 0o600 })
 }
 
-async function setup(extra: { setupCommand?: string; silent?: boolean; project?: Project; userStatusLine?: string; dir?: string } = {}) {
+async function setup(extra: { setupCommand?: string; silent?: boolean; project?: Project; userStatusLine?: string; dir?: string; server?: { devCommand?: string; portBase?: number } } = {}) {
   sd = extra.dir ?? sessionDir(t.paths, ID)
   cwd = join(t.tmp, 'work dir')
   await mkdir(sd, { recursive: true })
   await mkdir(sessionDir(t.paths, ID), { recursive: true }) // the events file's folder
   await mkdir(cwd, { recursive: true })
-  await writeEnv(extra.project ?? project, extra.setupCommand, extra.userStatusLine)
+  await writeEnv(extra.project ?? project, extra.setupCommand, extra.userStatusLine, extra.server)
   const hook = hookCommandFor(join(t.paths.binDir, 'pitwall-hook'), eventsFile(t.paths, ID), ID)
   const statusLine = statusLineCommandFor(join(t.paths.binDir, 'pitwall-statusline'), sd)
   await writeFile(join(sd, 'hooks.json'), JSON.stringify(buildHookSettings(hook, statusLine)))
@@ -127,6 +127,89 @@ describe('pitwall-launch', () => {
     expect(argv[2]).toContain(`--name ${TITLE}`)
     const modes = (await events()).filter((e) => e.e === 'pitwall:launch').map((e) => (e as { mode?: string }).mode)
     expect(modes).toEqual(['new', 'resume', 'new'])
+  })
+
+  describe('the first prompt (initial-prompt.txt) and the agent note (system-note.txt)', () => {
+    test('a new session starts Claude with the prompt as its last argument; a relaunch never repeats it', async () => {
+      await setup()
+      await writeFile(join(sd, 'initial-prompt.txt'), "Add a README line, don't $HOME it\n")
+      await writeFile(join(sd, 'system-note.txt'), 'You are in Pitwall.\n')
+      await start()
+      await waitCapture('STUB CLAUDE READY')
+      const flags = `--append-system-prompt-file ${sd}/system-note.txt`
+      expect((await logLines())[0]).toBe(`--session-id ${ID} --settings ${sd}/hooks.json --name ${TITLE} ${flags} -- Add a README line, don't $HOME it`)
+      expect(await stat(join(sd, 'initial-prompt.sent')).then(() => true, () => false)).toBe(true)
+      expect(await stat(join(sd, 'initial-prompt.txt')).then(() => true, () => false)).toBe(false)
+      // The app hears that a prompt is coming, right after the launch and before Claude's SessionStart.
+      await waitFor(async () => (await events()).some((e) => e.e === 'SessionStart'), 8000, 'SessionStart')
+      const names = (await events()).map((e) => e.e)
+      expect(names.filter((n) => n === 'pitwall:prompt-pending')).toHaveLength(1)
+      expect(names.indexOf('pitwall:prompt-pending')).toBe(names.indexOf('pitwall:launch') + 1)
+      expect(names.indexOf('pitwall:prompt-pending')).toBeLessThan(names.indexOf('SessionStart'))
+      await t.tmux.sendKeys('pw-l', ['exit', 'Enter'])
+      await waitCapture('Press Enter to resume')
+      // Claude started that conversation, so the prompt was given: it stays sent.
+      expect(await stat(join(sd, 'initial-prompt.sent')).then(() => true, () => false)).toBe(true)
+      expect(await stat(join(sd, 'initial-prompt.txt')).then(() => true, () => false)).toBe(false)
+      await t.tmux.sendKeys('pw-l', ['Enter'])
+      await waitFor(async () => (await logLines()).some((l) => l.includes('--resume')), 8000, 'resume argv')
+      const resume = (await logLines()).find((l) => l.includes('--resume'))!
+      expect(resume).toBe(`--resume ${ID} --settings ${sd}/hooks.json ${flags}`)
+      await waitFor(async () => (await events()).filter((e) => e.e === 'SessionStart').length === 2, 8000, 'second SessionStart')
+      expect((await events()).filter((e) => e.e === 'pitwall:prompt-pending')).toHaveLength(1) // the relaunch has no prompt
+    })
+
+    test('Claude exits before its SessionStart (No, exit at the folder-trust prompt): the prompt is kept for the next launch', async () => {
+      await setup({ silent: true }) // no SessionStart, as when Claude stops at the trust prompt
+      t.env.STUB_CLAUDE_RESUME_FAIL = '1' // that conversation never started, so the next launch is a new one
+      await writeFile(join(sd, 'initial-prompt.txt'), 'Do the thing\n')
+      await start()
+      await waitCapture('STUB CLAUDE READY')
+      expect((await logLines())[0]).toBe(`--session-id ${ID} --settings ${sd}/hooks.json --name ${TITLE} -- Do the thing`)
+      await t.tmux.sendKeys('pw-l', ['exit', 'Enter'])
+      await waitCapture('Press Enter to resume')
+      expect(await readFile(join(sd, 'initial-prompt.txt'), 'utf8')).toBe('Do the thing\n')
+      expect(await stat(join(sd, 'initial-prompt.sent')).then(() => true, () => false)).toBe(false)
+      await t.tmux.sendKeys('pw-l', ['Enter'])
+      await waitFor(async () => (await logLines()).filter((l) => l.startsWith('--session-id')).length === 2, 8000, 'new launch')
+      expect((await logLines()).filter((l) => l.startsWith('--session-id'))[1]).toContain('-- Do the thing')
+    })
+
+    test('a prompt starting with a dash comes after "--", so Claude never reads it as an option', async () => {
+      await setup()
+      await writeFile(join(sd, 'initial-prompt.txt'), '- item one\n')
+      await start()
+      await waitCapture('STUB CLAUDE READY')
+      expect((await logLines())[0]).toBe(`--session-id ${ID} --settings ${sd}/hooks.json --name ${TITLE} -- - item one`)
+    })
+
+    test('the note is read by Claude; without system-note.txt there is no --append-system-prompt-file at all', async () => {
+      await setup()
+      await writeFile(join(sd, 'system-note.txt'), 'You are in Pitwall.\n')
+      await start()
+      await waitCapture('STUB CLAUDE READY')
+      expect((await logLines()).filter((l) => l.startsWith('NOTE='))).toEqual(['NOTE=You are in Pitwall.'])
+      expect((await logLines())[0]).not.toContain('--system-prompt-snapshot')
+    })
+
+    test('no note and no prompt: nothing extra', async () => {
+      await setup()
+      await start()
+      await waitCapture('STUB CLAUDE READY')
+      expect((await logLines())[0]).toBe(`--session-id ${ID} --settings ${sd}/hooks.json --name ${TITLE}`)
+      await waitFor(async () => (await events()).some((e) => e.e === 'SessionStart'), 8000, 'SessionStart')
+      expect((await events()).map((e) => e.e)).not.toContain('pitwall:prompt-pending')
+    })
+
+    test('a continued session: snapshot off, and the note file (continue note, then agent note)', async () => {
+      await setup()
+      await writeFile(join(sd, 'continue-note.txt'), 'Work only here.\n')
+      await writeFile(join(sd, 'system-note.txt'), 'Work only here.\n\nYou are in Pitwall.\n')
+      await start()
+      await waitCapture('STUB CLAUDE READY')
+      expect((await logLines())[0]).toBe(`--session-id ${ID} --settings ${sd}/hooks.json --name ${TITLE} --system-prompt-snapshot off --append-system-prompt-file ${sd}/system-note.txt`)
+      expect(await logLines()).toEqual(expect.arrayContaining(['NOTE=Work only here.', 'You are in Pitwall.']))
+    })
   })
 
   describe('a conversation continued from outside Pitwall (continue-note.txt)', () => {
@@ -284,5 +367,44 @@ describe('pitwall-launch', () => {
       await t.tmux.sendKeys('pw-s', ['echo "S:$GIT_SSH_COMMAND"', 'Enter'])
       return (await t.tmux.capturePane('pw-s')).includes("S:ssh -i '")
     }, 8000, 'identity echoed in shell')
+  })
+  describe('server entrypoint', () => {
+    const startServer = () => t.tmux.newSession({ name: 'pw-v', cwd, argv: [join(t.paths.binDir, 'pitwall-server'), sd] })
+    const serverPane = () => t.tmux.capturePane('pw-v')
+    const waitServer = (s: string) => waitFor(async () => (await serverPane()).includes(s), 8000, `"${s}" in server pane`)
+
+    test('runs the dev command with PORT set to PITWALL_PORT, and offers a restart when it exits', async () => {
+      await setup({ server: { devCommand: 'printf "port=%s id=%s" "$PORT" "$PITWALL_SESSION_ID"', portBase: 40010 } })
+      await startServer()
+      await waitServer('port=40010 id=uuid-1')
+      await waitServer('Dev server exited (code 0). Press Enter to start it again.')
+      expect(await serverPane()).toContain('▸ printf')
+    })
+
+    test('a PORT inherited from the tmux server environment never overrides PITWALL_PORT', async () => {
+      t.env.PORT = '1234'
+      await setup({ server: { devCommand: 'printf "port=%s" "$PORT"', portBase: 40010 } })
+      await startServer()
+      await waitServer('port=40010')
+      expect(await serverPane()).not.toContain('port=1234')
+    })
+
+    test('a PORT in the project environment wins over PITWALL_PORT', async () => {
+      await setup({
+        project: { ...project, extraEnv: [{ key: 'PORT', value: '3999' }] },
+        server: { devCommand: 'printf "port=%s" "$PORT"', portBase: 40010 }
+      })
+      await startServer()
+      await waitServer('port=3999')
+    })
+
+    test('Enter starts it again with the command re-read from env.sh', async () => {
+      await setup({ server: { devCommand: 'printf "first-run"; exit 3', portBase: 40010 } })
+      await startServer()
+      await waitServer('Dev server exited (code 3)')
+      await writeEnv(project, undefined, undefined, { devCommand: 'printf "second-run"', portBase: 40010 })
+      await t.tmux.sendKeys('pw-v', ['Enter'])
+      await waitServer('second-run')
+    })
   })
 })

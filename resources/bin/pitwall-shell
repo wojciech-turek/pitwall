@@ -1,6 +1,7 @@
 #!/bin/sh
 # pitwall Shell tab entrypoint: usage pitwall-shell <sessionDir>. Same identity as the Claude window.
 . "$1/env.sh"
+[ -n "$PITWALL_CLI_DIR" ] && PATH="$PITWALL_CLI_DIR:$PATH" && export PATH
 if [ -n "$PITWALL_GH_ACCOUNT" ]; then
   GH_TOKEN=$("${PITWALL_GH_BIN:-gh}" auth token --hostname github.com --user "$PITWALL_GH_ACCOUNT" 2>/dev/null)
   if [ -n "$GH_TOKEN" ]; then

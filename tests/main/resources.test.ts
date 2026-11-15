@@ -26,11 +26,20 @@ describe('installResources', () => {
     expect(await readFile(paths.tmuxConf, 'utf8')).toContain('prefix None')
   })
 
+  test('the pitwall command is installed executable into cli-bin (not bin)', async () => {
+    await installResources(paths, resourcesDir(), 'darwin')
+    const wrapper = join(paths.cliBinDir, 'pitwall')
+    if (!WINDOWS) expect((await stat(wrapper)).mode & 0o777).toBe(0o755)
+    expect(await readFile(wrapper, 'utf8')).toBe(await readFile(join(resourcesDir(), 'cli', 'pitwall'), 'utf8'))
+    expect(await exists(join(paths.binDir, 'pitwall'))).toBe(false)
+  })
+
   test('Windows has no tmux: the scripts, but no tmux config', async () => {
     await installResources(paths, resourcesDir(), 'win32')
     expect(await readFile(join(paths.binDir, 'pitwall-hook.ps1'), 'utf8'))
       .toBe(await readFile(join(resourcesDir(), 'bin', 'pitwall-hook.ps1'), 'utf8'))
     expect(await exists(paths.tmuxConf)).toBe(false)
+    expect(await exists(join(paths.cliBinDir, 'pitwall'))).toBe(false)
   })
 
   test("this platform's default: a tmux config except on Windows", async () => {

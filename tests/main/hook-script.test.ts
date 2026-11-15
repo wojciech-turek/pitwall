@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest'
-import { mkdtemp, readFile, mkdir } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { exec } from '../../src/main/exec'
 import { parseEventLine } from '../../src/main/hooks/events'
 
@@ -43,6 +43,54 @@ describe('pitwall-hook', () => {
     await run(f, JSON.stringify({ hook_event_name: 'Stop', session_id: 'x', last_assistant_message: 'a'.repeat(1000) }))
     const ev = parseEventLine((await lines(f))[0])
     expect(ev!.msg).toHaveLength(300)
+  })
+
+  test('Stop keeps the whole reply in last-reply.txt beside the events, up to 64 KB; SubagentStop and others never touch it', async () => {
+    const f = await eventsFile()
+    const reply = join(dirname(f), 'last-reply.txt')
+    const long = 'Zażółć 🧾 line\n'.repeat(400)
+    await run(f, JSON.stringify({ hook_event_name: 'Stop', session_id: 'x', last_assistant_message: long }))
+    expect(await readFile(reply, 'utf8')).toBe(long)
+    expect([...parseEventLine((await lines(f))[0])!.msg!]).toHaveLength(300)
+    await run(f, JSON.stringify({ hook_event_name: 'SubagentStop', session_id: 'x', agent_id: 'a', last_assistant_message: 'helper words' }))
+    await run(f, JSON.stringify({ hook_event_name: 'StopFailure', session_id: 'x', last_assistant_message: 'failed words' }))
+    await run(f, JSON.stringify({ hook_event_name: 'Notification', session_id: 'x', message: 'note words' }))
+    await run(f, JSON.stringify({ hook_event_name: 'Stop', session_id: 'x' })) // no reply: the old file stays
+    expect(await readFile(reply, 'utf8')).toBe(long)
+    await run(f, JSON.stringify({ hook_event_name: 'Stop', session_id: 'x', last_assistant_message: 'a'.repeat(100_000) }))
+    expect(await readFile(reply, 'utf8')).toBe('a'.repeat(65536))
+    expect((await readdir(dirname(f))).sort()).toEqual(['events.jsonl', 'last-reply.txt']) // no temp file left
+    expect(await lines(f)).toHaveLength(6)
+  })
+
+  test('subagent events carry the agent id and type', async () => {
+    const f = await eventsFile()
+    await run(f, JSON.stringify({ hook_event_name: 'SubagentStart', session_id: 's', agent_id: 'a1', agent_type: 'Explore' }))
+    expect(parseEventLine((await lines(f))[0])).toMatchObject({ e: 'SubagentStart', aid: 'a1', at: 'Explore', desc: null })
+  })
+
+  test('the Agent tool\'s description is recorded as desc, cut to 120; other tools get null', async () => {
+    const f = await eventsFile()
+    const pre = (tool_name: string, tool_input: unknown) =>
+      run(f, JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', tool_name, tool_input }))
+    await pre('Agent', { description: 'Find the bug' })
+    await pre('Agent', { description: 'd'.repeat(200) })
+    await pre('Agent', { prompt: 'no description' })
+    await pre('Agent', { description: 5 })
+    await pre('Bash', { command: 'ls', description: 'List files' })
+    const evs = (await lines(f)).map((l) => parseEventLine(l)!)
+    expect(evs.map((e) => e.desc)).toEqual(['Find the bug', 'd'.repeat(120), null, null, null])
+    expect(evs[0].aid).toBeNull()
+  })
+
+  test('an Agent tool_input that is not an object still gets its line, with desc null', async () => {
+    const f = await eventsFile()
+    for (const tool_input of ['x', [1]]) {
+      await run(f, JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', tool_name: 'Agent', tool_input }))
+    }
+    const evs = (await lines(f)).map((l) => parseEventLine(l)!)
+    expect(evs).toHaveLength(2)
+    for (const ev of evs) expect(ev).toMatchObject({ e: 'PreToolUse', sid: 's', tool: 'Agent', desc: null })
   })
 
   test('50 parallel invocations with 100KB tool_input -> 50 valid lines', async () => {

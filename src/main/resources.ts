@@ -52,6 +52,9 @@ export async function installResources(
     await installFile(join(fromDir, 'bin', name), join(paths.binDir, name), 0o755)
   }
   if (platform === 'win32') return
+  // The `pitwall` command, alone in a folder that goes on a session's PATH.
+  await mkdir(paths.cliBinDir, { recursive: true })
+  await installFile(join(fromDir, 'cli', 'pitwall'), join(paths.cliBinDir, 'pitwall'), 0o755)
   await mkdir(dirname(paths.tmuxConf), { recursive: true })
   await installFile(join(fromDir, 'tmux.conf'), paths.tmuxConf)
 }

@@ -30,7 +30,7 @@ Like a pit wall in a race, you watch every car at once and only radio in when on
 → Each session gets its **own git worktree and branch**, started from your main branch. Archiving a session removes its worktree, but first warns you about uncommitted or unpushed work. Nothing is deleted silently.
 
 **Closing the app kills your agents.**
-→ Sessions run inside tmux on Pitwall's own private socket. If you quit the app, or it crashes, your agents keep working, and they reattach when you reopen it.
+→ Sessions run inside tmux on Pitwall's own private socket, or in Pitwall's own background process if tmux isn't installed. If you quit the app, or it crashes, your agents keep working, and they reattach when you reopen it.
 
 **Constant context switching.**
 → Drag sessions from the sidebar into a **split view** (up to 4 panes), browse and edit files, review diffs, and send a file to the agent with one click. Your Claude **5-hour and weekly usage** sits in the corner.
@@ -47,21 +47,23 @@ Like a pit wall in a race, you watch every car at once and only radio in when on
 
 - **Projects → folders → sessions.** A project (for example "Work" or "Personal") groups the folders and repos that share one git identity. Add folders with the folder picker. Each folder can run any number of sessions, and you can give each session a title.
 - **Real Claude Code in a real terminal.** The Claude tab is the actual `claude` CLI, with all your settings, plugins and skills. A Shell tab per session has the same identity and folder.
-- **Live status** from Claude Code hooks: working, needs you (permission prompts, questions), unread replies and errors. Hovering a session shows its last reply. **Mark as unread** keeps a session waiting for you, and **Mute notifications** quiets a whole project (its status still shows in the sidebar).
+- **Live status** from Claude Code hooks: working, needs you (permission prompts, questions), unread replies and errors. Hovering a session shows its last reply. **Mark as unread** keeps a session waiting for you, and **Mute notifications** quiets a whole project (its status still shows in the sidebar). A session's subagents hang under it, collapsible, with what each is doing.
+- **Agents starting agents.** Inside a session, Claude can run `pitwall new` to hand work to a helper. The helper gets its own branch and worktree and hangs under the session in the sidebar, and while the session that started it is still open, it only tells you when it needs you. `pitwall wait` prints the helper's full reply. Turn it off in Settings. macOS only.
 - **Command palette (⌘K).** Jump to any session, file, past session or action by typing; **⌘Enter** opens a session split to the right. **⌘P** opens a file in the current session.
 - **Split view.** Drag sessions from the sidebar onto the middle area. A preview shows whether it will split left, right, up or down, or replace the pane. You can have up to 4 panes, resize them, and the layout survives restarts.
-- **Files and changes.** Browse the session's files, edit and save them (⌘S), view split or unified diffs against the base branch, and see +/− counts in the sidebar. **Send to agent** pastes `@path` into the prompt.
+- **Files and changes.** Browse the session's files, edit and save them (⌘S), view split or unified diffs against the base branch, and see +/− counts in the sidebar. **Send to agent** pastes `@path` into the prompt. Select lines in a diff to comment on them, then **Send review to agent** pastes all your comments into the prompt at once.
 - **Drop files onto a terminal** from Finder or Cursor to paste their paths, as in Terminal.app.
-- **PR badges** (when `gh` is set up for the project): open, merged or closed, with checks status. When a PR is merged, Pitwall offers to archive the session.
-- **Claude usage meter**: your 5-hour and weekly subscription limits and when they reset.
+- **PR badges** (when `gh` is set up for the project): open, merged or closed, with checks status. Failing checks and unresolved review comments show above the terminal, and **Send to agent** pastes them into Claude's prompt. When a PR is merged, Pitwall offers to archive the session.
+- **Claude usage meter**: your 5-hour and weekly subscription limits and when they reset. With several Claude accounts, each gets its own block, named by its email, the selected session's first.
 - **Search and resume past sessions.** Find a session by its title or anything said in its Claude conversation, including archived ones, and bring an archived session back in its folder to continue the same conversation: on its branch if it still exists (or from its pushed copy), otherwise on a new branch from main. The clock button on a folder's row, **Continue a conversation**, lists that folder's archived sessions and the Claude conversations you ran there outside Pitwall (with plain `claude`); picking one of those continues it in a new session on a branch of its own, starting from the branch it was on (this needs Claude Code 2.1.257 or newer). Pitwall only reads the conversation files Claude already keeps.
-- **Setup and teardown commands per folder.** Setup (for example `pnpm install`) runs once in each new worktree; teardown (for example `docker compose down`) runs when you archive a session, before its folder is deleted. Archiving also stops processes the session left running, so nothing is left behind. **Open in Cursor** opens a session's worktree in Cursor.
+- **Setup, dev server and teardown commands per folder.** Setup (for example `pnpm install`) runs once in each new worktree; teardown (for example `docker compose down`) runs when you archive a session, before its folder is deleted. Archiving also stops processes the session left running, so nothing is left behind. A dev command (for example `pnpm dev`) runs in the session's own Server tab, with a button to open it in the browser. Each session gets its own block of 10 ports, starting at `$PITWALL_PORT`, so sessions' dev servers don't collide with each other. List gitignored files such as `.env.local` in a `.worktreeinclude` file and every new worktree gets a copy. A folder's **Clean up worktrees…** removes worktrees agents left behind outside Pitwall, but only merged ones with no changes. **Open in Cursor** opens a session's worktree in Cursor.
 
 ## Requirements
 
 - macOS on Apple silicon (for Windows, see [Windows (beta)](#windows-beta))
 - [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude`), installed and logged in
-- `git` and `tmux` (`brew install tmux`)
+- `git`
+- Optional: `tmux` (`brew install tmux`). Without it, Pitwall keeps your agents running in its own background process, as it does on Windows.
 - To build: Node 24 and pnpm
 - Optional: the GitHub CLI `gh`, logged in to the accounts you use (`gh auth login`, once per account)
 
@@ -84,7 +86,7 @@ cp -R release/mac-arm64/Pitwall.app /Applications/
 
 ## Updating
 
-When a new release is out, Pitwall shows **Update available** with the changelog. Download the new DMG, quit Pitwall, and replace the app in Applications. Your agents keep running in tmux and reattach when you reopen it. macOS treats each new download as unverified, so the first launch of a new version needs **Open Anyway** again (see Install). On Windows, see [Windows (beta)](#windows-beta).
+When a new release is out, Pitwall shows **Update available** with the changelog. Download the new DMG, quit Pitwall, and replace the app in Applications. Your agents keep running (in tmux, or Pitwall's own host) and reattach when you reopen it. macOS treats each new download as unverified, so the first launch of a new version needs **Open Anyway** again (see Install). On Windows, see [Windows (beta)](#windows-beta).
 
 ## Windows (beta)
 
@@ -140,7 +142,7 @@ To update, download the new installer, quit Pitwall and run it (SmartScreen asks
 
 ## How it works
 
-- **Each session runs in tmux** on a private socket (`tmux -L pitwall`), never your own tmux server, so agents outlive the app. A small launcher script starts `claude` with `--session-id` and `--resume`, so a restarted session continues the same conversation.
+- **Each session runs in tmux** on a private socket (`tmux -L pitwall`), never your own tmux server, or in Pitwall's own host process when tmux isn't installed, so agents outlive the app. A small launcher script starts `claude` with `--session-id` and `--resume`, so a restarted session continues the same conversation.
 - **Status comes from Claude Code hooks.** Pitwall passes its own settings file with `--settings`. The hooks append events to a per-session log, and a pure reducer turns them into the status you see.
 - **Identity travels as environment variables.** Each session gets `GIT_SSH_COMMAND` (your key, with `IdentitiesOnly=yes`) and `GIT_AUTHOR_*`/`GIT_COMMITTER_*`. The `gh` token is fetched with `gh auth token --user <account>` when the agent starts. It never appears in a command line, a file, or the app's UI.
 - **Worktrees** live in `~/pitwall/worktrees/<folder>/<session>`, on branches named `pitwall/<session>` (you can rename them).
@@ -177,7 +179,7 @@ On Windows the same shortcuts use Ctrl instead of ⌘ (`Ctrl+K`, `Ctrl+Enter`, �
 
 - **App data:** `~/Library/Application Support/pitwall`. This holds state, per-session event logs, the last known Claude usage, the last update check, helper scripts and `tmux.conf`.
 - **Worktrees:** `~/pitwall/worktrees/<folder>/<session>`
-- **tmux:** `tmux -L pitwall ls`
+- **tmux:** `tmux -L pitwall ls` (if you use tmux)
 - **Dev builds** (`pnpm dev`) use `pitwall-dev` for all three, so they never share agents with the installed app.
 - **On Windows:** see [Where things live on Windows](#where-things-live-on-windows).
 
@@ -188,7 +190,6 @@ On Windows the same shortcuts use Ctrl instead of ⌘ (`Ctrl+K`, `Ctrl+Enter`, �
 - **Denying a permission can leave a session on Working.** Claude Code reports nothing when you answer "No", so press Esc to clear it.
 - **Identity changes apply when an agent restarts.** After editing a project, exit Claude in a session and press Enter.
 - **A pane that moves when you split or close another one is redrawn.** Open files keep their unsaved text, but lose undo history.
-- **With several Claude accounts** (a project's `CLAUDE_CONFIG_DIR`), the usage meter shows whichever session replied last.
 - **Archiving stops what the session started, unless it fully detached.** Processes that leave the session (e.g. Docker containers) aren't stopped automatically; that's what the teardown command is for.
 
 ## Development

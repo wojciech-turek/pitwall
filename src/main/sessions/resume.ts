@@ -5,7 +5,8 @@ import { defaultBranchName, slugify } from '@shared/slug'
 import { samePath, uniquePath } from '../git'
 import { sessionDir } from '../paths'
 import { claudeTmuxName } from '../tmux'
-import { checkIdentity, launchTmuxFor, msg, progressSteps, StepError, writeSessionFiles, type StarterDeps } from './starter'
+import { copyWorktreeIncludes } from '../worktree-include'
+import { checkIdentity, launchTmuxFor, msg, progressSteps, StepError, takenPorts, writeSessionFiles, type StarterDeps } from './starter'
 
 const isDir = (p: string) => stat(p).then((s) => s.isDirectory(), () => false)
 /** A path as git records it, symlinks resolved, though the folder (and some of its parents) may be gone. */
@@ -19,7 +20,7 @@ async function realPath(p: string): Promise<string> {
   }
 }
 
-type Restored = Pick<Session, 'cwd' | 'worktreePath' | 'branch' | 'branchCreatedByPitwall' | 'baseBranch' | 'baseCommit'>
+type Restored = Pick<Session, 'cwd' | 'worktreePath' | 'branch' | 'branchCreatedByPitwall' | 'baseBranch' | 'baseCommit' | 'portBase'>
 
 /** An archived session made active again with its recreated worktree and branch. */
 function restore(s: Session, r: Restored, newBranch: boolean): Session {
@@ -28,7 +29,7 @@ function restore(s: Session, r: Restored, newBranch: boolean): Session {
   delete x.markedUnread
   delete x.branchDeleted
   if (newBranch) delete x.pr // a new branch has no PR yet
-  for (const k of ['worktreePath', 'branch', 'baseBranch', 'baseCommit'] as const) if (x[k] === undefined) delete x[k]
+  for (const k of ['worktreePath', 'branch', 'baseBranch', 'baseCommit', 'portBase'] as const) if (x[k] === undefined) delete x[k]
   return x
 }
 
@@ -163,6 +164,8 @@ async function doResume(
         await git.addWorktree({ repoRoot: root, path, branch: r.branch!, mode: makeBranch ? 'new' : 'existing', base, track })
         r.worktreePath = path
         r.cwd = join(path, sub.relPath ?? '')
+        const inc = await copyWorktreeIncludes({ repoRoot: root, worktree: path, exec: deps.exec, env: deps.env })
+        if (inc.copied.length) notes.push(`Copied ${inc.copied.length} file${inc.copied.length === 1 ? '' : 's'} listed in .worktreeinclude`)
         return notes.join('. ') || undefined
       }, (note) => note)
     } else {
@@ -174,6 +177,13 @@ async function doResume(
     const session = restore(s, r, newBranch)
     await run('files', async () => {
       created.dir = true
+      if (deps.ports) {
+        // Keep the old block when nobody else has it and its first port is free; else a new one.
+        const taken = takenPorts(deps)
+        const old = s.portBase
+        r.portBase = old !== undefined && (await deps.ports.claim(old, taken)) ? old : await deps.ports.allocate(taken)
+        session.portBase = r.portBase
+      }
       await writeSessionFiles(session, deps)
       // The conversation exists: the launcher resumes it (and starts a new one if Claude can't find it).
       await writeFile(join(dir, 'started'), '')

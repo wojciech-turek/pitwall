@@ -57,7 +57,7 @@ describe.skipIf(process.platform !== 'win32')('pitwall-hook.ps1', () => {
     expect(r).toMatchObject({ code: 0, stdout: '' })
     const ls = await lines(f)
     expect(ls).toHaveLength(1)
-    expect(ls[0]).toMatch(/^\{"c":"s_test","t":\d+,"e":"PreToolUse","sid":"abc","tool":"Bash","nt":null,"src":null,"reason":null,"msg":null,"err":null\}$/)
+    expect(ls[0]).toMatch(/^\{"c":"s_test","t":\d+,"e":"PreToolUse","sid":"abc","tool":"Bash","nt":null,"src":null,"reason":null,"msg":null,"err":null,"aid":null,"at":null,"desc":null\}$/)
     expect(Math.abs(parseEventLine(ls[0])!.t - Date.now())).toBeLessThan(60_000)
   })
 
@@ -71,6 +71,46 @@ describe.skipIf(process.platform !== 'win32')('pitwall-hook.ps1', () => {
     expect(stop.msg).toBe([...'Zażółć 🧾 '.repeat(100)].slice(0, 300).join(''))
     expect(failure).toMatchObject({ msg: 'fallback', err: '{"type":"rate_limit","n":1}' })
     expect(note).toMatchObject({ nt: 'permission_prompt', msg: 'Needs "you"\n' })
+  })
+
+  test('agent id and type, and the Agent tool\'s description cut to 120 characters', async () => {
+    const f = join(await folder(), 'events.jsonl')
+    await hook(f, JSON.stringify({ hook_event_name: 'SubagentStart', session_id: 's', agent_id: 'a1', agent_type: 'Explore' }))
+    await hook(f, JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', tool_name: 'Agent', tool_input: { description: 'Find the bug' } }))
+    await hook(f, JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', tool_name: 'Agent', tool_input: { description: 'd'.repeat(200) } }))
+    await hook(f, JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', tool_name: 'Agent', tool_input: { description: 5 } }))
+    await hook(f, JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', tool_name: 'Bash', tool_input: { command: 'ls', description: 'List files' } }))
+    const evs = (await lines(f)).map((l) => parseEventLine(l)!)
+    expect(evs[0]).toMatchObject({ e: 'SubagentStart', aid: 'a1', at: 'Explore', desc: null })
+    expect(evs.slice(1).map((e) => e.desc)).toEqual(['Find the bug', 'd'.repeat(120), null, null])
+  })
+
+  test('an Agent tool_input that is not an object still gets its line, with desc null', async () => {
+    const f = join(await folder(), 'events.jsonl')
+    for (const tool_input of ['x', [1]]) {
+      await hook(f, JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', tool_name: 'Agent', tool_input }))
+    }
+    const evs = (await lines(f)).map((l) => parseEventLine(l)!)
+    expect(evs).toHaveLength(2)
+    for (const ev of evs) expect(ev).toMatchObject({ e: 'PreToolUse', sid: 's', tool: 'Agent', desc: null })
+  })
+
+  test('Stop keeps the whole reply in last-reply.txt beside the events, up to 64 KB, like the sh hook; SubagentStop never does', async () => {
+    const dir = await folder()
+    const f = join(dir, 'events.jsonl')
+    const reply = join(dir, 'last-reply.txt')
+    const long = 'Zażółć 🧾 line\n'.repeat(400)
+    await hook(f, JSON.stringify({ hook_event_name: 'Stop', session_id: 'x', last_assistant_message: long }))
+    expect(await readFile(reply, 'utf8')).toBe(long)
+    expect([...parseEventLine((await lines(f))[0])!.msg!]).toHaveLength(300)
+    await hook(f, JSON.stringify({ hook_event_name: 'SubagentStop', session_id: 'x', agent_id: 'a', last_assistant_message: 'helper words' }))
+    await hook(f, JSON.stringify({ hook_event_name: 'StopFailure', session_id: 'x', last_assistant_message: 'failed words' }))
+    await hook(f, JSON.stringify({ hook_event_name: 'Stop', session_id: 'x' })) // no reply: the old file stays
+    expect(await readFile(reply, 'utf8')).toBe(long)
+    await hook(f, JSON.stringify({ hook_event_name: 'Stop', session_id: 'x', last_assistant_message: 'a'.repeat(100_000) }))
+    expect(await readFile(reply, 'utf8')).toBe('a'.repeat(65536))
+    expect((await readdir(dir)).sort()).toEqual(['events.jsonl', 'last-reply.txt']) // no temp file left
+    expect(await lines(f)).toHaveLength(5)
   })
 
   test('invalid stdin: exit 0, nothing written', async () => {

@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
+import { configureParking } from '../terminal/termCache'
 
-export interface AppInfo { version: string; dev: boolean; updateFeed: boolean }
+export interface AppInfo { version: string; dev: boolean; updateFeed: boolean; parkAfterMs: number }
 
 let cached: Promise<AppInfo> | null = null
-const load = (): Promise<AppInfo> => (cached ??= window.pitwall.appInfo())
+const load = (): Promise<AppInfo> => (cached ??= window.pitwall.appInfo().then((i) => { configureParking(i.parkAfterMs); return i }))
 
 /** Build version and dev-ness (decided in main); null until it arrives. */
 export function useAppInfo(): AppInfo | null {
