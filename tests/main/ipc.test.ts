@@ -158,3 +158,42 @@ describe('IPC: stray worktrees', () => {
     expect(git.listWorktrees).not.toHaveBeenCalled()
   })
 })
+
+describe('IPC: pasting into a session that needs you', () => {
+  const ANSWER_FIRST = 'Claude is waiting for your answer. Answer it first, then send this.'
+  const pasted: string[] = []
+  let status = 'needs_you'
+  const store = { state: { sessions: [{ id: 's_1', subProjectId: 'sp_1', cwd: '/w' }], subProjects: [{ id: 'sp_1', kind: 'folder' }] } }
+  const pr = {
+    number: 3, url: 'https://github.com/o/r/pull/3', title: 't', state: 'OPEN', checks: 'failing', updatedAt: 0, failing: [{ name: 'build' }]
+  }
+
+  beforeEach(() => {
+    pasted.length = 0
+    status = 'needs_you'
+    registerIpc({
+      manager: { ...manager, snapshot: () => ({ sessions: [{ id: 's_1', status }] }) },
+      history, store, paths: { dataDir: '/nowhere/pitwall', ghBin: 'gh' },
+      backend: { pasteText: async (_n: string, x: string) => { pasted.push(x) } },
+      pr: { feedbackContext: async () => ({ ok: true as const, pr, dir: '/w', token: 't', owner: 'o', repo: 'r' }) },
+      usage: { current: () => [], onChange: () => () => {} },
+      systemStats: { current: () => null, onChange: () => () => {} },
+      updates: { state: () => null, checkNow: async () => {}, onChange: () => () => {}, hasFeed: () => false },
+      send: () => {}, onViewing: () => {}, env: {}, home: '/home/me', dev: false
+    } as unknown as IpcDeps)
+  })
+
+  test('Send to agent (a review, a file reference) and PR feedback are refused, so the paste never lands in an answer', async () => {
+    await expect(call(IPC.sendToAgent, 's_1', 'Review of your changes')).rejects.toThrow(ANSWER_FIRST)
+    expect(await call(IPC.sendPrFeedback, 's_1', 'checks')).toEqual({ ok: false, message: ANSWER_FIRST })
+    expect(pasted).toEqual([])
+  })
+
+  test('once Claude is no longer asking, both paste', async () => {
+    status = 'working'
+    await call(IPC.sendToAgent, 's_1', 'look at @a.ts')
+    expect(await call(IPC.sendPrFeedback, 's_1', 'checks')).toEqual({ ok: true, count: 1 })
+    expect(pasted).toHaveLength(2)
+    expect(pasted[0]).toBe('look at @a.ts')
+  })
+})

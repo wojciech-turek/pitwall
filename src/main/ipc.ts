@@ -57,6 +57,9 @@ export interface IpcDeps {
   onViewing: (sessionIds: string[]) => void
 }
 
+/** A paste while Claude asks a question (or for permission) would land in the answer. */
+const ANSWER_FIRST = 'Claude is waiting for your answer. Answer it first, then send this.'
+
 /** How long a hidden terminal waits before parking; PITWALL_PARK_AFTER_MS (an integer of at least 100) overrides, for tests. */
 function parkAfterMs(): number {
   const n = Number(process.env.PITWALL_PARK_AFTER_MS)
@@ -113,8 +116,10 @@ export function registerIpc(d: IpcDeps): () => void {
   handle(IPC.readFile, (id: string, rel: string) => readForEditor(sessionFolder(id).cwd, rel))
   handle(IPC.writeFile, (id: string, rel: string, content: string, mtime?: number) =>
     writeFromEditor(sessionFolder(id).cwd, rel, content, mtime))
+  const needsYou = (id: string): boolean => manager.snapshot().sessions.find((x) => x.id === id)?.status === 'needs_you'
   handle(IPC.sendToAgent, async (id: string, text: string) => {
     sessionFolder(id)
+    if (needsYou(id)) throw new Error(ANSWER_FIRST)
     await backend.pasteText(claudeTmuxName(id), text) // bracketed paste, never Enter
   })
   const liveSession = (id: unknown): string => {
@@ -125,6 +130,7 @@ export function registerIpc(d: IpcDeps): () => void {
   handle(IPC.cancelContinue, (id: unknown) => d.continueAt.cancel(liveSession(id)))
   handle(IPC.sendPrFeedback, async (id: unknown, what: unknown): Promise<{ ok: true; count: number } | { ok: false; message: string }> => {
     if (typeof id !== 'string' || (what !== 'checks' && what !== 'reviews')) return { ok: false, message: 'Invalid request.' }
+    if (needsYou(id)) return { ok: false, message: ANSWER_FIRST }
     const c = await d.pr.feedbackContext(id)
     if (!c.ok) return c
     let text: string
@@ -142,6 +148,8 @@ export function registerIpc(d: IpcDeps): () => void {
       count = threads.length
       text = reviewsMessage(c.pr, threads)
     }
+    // Again right before pasting: fetching the comments takes a moment.
+    if (needsYou(id)) return { ok: false, message: ANSWER_FIRST }
     await backend.pasteText(claudeTmuxName(id), text) // bracketed paste, never Enter
     return { ok: true, count }
   })
