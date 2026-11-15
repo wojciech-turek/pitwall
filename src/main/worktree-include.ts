@@ -1,13 +1,14 @@
 import { constants } from 'node:fs'
-import { copyFile, glob, lstat, mkdir, readFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { copyFile, glob, lstat, mkdir, readFile, realpath } from 'node:fs/promises'
+import { dirname, join, sep } from 'node:path'
 import type { Exec } from './exec'
 
-export type IncludeSkip = { path: string; reason: 'tracked' | 'not-ignored' | 'exists' | 'too-large' | 'symlink' | 'limit' }
+export type IncludeSkip = { path: string; reason: 'tracked' | 'not-ignored' | 'exists' | 'too-large' | 'symlink' | 'limit' | 'outside' }
 
 const MAX_FILES = 200
 const MAX_BYTES = 20 * 1024 * 1024
 
+const inside = (dir: string, root: string) => dir === root || dir.startsWith(root.endsWith(sep) ? root : root + sep)
 const skipDir = (p: string) => p.split(/[\\/]/).some((s) => s === 'node_modules' || s === '.git')
 
 /**
@@ -37,14 +38,22 @@ export async function copyWorktreeIncludes(o: {
       found.add(p.replace(/\\/g, '/'))
     }
   }
-  const candidates = [...found].filter((p) => !skipDir(p)).sort()
+  const repoReal = await realpath(o.repoRoot)
+  // A symlinked directory on the way must not lead out of the repo (git itself refuses such paths, failing the batch).
+  const candidates: string[] = []
+  for (const p of [...found].filter((p) => !skipDir(p)).sort()) {
+    const dir = await realpath(dirname(join(o.repoRoot, p))).catch(() => null)
+    if (dir && inside(dir, repoReal)) candidates.push(p)
+    else if (dir) skipped.push({ path: p, reason: 'outside' })
+  }
   if (!candidates.length) return { copied, skipped }
 
   // One git call for all of them. Exit 1 just means none is ignored.
-  const r = await o.exec('git', ['-C', o.repoRoot, 'check-ignore', '--stdin'], { env: o.env, input: candidates.join('\n') + '\n' })
+  const r = await o.exec('git', ['-C', o.repoRoot, 'check-ignore', '-z', '--stdin'], { env: o.env, input: candidates.join('\0') + '\0' })
   if (r.code > 1) throw new Error(`Couldn't check .worktreeinclude files against .gitignore: ${r.stderr.trim()}`)
-  const ignored = new Set(r.code === 0 ? r.stdout.split(/\r?\n/).filter(Boolean) : [])
+  const ignored = new Set(r.code === 0 ? r.stdout.split('\0').filter(Boolean) : [])
 
+  const wtReal = await realpath(o.worktree)
   let total = 0
   for (const rel of candidates) {
     const src = join(o.repoRoot, rel)
@@ -59,6 +68,7 @@ export async function copyWorktreeIncludes(o: {
     if (await lstat(dest).then(() => true, () => false)) { skipped.push({ path: rel, reason: 'exists' }); continue }
     try {
       await mkdir(dirname(dest), { recursive: true })
+      if (!inside(await realpath(dirname(dest)), wtReal)) { skipped.push({ path: rel, reason: 'outside' }); continue }
       await copyFile(src, dest, constants.COPYFILE_EXCL) // keeps the file mode
     } catch (e) {
       throw new Error(`Couldn't copy ${rel} from .worktreeinclude: ${e instanceof Error ? e.message : String(e)}`)

@@ -1,4 +1,5 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { exec } from '../../src/main/exec'
@@ -10,8 +11,7 @@ let wt: string
 
 beforeEach(async () => {
   r = await makeRepo()
-  wt = join(r.root, '..', 'wt')
-  await mkdir(wt, { recursive: true })
+  wt = await realpath(await mkdtemp(join(tmpdir(), 'pitwall-wt-')))
   await writeFile(join(r.root, '.gitignore'), '.env.local\nsecrets/\nnode_modules/\nbig.bin\n')
   await writeFile(join(r.root, '.worktreeinclude'), '# env\n\n.env.local\nsecrets/*.json\n**/.env.local\nREADME.md\nbig.bin\n')
   await writeFile(join(r.root, '.env.local'), 'TOKEN=1\n')
@@ -20,7 +20,10 @@ beforeEach(async () => {
   await mkdir(join(r.root, 'node_modules', 'x'), { recursive: true })
   await writeFile(join(r.root, 'node_modules', 'x', '.env.local'), 'no')
 })
-afterEach(() => r.cleanup())
+afterEach(async () => {
+  await rm(wt, { recursive: true, force: true })
+  await r.cleanup()
+})
 
 const run = () => copyWorktreeIncludes({ repoRoot: r.root, worktree: wt, exec, env: r.env })
 
@@ -52,6 +55,43 @@ describe('copyWorktreeIncludes', () => {
     const res = await run()
     expect(res.skipped).toContainEqual({ path: 'big.bin', reason: 'too-large' })
     expect(res.copied).not.toContain('big.bin')
+  })
+
+  test('copies non-ASCII and spaced names', async () => {
+    await writeFile(join(r.root, '.gitignore'), 'café.env\nmy secret.env\n')
+    await writeFile(join(r.root, '.worktreeinclude'), '*.env\n')
+    await writeFile(join(r.root, 'café.env'), 'a')
+    await writeFile(join(r.root, 'my secret.env'), 'b')
+    const res = await run()
+    expect(res.copied.sort()).toEqual(['café.env', 'my secret.env'])
+    expect(await readFile(join(wt, 'café.env'), 'utf8')).toBe('a')
+  })
+
+  test('skips a file reached through a symlinked directory out of the repo', async () => {
+    const out = await mkdtemp(join(tmpdir(), 'pitwall-out-'))
+    try {
+      await writeFile(join(out, '.env'), 'x')
+      await symlink(out, join(r.root, 'link'))
+      await writeFile(join(r.root, '.gitignore'), 'link/\n.env\n')
+      await writeFile(join(r.root, '.worktreeinclude'), 'link/.env\n')
+      const res = await run()
+      expect(res.copied).toEqual([])
+      await expect(readFile(join(wt, 'link', '.env'))).rejects.toThrow()
+    } finally {
+      await rm(out, { recursive: true, force: true })
+    }
+  })
+
+  test('never writes through a symlinked directory in the worktree', async () => {
+    const out = await mkdtemp(join(tmpdir(), 'pitwall-out-'))
+    try {
+      await symlink(out, join(wt, 'secrets'))
+      const res = await run()
+      expect(res.skipped).toContainEqual({ path: 'secrets/a.json', reason: 'outside' })
+      await expect(readFile(join(out, 'a.json'))).rejects.toThrow()
+    } finally {
+      await rm(out, { recursive: true, force: true })
+    }
   })
 
   test('returns nothing without a .worktreeinclude', async () => {
