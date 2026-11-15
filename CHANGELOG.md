@@ -13,8 +13,8 @@ All notable changes to Pitwall are listed here, newest first. Pitwall shows thes
 - **`.worktreeinclude`.** List gitignored files such as `.env.local` there, and every new worktree gets a copy.
 - **See a session's subagents.** While Claude runs subagents, each one hangs under its session in the sidebar, showing what it's doing and when it's done. Click the arrow to fold them away.
 - **Helpers hang under the session that started them.** In the sidebar and in ⌘J order, and the hover card says who started it. A finished helper stays quiet, with no notification and no Dock badge, while its session is open; one that needs you still tells you.
-- **Agents can start helper sessions.** Inside a session, the `pitwall` command (`pitwall new`, `list`, `wait`, `send`) starts another session on its own branch and worktree, with a first prompt. Claude is told about it, so "start a helper session" just works. Turn it off in Settings (**Let agents start sessions with the pitwall command**). macOS only.
-- **Clean up worktrees agents left behind.** A git folder's ⋯ menu has "Clean up worktrees…": it lists the worktrees agents made with `git worktree add` outside Pitwall, with their size, and removes the ones you pick. Only merged worktrees with no uncommitted changes and nothing running in them can be picked, and none of your sessions' worktrees are ever listed.
+- **Agents can start sessions of their own.** Claude in a Pitwall session now uses `pitwall new` to hand work to a helper, which shows up under it in the sidebar with its own branch and worktree. Turn it off in Settings. macOS only.
+- **Clean up worktrees.** A folder's ⋯ menu lists worktrees agents made outside Pitwall and removes the ones that are merged and unchanged. It never touches worktrees with changes or anything running, or any of your sessions' worktrees.
 
 ### Changed
 
