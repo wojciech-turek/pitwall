@@ -9,7 +9,7 @@ All notable changes to Pitwall are listed here, newest first. Pitwall shows thes
 - **Review an agent's changes and send the review in one go.** Select lines in a diff, add a comment, and "Send review to agent" pastes every comment into Claude's prompt.
 - **Failing checks and open review comments on a session's PR** show above its terminal, and "Send to agent" hands them over.
 - **A Server tab for your dev server.** Set a folder's dev command, and each session runs it in its own tab, next to Claude and Shell, with a button to open it in the browser.
-- **Each session gets its own ports.** `$PITWALL_PORT` and the 9 after it, so several sessions' servers never clash.
+- **Each session gets its own ports.** `$PITWALL_PORT` and the 9 after it, so sessions' dev servers don't collide with each other.
 - **`.worktreeinclude`.** List gitignored files such as `.env.local` there, and every new worktree gets a copy.
 
 ### Fixed

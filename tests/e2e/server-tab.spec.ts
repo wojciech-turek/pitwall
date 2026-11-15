@@ -93,6 +93,7 @@ test('the Server tab runs the dev command on the session port and offers to open
   await page.getByTestId('session-archive').click()
   await page.getByTestId('archive-confirm').click()
   await expect(page.getByTestId('archive-dialog')).toHaveCount(0, { timeout: 30_000 })
+  await waitFor(async () => !(await listening(port2)), 10_000, 'second port closed')
   await row.click()
 
   await row.hover()
