@@ -149,6 +149,11 @@ function request(socket: string, line: string): Promise<Reply> {
   })
 }
 
+/** Runs one command and sets the exit code. Never calls process.exit: that can cut a big piped reply short. */
+export async function run(argv: string[]): Promise<void> {
+  process.exitCode = await main(argv)
+}
+
 async function main(argv: string[]): Promise<number> {
   const p = parseArgs(argv)
   if ('help' in p) { process.stdout.write(USAGE); return 0 }
@@ -174,4 +179,4 @@ async function main(argv: string[]): Promise<number> {
   }
 }
 
-if (!process.env.VITEST) void main(process.argv.slice(2)).then((code) => process.exit(code))
+if (!process.env.VITEST) void run(process.argv.slice(2))

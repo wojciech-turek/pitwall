@@ -1,5 +1,5 @@
-import { describe, expect, test } from 'vitest'
-import { exitCodeFor, parseArgs, USAGE } from '../../src/cli/index'
+import { afterEach, describe, expect, test, vi } from 'vitest'
+import { exitCodeFor, parseArgs, run, USAGE } from '../../src/cli/index'
 
 describe('pitwall client: parseArgs', () => {
   test('new: title, prompt, branch, base, json', () => {
@@ -50,5 +50,23 @@ describe('pitwall client: exitCodeFor', () => {
   test('other commands: ok is 0, even with a status field', () => {
     expect(exitCodeFor('status', { ok: true, status: 'exited' })).toBe(0)
     expect(exitCodeFor('new', { ok: true })).toBe(0)
+  })
+})
+
+describe('pitwall client: run', () => {
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); process.exitCode = undefined })
+
+  // process.exit() right after a big write can cut a piped reply short; setting exitCode lets Node flush first
+  test('ends by setting process.exitCode, never by calling process.exit', async () => {
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never)
+    const out = vi.spyOn(process.stdout, 'write').mockImplementation((() => true) as never)
+    await run(['--help'])
+    expect(out).toHaveBeenCalledWith(USAGE)
+    expect(process.exitCode).toBe(0)
+    vi.stubEnv('PITWALL_SESSION_ID', '')
+    vi.spyOn(process.stderr, 'write').mockImplementation((() => true) as never)
+    await run(['list'])
+    expect(process.exitCode).toBe(2)
+    expect(exit).not.toHaveBeenCalled()
   })
 })

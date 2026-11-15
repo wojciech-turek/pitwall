@@ -5,8 +5,6 @@ subagents, the `pitwall` command, the resource view, accounts, and running witho
 
 ## Small bugs worth fixing first
 
-- **`pitwall wait` output can be cut short when piped.** `src/cli/index.ts` calls `process.exit()` straight after
-  writing, and replies can now be up to 64 KB. Set `process.exitCode` and let the process end instead.
 - **A paste that fails after "sent" was logged leaves the session showing Working** until its next event. This
   affects `pitwall send` and continue-at. On failure, log an event that undoes it.
 - **`initial-prompt.txt` is written with default permissions.** Make it 0600, like `env.sh`.
