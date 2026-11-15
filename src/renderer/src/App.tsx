@@ -8,6 +8,7 @@ import { useUi } from './state/ui'
 import { useSnapshot } from './state/snapshot'
 import { useToast } from './state/toast'
 import DiscardFileDialog from './components/dialogs/DiscardFileDialog'
+import ReviewCommentDialog from './components/dialogs/ReviewCommentDialog'
 import ArchiveDialog from './components/dialogs/ArchiveDialog'
 import ResumeDialog from './components/dialogs/ResumeDialog'
 import ConversationsDialog from './components/dialogs/ConversationsDialog'
@@ -30,6 +31,7 @@ function DialogHost(): React.JSX.Element | null {
     case 'identity-confirm': return <IdentityConfirmDialog projectId={dialog.projectId} result={dialog.result} />
     case 'new-session': return <NewSessionDialog key={dialog.subProjectId} subProjectId={dialog.subProjectId} />
     case 'discard-file': return <DiscardFileDialog sessionId={dialog.sessionId} tabId={dialog.tabId} name={dialog.name} />
+    case 'review-comment': return <ReviewCommentDialog sessionId={dialog.sessionId} path={dialog.path} fromLine={dialog.fromLine} toLine={dialog.toLine} quote={dialog.quote} />
     case 'archive': return <ArchiveDialog key={dialog.sessionId} sessionId={dialog.sessionId} />
     case 'resume': return <ResumeDialog key={dialog.sessionId} sessionId={dialog.sessionId} />
     case 'conversations': return <ConversationsDialog key={dialog.subProjectId} subProjectId={dialog.subProjectId} />

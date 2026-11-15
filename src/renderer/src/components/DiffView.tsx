@@ -24,6 +24,9 @@ export default function DiffView({ snap, sessionId, path, active }: {
   const [stat, setStat] = useState<ChangedFile | null>(null)
   const [error, setError] = useState<string | null>(null)
   const host = useRef<HTMLDivElement>(null)
+  /** The new side's view (mv.b, or the unified view): what a comment's lines are read from. */
+  const newSide = useRef<EditorView | null>(null)
+  const [hasSel, setHasSel] = useState(false)
   const { monoFont, monoFontSize } = snap.settings
 
   useEffect(() => {
@@ -48,28 +51,50 @@ export default function DiffView({ snap, sessionId, path, active }: {
     void loadLanguage(path).then((lang) => {
       if (destroyed) return
       const ext = [...viewExtensions(monoFont, monoFontSize), ...readOnly, ...(lang ? [lang] : [])]
+      const watch = EditorView.updateListener.of((u) => {
+        if (u.selectionSet || u.docChanged) setHasSel(!u.state.selection.main.empty)
+      })
       if (mode === 'split') {
         const mv = new MergeView({
           parent: el,
           a: { doc: sides.original, extensions: ext },
-          b: { doc: sides.modified, extensions: ext },
+          b: { doc: sides.modified, extensions: [...ext, watch] },
           highlightChanges: true, gutter: true, collapseUnchanged
         })
+        newSide.current = mv.b
         destroy = () => mv.destroy()
       } else {
         const v = new EditorView({
           parent: el,
           doc: sides.modified,
           extensions: [
-            ...ext, lineNumbers(),
+            ...ext, watch, lineNumbers(),
             unifiedMergeView({ original: sides.original, mergeControls: false, collapseUnchanged })
           ]
         })
+        newSide.current = v
         destroy = () => v.destroy()
       }
     })
-    return () => { destroyed = true; destroy(); el.replaceChildren() }
+    return () => { destroyed = true; destroy(); newSide.current = null; setHasSel(false); el.replaceChildren() }
   }, [sides, mode, path, monoFont, monoFontSize])
+
+  function comment(): void {
+    const view = newSide.current
+    if (!view) return
+    const { doc, selection } = view.state
+    const { from, to } = selection.main
+    if (from === to) return
+    const first = doc.lineAt(from)
+    let last = doc.lineAt(to)
+    // A selection that ends at the start of a line doesn't include that line.
+    if (last.number > first.number && to === last.from) last = doc.line(last.number - 1)
+    const quote: string[] = []
+    for (let n = first.number; n <= Math.min(last.number, first.number + 2); n++) quote.push(doc.line(n).text.slice(0, 160))
+    useUi.getState().openDialog({
+      type: 'review-comment', sessionId, path, fromLine: first.number, toLine: last.number, quote: quote.join('\n')
+    })
+  }
 
   return (
     <div className="file-editor diff-view" style={{ display: active ? 'flex' : 'none' }} data-testid={`diff-${path}`}>
@@ -77,6 +102,8 @@ export default function DiffView({ snap, sessionId, path, active }: {
         <span className="editor-path" title={path}>
           {path}{' '}{stat && <LineCounts additions={stat.additions} deletions={stat.deletions} />}
         </span>
+        <button className="btn" data-testid="diff-comment" disabled={!hasSel} onClick={comment}
+          title="Comment on the selected lines of the new side">Comment</button>
         <div className="seg" role="group" aria-label="Diff layout">
           <button className={mode === 'split' ? 'on' : ''} data-testid="diff-split" onClick={() => setMode('split')}>Split</button>
           <button className={mode === 'unified' ? 'on' : ''} data-testid="diff-unified" onClick={() => setMode('unified')}>Unified</button>

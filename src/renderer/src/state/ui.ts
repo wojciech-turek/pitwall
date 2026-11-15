@@ -17,6 +17,7 @@ export type DialogState =
   | { type: 'subproject-settings'; subProjectId: string }
   | { type: 'settings' }
   | { type: 'update' }
+  | { type: 'review-comment'; sessionId: string; path: string; fromLine: number; toLine: number; quote: string }
   | { type: 'discard-file'; sessionId: string; tabId: string; name: string }
 
 export interface UiState {
