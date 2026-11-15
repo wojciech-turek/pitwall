@@ -38,6 +38,10 @@ test('first launch with live sessions but no record (an installed app before bac
   expect(choose({ recorded: null, liveSessions: 5 })).toEqual({ kind: 'tmux', record: true })
 })
 
+test('sessions from before backend.json (no record) stay on tmux even when no tmux is found', () => {
+  expect(choose({ recorded: null, liveSessions: 2, tmuxPath: null })).toEqual({ kind: 'tmux', record: true })
+})
+
 test('tmux uninstalled while tmux sessions run: still tmux, with no path (it fails per session, startup does not)', () => {
   expect(choose({ tmuxPath: null, recorded: 'tmux', liveSessions: 4 })).toEqual({ kind: 'tmux', record: false })
 })
@@ -45,6 +49,8 @@ test('tmux uninstalled while tmux sessions run: still tmux, with no path (it fai
 test('the launcher stays the script on macOS when the host is only the fallback', () => {
   expect(launcherChoice({})).toBe('script')
   expect(launcherChoice({ PITWALL_LAUNCHER: 'host' }, 'darwin')).toBe('script')
+  expect(launcherChoice({ PITWALL_SESSION_BACKEND: 'host', PITWALL_LAUNCHER: 'host' }, 'darwin')).toBe('host')
+  expect(launcherChoice({}, 'win32')).toBe('host')
 })
 
 let dir = ''

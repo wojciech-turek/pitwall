@@ -88,7 +88,8 @@ export function launcherChoice(env: Record<string, string | undefined>, platform
 /**
  * Which backend this run uses. Windows: the host. An env override: that. Sessions already running keep the backend
  * recorded for them (never switch a running set between tmux and the host). Otherwise tmux if it is installed, else
- * the host. `record` says to write the choice to backend.json. A recorded tmux with no tmux found still gives tmux:
+ * the host. "Live" means not archived, even when not running (after a reboot, say): a set of sessions keeps its
+ * backend until every one is archived. `record` says to write the choice to backend.json. A recorded tmux with no tmux found still gives tmux:
  * its sessions then fail one by one with tmux's own error instead of being orphaned.
  */
 export function chooseBackend(o: {
@@ -99,6 +100,9 @@ export function chooseBackend(o: {
   if (o.env.PITWALL_SESSION_BACKEND === 'host') return { kind: 'host', record: false }
   if (o.env.PITWALL_SESSION_BACKEND === 'tmux') return { kind: 'tmux', record: false }
   if (o.recorded && o.liveSessions > 0) return { kind: o.recorded, record: false }
+  // No record but sessions exist: they predate backend.json, when macOS could only be tmux. Starting them in the host
+  // would run each agent twice while the old tmux server may still hold it.
+  if (o.liveSessions > 0) return { kind: 'tmux', record: true }
   if (o.tmuxPath) return { kind: 'tmux', record: true }
   return { kind: 'host', record: true }
 }
