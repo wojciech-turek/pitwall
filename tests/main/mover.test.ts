@@ -19,7 +19,6 @@ let restarts: string[]
 let restartFails: boolean
 let sent: Array<[string, string]>
 let cancelled: string[]
-let errors: Array<[string, string]>
 let extras: Array<[string, object]>
 let restarted: string[]
 let snapCbs: Array<(s: AppSnapshot) => void>
@@ -72,7 +71,7 @@ beforeEach(async () => {
     d.settings.claudeAccounts = [{ id: 'a1', dir: acctDir, addedAt: 1 }, { id: 'a2', dir: join(tmp, 'data', 'claude-accounts', 'a2'), addedAt: 2 }]
   })
   status = new Map(); limitHit = new Set(); busySubagent = new Set()
-  restarts = []; restartFails = false; sent = []; cancelled = []; errors = []; extras = []; restarted = []
+  restarts = []; restartFails = false; sent = []; cancelled = []; extras = []; restarted = []
   snapCbs = []; eventCbs = []; timers = []
   mover = make()
   mover.start()
@@ -92,7 +91,6 @@ function make(): AccountMover {
         if (s !== 'read' && s !== 'unread') throw new Error('busy')
         sent.push([id, text])
       },
-      reportError: (id, message) => { errors.push([id, message]) },
       updateSessionExtras: (id, patch) => { extras.push([id, patch]) }
     },
     continueAt: { cancel: async (id) => { cancelled.push(id) } },
@@ -242,9 +240,13 @@ describe('after the restart', () => {
     expect('movedFrom' in get('s1')).toBe(false)
     expect(existsSync(marker('s1'))).toBe(false)
     expect(restarts).toEqual(['s1', 's1'])
-    expect(errors).toEqual([['s1', "Couldn't continue this conversation on b@x.com."]])
+    // Said on the session until dismissed: an ordinary error would be wiped by the next event from the restarted Claude.
+    expect(extras).toEqual([['s1', { moveError: "Couldn't continue this conversation on b@x.com." }]])
     emit('s1', 'SessionStart'); publish(); await settle()
     expect(sent).toEqual([]) // back where the limit is: nothing typed
+    expect(extras).toHaveLength(1) // still said
+    await mover.cancel('s1') // Dismiss
+    expect(extras.at(-1)).toEqual(['s1', { moveError: undefined }])
   })
 
   test('after 60 seconds with neither, the session is marked waiting and stays on the new account', async () => {
@@ -272,8 +274,8 @@ describe('after the restart', () => {
     expect('movedFrom' in get('s1')).toBe(false)
     expect(existsSync(marker('s1'))).toBe(false)
     expect(restarts).toEqual(['s1', 's1'])
-    expect(errors).toEqual([])
     expect(extras.at(-1)).toEqual(['s1', { moveWaiting: undefined }])
+    expect(extras.some(([, p]) => 'moveError' in p)).toBe(false)
     await expect(mover.moveBack('s1')).rejects.toThrow('This session was not moved.')
   })
 
@@ -358,4 +360,14 @@ describe('changing your mind, and things changing underneath', () => {
     expect('movedFrom' in get('mid')).toBe(false)
     expect(existsSync(marker('mid'))).toBe(false)
   })
+})
+
+test('moving again clears what was said about the last failed move', async () => {
+  await add(mkSession('s1'))
+  await mover.request('s1', 'a1')
+  emit('s1', 'pitwall:move-failed', { code: 1 })
+  await settle()
+  await mover.request('s1', 'a2')
+  expect(extras).toContainEqual(['s1', { moveError: undefined }])
+  expect(get('s1').account).toBe('a2')
 })

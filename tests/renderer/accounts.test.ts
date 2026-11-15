@@ -132,6 +132,9 @@ describe("a session's own account controls", () => {
     expect(moveNotice({ moveWaiting: true, accountId: 'a1' }, list)).toEqual({ kind: 'waiting', text: 'Waiting on b@x.com: check the terminal.' })
     expect(moveNotice({ moveTo: 'gone' }, list)).toEqual({ kind: 'pending', text: 'Moves to another account when it finishes.' })
     expect(moveNotice({ accountId: 'a1' }, list)).toBeNull()
+    // A move that failed says so first, whatever else is pending.
+    expect(moveNotice({ moveError: "Couldn't continue this conversation on b@x.com.", moveTo: 'a1' }, list))
+      .toEqual({ kind: 'failed', text: "Couldn't continue this conversation on b@x.com." })
   })
 
   test('the limit banner offers the other account with the most room in its 5-hour window', () => {

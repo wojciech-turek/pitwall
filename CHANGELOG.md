@@ -2,6 +2,17 @@
 
 All notable changes to Pitwall are listed here, newest first. Pitwall shows these notes when an update is available, before you download it.
 
+## [Unreleased]
+
+### Added
+
+- **Switch Claude accounts.** "Add account…" under the usage meters signs in to another Claude subscription (say, work beside personal) without signing the first one out. **Switch** on an account makes it the one new sessions start on, and offers to move your running sessions too: idle ones restart on it and carry on the same conversation, busy ones move when they finish. One session can be moved from the ⋯ in its header, and a session stopped at a limit offers "Switch to" the account with the most room. If a conversation can't continue on the other account, the session goes back to the one it was on. Pitwall stores no login: each account is a folder of its own that Claude Code signs in to, sharing your history, settings, plugins and skills with your usual one.
+
+### Changed
+
+- The usage meters list every account, the active one first, and say how old an account's numbers are when no session has run on it for a while.
+- A project that sets `CLAUDE_CONFIG_DIR` in its extra variables keeps that account: its sessions are never moved.
+
 ## [0.4.0] - 2026-11-15
 
 ### Added

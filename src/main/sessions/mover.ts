@@ -21,7 +21,7 @@ interface Deps {
   env: Record<string, string>
   /** A session's folder of files (env.sh, the marker). */
   sessionDir: (sessionId: string) => string
-  manager: Pick<SessionManager, 'snapshot' | 'onSnapshot' | 'onSessionEvent' | 'restartClaude' | 'sendText' | 'reportError' | 'updateSessionExtras'>
+  manager: Pick<SessionManager, 'snapshot' | 'onSnapshot' | 'onSessionEvent' | 'restartClaude' | 'sendText' | 'updateSessionExtras'>
   continueAt: Pick<ContinueScheduler, 'cancel'>
   /** An account's label (its email), for messages. */
   labelFor: (accountId: string) => Promise<string>
@@ -49,6 +49,8 @@ export class AccountMover {
   private readonly continueAfter = new Set<string>()
   /** ...and is idle at its prompt. */
   private readonly continuePending = new Set<string>()
+  /** Sessions showing "Couldn't continue this conversation on …". */
+  private readonly failed = new Set<string>()
   private offs: Array<() => void> = []
 
   constructor(private readonly deps: Deps) {
@@ -196,7 +198,13 @@ export class AccountMover {
     })
   }
 
+  /** Asking again, or Cancel (shown as Dismiss), takes the last failed move's message away. */
+  private clearFailed(id: string): void {
+    if (this.failed.delete(id)) this.deps.manager.updateSessionExtras(id, { moveError: undefined })
+  }
+
   private async setMoveTo(id: string, target: string | undefined): Promise<void> {
+    this.clearFailed(id)
     if (this.session(id)?.moveTo === target) return
     await this.patch(id, (s) => {
       if (target === undefined) delete s.moveTo
@@ -302,7 +310,9 @@ export class AccountMover {
       const to = sessionAccountId(this.projectOf(s)!, s, this.ctx()) ?? DEFAULT_ACCOUNT_ID
       await this.revert(id)
       const label = await this.deps.labelFor(to).catch(() => to)
-      this.deps.manager.reportError(id, `Couldn't continue this conversation on ${label}.`)
+      // Kept on the session until dismissed (an ordinary error is wiped by the next event from the restarted Claude).
+      this.failed.add(id)
+      this.deps.manager.updateSessionExtras(id, { moveError: `Couldn't continue this conversation on ${label}.` })
     }).catch(() => undefined)
   }
 

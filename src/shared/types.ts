@@ -133,6 +133,8 @@ export interface SessionView extends Session {
   accountPinned?: boolean
   /** Moved a minute ago and still not started on the new account: Claude is at a prompt there (a sign-in, the folder trust). */
   moveWaiting?: boolean
+  /** The last move failed (the conversation wouldn't continue there) and the session is back where it was. Until dismissed. */
+  moveError?: string
   /** The Server tab's dev server: whether it runs and the ports it listens on. Absent when the folder has no dev command. */
   server?: { running: boolean; ports: number[] }
   /** The launcher's warnings for this run of Claude (a terminal repaint can wipe its printed lines). */

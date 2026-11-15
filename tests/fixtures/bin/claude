@@ -5,6 +5,22 @@ if [ "$1" = "--version" ]; then
   echo "${STUB_CLAUDE_VERSION:-2.1.316 (Claude Code)}"
   exit 0
 fi
+# `claude auth login` signs in to the config folder as $STUB_CLAUDE_LOGIN_EMAIL (nobody, when unset); `auth logout` signs out.
+if [ "$1" = "auth" ]; then
+  dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+  [ -n "$STUB_CLAUDE_LOG" ] && echo "auth $2 CLAUDE_CONFIG_DIR=$CLAUDE_CONFIG_DIR" >> "$STUB_CLAUDE_LOG"
+  case "$2" in
+    login)
+      echo "STUB LOGIN"
+      sleep 1
+      if [ -n "$STUB_CLAUDE_LOGIN_EMAIL" ]; then
+        mkdir -p "$dir"
+        printf '{"oauthAccount":{"emailAddress":"%s"},"userID":"stub"}\n' "$STUB_CLAUDE_LOGIN_EMAIL" > "$dir/.claude.json"
+      fi ;;
+    logout) rm -f "$dir/.claude.json" ;;
+  esac
+  exit 0
+fi
 [ -n "$STUB_CLAUDE_LOG" ] && {
   echo "$*"
   echo "GH_TOKEN=$GH_TOKEN"
@@ -30,7 +46,9 @@ done
 [ -n "$STUB_CLAUDE_LOG" ] && [ -n "$note" ] && printf 'NOTE=%s\n' "$(cat "$note")" >> "$STUB_CLAUDE_LOG"
 case " $* " in
   *" --resume "*)
-    if [ "$STUB_CLAUDE_RESUME_FAIL" = "1" ] || { [ -n "$STUB_CLAUDE_RESUME_FAIL_FILE" ] && [ -e "$STUB_CLAUDE_RESUME_FAIL_FILE" ]; }; then exit 1; fi ;;
+    # (.stub-resume-fail in the config folder: this conversation can't be resumed on that account.)
+    if [ "$STUB_CLAUDE_RESUME_FAIL" = "1" ] || { [ -n "$STUB_CLAUDE_RESUME_FAIL_FILE" ] && [ -e "$STUB_CLAUDE_RESUME_FAIL_FILE" ]; } ||
+      [ -e "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.stub-resume-fail" ]; then exit 1; fi ;;
 esac
 cmd="" sl=""
 [ -n "$settings" ] && cmd=$(jq -r '.hooks.SessionStart[0].hooks[0].command' "$settings")

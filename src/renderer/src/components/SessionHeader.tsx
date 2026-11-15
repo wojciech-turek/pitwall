@@ -101,11 +101,12 @@ function MoveBanner({ session }: { session: SessionView }): React.JSX.Element | 
     void fn().catch((e) => useToast.getState().show(cleanIpcError(e))).finally(() => setBusy(false))
   }
   return (
-    <div className="banner warn" role="status" data-testid={notice.kind === 'waiting' ? 'move-waiting' : 'move-pending'}>
+    <div className={notice.kind === 'failed' ? 'banner error' : 'banner warn'} role={notice.kind === 'failed' ? 'alert' : 'status'} data-testid={`move-${notice.kind}`}>
       <span>{notice.text}</span>
       {notice.kind === 'waiting'
         ? <button className="btn" data-testid="move-back" disabled={busy} onClick={() => run(() => window.pitwall.moveBack(session.id))}>Move back</button>
-        : <button className="btn" data-testid="move-cancel" disabled={busy} onClick={() => run(() => window.pitwall.cancelMove(session.id))}>Cancel</button>}
+        : <button className="btn" data-testid={notice.kind === 'failed' ? 'move-dismiss' : 'move-cancel'} disabled={busy}
+            onClick={() => run(() => window.pitwall.cancelMove(session.id))}>{notice.kind === 'failed' ? 'Dismiss' : 'Cancel'}</button>}
     </div>
   )
 }

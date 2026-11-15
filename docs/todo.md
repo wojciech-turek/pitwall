@@ -37,6 +37,13 @@ subagents, the `pitwall` command, the resource view, accounts, and running witho
 
 ## Check with real Claude Code
 
+- **Accounts (needs a second signed-in account; see Task 0 of `docs/superpowers/plans/2026-11-15-claude-account-switch.md`):**
+  - Does a conversation started on one account resume on another when `projects` is shared? The whole move rests on it.
+  - The oldest Claude Code that keeps logins apart per config folder: `MIN_CLAUDE_FOR_ACCOUNTS` is a placeholder.
+  - Does `claude auth login` honour `CLAUDE_CONFIG_DIR` and exit when done; does `auth logout` remove only that folder's login?
+  - Does Claude follow the links (`plugins`, `settings.json`), and does it replace a linked file with a real one on save?
+  - Two accounts running at once: is either login wiped when both refresh?
+  - Do the copied `hasCompletedOnboarding` and the folder's `projects` entry skip onboarding and the trust prompt?
 - Does the permission `Notification` for a subagent's prompt carry `agent_id`? This decides whether a session always
   returns from Needs you.
 - What's on screen when a subscription limit is hit: plain text, or a menu? Typing `continue` plus Enter must not

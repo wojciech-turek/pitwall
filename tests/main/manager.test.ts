@@ -107,12 +107,15 @@ describe('SessionManager', () => {
     await expect(m.restartClaude('ghost')).rejects.toThrow('Session not found.')
   })
 
-  test('a reported error and a waiting move show on the session; a pending move passes through', async () => {
+  test("a failed move's message and a waiting move show on the session, and outlive its next event; a pending move passes through", async () => {
     await addSession('a', { moveTo: 'a1' })
     const m = await ready()
-    m.reportError('a', "Couldn't continue this conversation on b@x.com.")
-    m.updateSessionExtras('a', { moveWaiting: true })
-    expect(m.snapshot().sessions[0]).toMatchObject({ lastError: "Couldn't continue this conversation on b@x.com.", moveWaiting: true, moveTo: 'a1' })
+    m.updateSessionExtras('a', { moveWaiting: true, moveError: "Couldn't continue this conversation on b@x.com." })
+    const want = { moveError: "Couldn't continue this conversation on b@x.com.", moveWaiting: true, moveTo: 'a1' }
+    expect(m.snapshot().sessions[0]).toMatchObject(want)
+    await ev('a', { e: 'SessionStart' })
+    await waitStatus(m, 'a', 'read')
+    expect(m.snapshot().sessions[0]).toMatchObject(want)
   })
 
   test("a session shows the account it runs on: its own, its project's pinned one, or the default when its own is gone", async () => {

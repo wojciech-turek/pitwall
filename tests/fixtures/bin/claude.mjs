@@ -3,7 +3,7 @@
 // sh (claude.cmd runs it there). Hooks run as Claude Code runs them: exec form (`args`) with no shell; shell form in
 // sh, or on Windows in Git Bash if there is one, else PowerShell.
 import { spawnSync } from 'node:child_process'
-import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 
@@ -13,6 +13,21 @@ const args = process.argv.slice(2)
 // `claude --version` answers as Claude Code does ($STUB_CLAUDE_VERSION instead, when a test sets it), logging nothing.
 if (args[0] === '--version') {
   console.log(env.STUB_CLAUDE_VERSION || '2.1.316 (Claude Code)')
+  process.exit(0)
+}
+
+// `claude auth login` signs in to the config folder as $STUB_CLAUDE_LOGIN_EMAIL (nobody, when unset); `auth logout` signs out.
+const configDir = env.CLAUDE_CONFIG_DIR || join(env.HOME || env.USERPROFILE || '', '.claude')
+if (args[0] === 'auth') {
+  if (env.STUB_CLAUDE_LOG) appendFileSync(env.STUB_CLAUDE_LOG, `auth ${args[1]} CLAUDE_CONFIG_DIR=${env.CLAUDE_CONFIG_DIR ?? ''}\n`)
+  if (args[1] === 'login') {
+    console.log('STUB LOGIN')
+    await new Promise((r) => setTimeout(r, 1000))
+    if (env.STUB_CLAUDE_LOGIN_EMAIL) {
+      mkdirSync(configDir, { recursive: true })
+      writeFileSync(join(configDir, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: env.STUB_CLAUDE_LOGIN_EMAIL }, userID: 'stub' }) + '\n')
+    }
+  } else if (args[1] === 'logout') rmSync(join(configDir, '.claude.json'), { force: true })
   process.exit(0)
 }
 
@@ -52,7 +67,9 @@ if (env.STUB_CLAUDE_LOG && note) {
   appendFileSync(env.STUB_CLAUDE_LOG, `NOTE=${text}\n`)
 }
 if (args.includes('--resume')) {
-  if (env.STUB_CLAUDE_RESUME_FAIL === '1' || (env.STUB_CLAUDE_RESUME_FAIL_FILE && existsSync(env.STUB_CLAUDE_RESUME_FAIL_FILE))) process.exit(1)
+  // (.stub-resume-fail in the config folder: this conversation can't be resumed on that account.)
+  if (env.STUB_CLAUDE_RESUME_FAIL === '1' || (env.STUB_CLAUDE_RESUME_FAIL_FILE && existsSync(env.STUB_CLAUDE_RESUME_FAIL_FILE)) ||
+    existsSync(join(configDir, '.stub-resume-fail'))) process.exit(1)
 }
 
 let hook = null

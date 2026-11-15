@@ -27,7 +27,7 @@ type Deps = StarterDeps & {
   /** Searches the folders' conversations; default: one of its own over this manager's sessions. */
   history?: Pick<SessionHistory, 'search' | 'searchFiles'>
 }
-type Extras = Partial<Pick<SessionView, 'diffStat' | 'liveBranch' | 'server' | 'moveWaiting'>>
+type Extras = Partial<Pick<SessionView, 'diffStat' | 'liveBranch' | 'server' | 'moveWaiting' | 'moveError'>>
 
 const FIRST_EVENT_TIMEOUT_MS = 20000
 export const ACCOUNT_GONE_WARNING = "This session's Claude account was removed. It runs on the default account."
@@ -350,12 +350,6 @@ export class SessionManager {
     if (!s || s.archivedAt !== undefined) throw new Error('Session not found.')
     await this.deps.backend.killSession(claudeTmuxName(sessionId))
     await this.relaunchIfMissing(s)
-  }
-
-  /** Shows `message` as the session's error until its next successful launch. */
-  reportError(sessionId: string, message: string): void {
-    this.errors.set(sessionId, message)
-    this.publish()
   }
 
   async ensureTerminalTarget(sessionId: string, kind: TermKind): Promise<void> {
