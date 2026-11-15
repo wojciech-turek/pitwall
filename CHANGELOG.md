@@ -15,6 +15,7 @@ All notable changes to Pitwall are listed here, newest first. Pitwall shows thes
 - **Helpers hang under the session that started them.** In the sidebar and in ⌘J order, and the hover card says who started it. A finished helper stays quiet, with no notification and no Dock badge, while its session is open; one that needs you still tells you.
 - **Agents can start sessions of their own.** Claude in a Pitwall session now uses `pitwall new` to hand work to a helper, which shows up under it in the sidebar with its own branch and worktree. Turn it off in Settings. macOS only.
 - **Clean up worktrees.** A folder's ⋯ menu lists worktrees agents made outside Pitwall and removes the ones that are merged and unchanged. It never touches worktrees with changes or anything running, or any of your sessions' worktrees.
+- **See what each session costs.** Hover a session for its CPU and memory. A session using a lot shows it on its row, and the title bar warns when your Mac runs short of memory or disk, with the biggest sessions one click away. Mac only.
 
 ### Changed
 
