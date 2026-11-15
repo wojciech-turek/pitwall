@@ -27,6 +27,8 @@ interface ReviewState {
   byId: Record<string, ReviewComment[]>
   add(sessionId: string, c: Omit<ReviewComment, 'id'>): void
   remove(sessionId: string, id: string): void
+  /** Removes just these comments; one added since they were picked stays. */
+  removeMany(sessionId: string, ids: string[]): void
   clear(sessionId: string): void
 }
 
@@ -44,6 +46,11 @@ export const useReview = create<ReviewState>((set, get) => {
     remove: (sessionId, id) => {
       const byId = get().byId
       commit({ ...byId, [sessionId]: (byId[sessionId] ?? []).filter((x) => x.id !== id) })
+    },
+    removeMany: (sessionId, ids) => {
+      const { [sessionId]: list = [], ...rest } = get().byId
+      const left = list.filter((x) => !ids.includes(x.id))
+      commit(left.length ? { ...rest, [sessionId]: left } : rest)
     },
     clear: (sessionId) => {
       const { [sessionId]: _gone, ...rest } = get().byId

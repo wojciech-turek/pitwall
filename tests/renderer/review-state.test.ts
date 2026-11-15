@@ -59,4 +59,17 @@ describe('review drafts', () => {
     expect(() => useReview.getState().add('s1', draft)).not.toThrow()
     expect(useReview.getState().byId.s1).toHaveLength(1)
   })
+
+  test('removeMany drops only the named comments, so one added mid-send survives', async () => {
+    fakeStorage()
+    const { useReview } = await fresh()
+    useReview.getState().add('s1', draft)
+    useReview.getState().add('s1', draft)
+    const sent = useReview.getState().byId.s1.map((c) => c.id)
+    useReview.getState().add('s1', { ...draft, note: 'late' })
+    useReview.getState().removeMany('s1', sent)
+    expect(useReview.getState().byId.s1.map((c) => c.note)).toEqual(['late'])
+    useReview.getState().removeMany('s1', [useReview.getState().byId.s1[0].id])
+    expect(useReview.getState().byId.s1).toBeUndefined()
+  })
 })

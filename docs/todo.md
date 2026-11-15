@@ -5,8 +5,6 @@ subagents, the `pitwall` command, the resource view, accounts, and running witho
 
 ## Small bugs worth fixing first
 
-- **Review comments added while a send is in progress are lost.** `ChangesTab` clears every comment for the session
-  after `sendToAgent` returns. It should remove only the ones it sent.
 - **`pitwall wait` output can be cut short when piped.** `src/cli/index.ts` calls `process.exit()` straight after
   writing, and replies can now be up to 64 KB. Set `process.exitCode` and let the process end instead.
 - **A paste that fails after "sent" was logged leaves the session showing Working** until its next event. This

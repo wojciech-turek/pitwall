@@ -87,11 +87,13 @@ export default function ChangesTab({ snap, sessionId }: { snap: AppSnapshot; ses
 
   async function send(): Promise<void> {
     setSending(true)
+    // Only these go; a comment added while the send is in flight stays
+    const sentIds = comments.map((c) => c.id)
     try {
       await window.pitwall.sendToAgent(sessionId, formatReview(comments, platform()))
       useUi.getState().setActiveTab(sessionId, 'claude')
       requestFocus(sessionId, 'claude')
-      useReview.getState().clear(sessionId)
+      useReview.getState().removeMany(sessionId, sentIds)
     } catch (e) {
       useToast.getState().show(`Could not send the review: ${cleanIpcError(e)}`)
     } finally {
