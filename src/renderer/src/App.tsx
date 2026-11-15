@@ -18,6 +18,7 @@ import RightPanel from './components/RightPanel'
 import SubProjectSettingsDialog from './components/dialogs/SubProjectSettingsDialog'
 import SettingsDialog from './components/dialogs/SettingsDialog'
 import UpdateDialog from './components/dialogs/UpdateDialog'
+import AddAccountDialog from './components/dialogs/AddAccountDialog'
 import { useMenuCommands } from './state/menuCommands'
 import { usePruneTerminals } from './components/MainArea'
 import PaneLayout from './components/PaneLayout'
@@ -40,6 +41,8 @@ function DialogHost(): React.JSX.Element | null {
     case 'stray-worktrees': return <StrayWorktreesDialog key={dialog.subProjectId} subProjectId={dialog.subProjectId} />
     case 'settings': return <SettingsDialog />
     case 'update': return <UpdateDialog />
+    case 'account-login': return <AddAccountDialog key={dialog.termId} termId={dialog.termId} addId={dialog.addId} accountId={dialog.accountId} label={dialog.label} />
+    case 'switch-account': return null
   }
 }
 

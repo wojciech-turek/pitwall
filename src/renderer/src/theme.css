@@ -287,6 +287,8 @@ body.pane-resizing-column, body.pane-resizing-column * { cursor: row-resize !imp
 
 /* ---------- usage meter (bottom of the right panel) ---------- */
 .usage-meter { flex: none; margin-top: auto; display: grid; grid-template-columns: auto 1fr auto auto; column-gap: 8px; row-gap: 6px; align-items: center; padding: 9px 12px 10px; border-top: 1px solid var(--border); font-size: 11px; color: var(--text-muted); cursor: default; user-select: none; }
+.account-login-term { height: 320px; display: flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.dialog-note { margin: 0 0 12px; color: var(--text-muted); font-size: 12px; line-height: 1.5; }
 .usage-meter.empty { display: block; color: var(--text-faint); }
 .usage-account { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; row-gap: 6px; }
 .usage-account + .usage-account { margin-top: 4px; }

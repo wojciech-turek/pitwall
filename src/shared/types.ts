@@ -146,6 +146,14 @@ export interface GhAccount { login: string; active: boolean; ok: boolean }
 export interface UsageWindow { usedPercentage: number; /** ms */ resetsAt: number }
 /** One Claude account's usage: `account` is its config folder, `label` its email or folder for display. */
 export interface AccountUsage { account: string; label: string; usage: ClaudeUsage }
+/**
+ * One Claude account as the switch lists it. `account` is its config folder. `id` is what to switch or move to
+ * ('default' for the default one); a folder a project sets for itself has none. `sessions` counts the live sessions
+ * running on it or waiting to move to it.
+ */
+export interface AccountView {
+  id?: string; account: string; label: string; active: boolean; usage?: ClaudeUsage; sessions: number; signedIn: boolean
+}
 export interface ClaudeUsage { fiveHour?: UsageWindow; sevenDay?: UsageWindow; /** When Claude reported it (ms). */ updatedAt: number }
 /** What a group of processes costs. `cpu` is `ps %cpu` summed, so 100 is one core. */
 export interface ProcStats { cpu: number; rssBytes: number; procs: number }

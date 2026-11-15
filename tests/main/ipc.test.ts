@@ -49,6 +49,7 @@ beforeEach(() => {
   registerIpc({
     manager, history,
     pr: { feedbackContext: async () => ({ ok: false as const, message: 'x' }) },
+    accounts: { onChange: () => () => {} },
     usage: { current: () => [], onChange: () => () => {} },
     systemStats: { current: () => null, onChange: () => () => {} },
     updates: { state: () => null, checkNow: async () => {}, onChange: () => () => {}, hasFeed: () => false },
@@ -126,6 +127,7 @@ describe('IPC: stray worktrees', () => {
     registerIpc({
       manager, history, store, git, exec, paths: { dataDir: '/nowhere/pitwall' },
       pr: { feedbackContext: async () => ({ ok: false as const, message: 'x' }) },
+      accounts: { onChange: () => () => {} },
       usage: { current: () => [], onChange: () => () => {} },
       systemStats: { current: () => null, onChange: () => () => {} },
       updates: { state: () => null, checkNow: async () => {}, onChange: () => () => {}, hasFeed: () => false },
@@ -176,6 +178,7 @@ describe('IPC: pasting into a session that needs you', () => {
       history, store, paths: { dataDir: '/nowhere/pitwall', ghBin: 'gh' },
       backend: { pasteText: async (_n: string, x: string) => { pasted.push(x) } },
       pr: { feedbackContext: async () => ({ ok: true as const, pr, dir: '/w', token: 't', owner: 'o', repo: 'r' }) },
+      accounts: { onChange: () => () => {} },
       usage: { current: () => [], onChange: () => () => {} },
       systemStats: { current: () => null, onChange: () => () => {} },
       updates: { state: () => null, checkNow: async () => {}, onChange: () => () => {}, hasFeed: () => false },
@@ -197,3 +200,51 @@ describe('IPC: pasting into a session that needs you', () => {
     expect(pasted[0]).toBe('look at @a.ts')
   })
 })
+
+describe('Claude accounts over IPC', () => {
+  const calls: unknown[][] = []
+  const accounts = {
+    list: vi.fn(async () => [{ id: 'default', account: '/h/.claude', label: 'me@x.com', active: true, sessions: 0, signedIn: true }]),
+    onChange: () => () => {},
+    beginAdd: vi.fn(async () => ({ addId: 'acct_1', dir: '/secret/path' })),
+    finishAdd: vi.fn(async (id: string) => { calls.push(['finish', id]); return { ok: true as const, id } }),
+    cancelAdd: vi.fn(async (id: string) => { calls.push(['cancel', id]) }),
+    remove: vi.fn(async (id: string) => { calls.push(['remove', id]) }),
+    copyFromDefault: vi.fn(async (id: string) => { calls.push(['copy', id]) }),
+    endLogin: vi.fn(async (id: string) => { calls.push(['end', id]) })
+  }
+  beforeEach(() => {
+    calls.length = 0
+    electron.handlers.clear()
+    registerIpc({
+      manager: { onSnapshot: () => () => {} }, accounts,
+      usage: { current: () => [], onChange: () => () => {} },
+      systemStats: { current: () => null, onChange: () => () => {} },
+      updates: { state: () => null, checkNow: async () => {}, onChange: () => () => {}, hasFeed: () => false },
+      send: () => {}, onViewing: () => {}, env: {}, home: '/home/me', dev: false
+    } as unknown as IpcDeps)
+  })
+
+  test('the list, and a new account to sign in to: the renderer gets the terminal to show, never the folder', async () => {
+    expect(await call(IPC.getAccounts)).toHaveLength(1)
+    expect(await call(IPC.beginAddAccount)).toEqual({ addId: 'acct_1', termId: 'login-acct_1' })
+  })
+
+  test('each call passes its id on', async () => {
+    await call(IPC.finishAddAccount, 'acct_1')
+    await call(IPC.cancelAddAccount, 'acct_1')
+    await call(IPC.removeAccount, 'acct_1')
+    await call(IPC.copyAccountSettings, 'acct_1')
+    await call(IPC.endAccountLogin, 'acct_1')
+    expect(calls).toEqual([['finish', 'acct_1'], ['cancel', 'acct_1'], ['remove', 'acct_1'], ['copy', 'acct_1'], ['end', 'acct_1']])
+  })
+
+  test('an id that is not a string is refused', async () => {
+    for (const ch of [IPC.finishAddAccount, IPC.cancelAddAccount, IPC.removeAccount, IPC.copyAccountSettings, IPC.endAccountLogin]) {
+      await expect(Promise.resolve().then(() => call(ch, { evil: 1 }))).rejects.toThrow('Invalid account.')
+      await expect(Promise.resolve().then(() => call(ch))).rejects.toThrow('Invalid account.')
+    }
+    expect(calls).toEqual([])
+  })
+})
+

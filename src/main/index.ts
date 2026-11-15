@@ -30,6 +30,7 @@ import { Tmux } from './tmux'
 import { TmuxBackend } from './tmux-backend'
 import { releasesUrl, UpdateChecker } from './updates'
 import { accountKey, accountLabel, defaultAccountDir } from './accounts'
+import { AccountsService, isLoginTerm } from './accounts-service'
 import { UsageTracker } from './usage'
 import { ContinueScheduler } from './sessions/continue-at'
 import { SystemMonitor } from './system-monitor'
@@ -263,10 +264,11 @@ async function bootstrap(): Promise<void> {
   })
   bridge = new PtyBridge({
     backend,
-    ensureTarget: (id, kind) => mgr.ensureTerminalTarget(id, kind),
+    // A sign-in terminal (login-<account>) belongs to the accounts service; every other id is a session's.
+    ensureTarget: (id, kind) => (isLoginTerm(id) ? accounts.ensureLogin(id) : mgr.ensureTerminalTarget(id, kind)),
     onData: (id, kind, data) => send(IPC.termData, id, kind, data),
     onExit: (id, kind, code) => send(IPC.termExit, id, kind, code),
-    onUserInput: (id, kind, data) => mgr.userInput(id, kind, data)
+    onUserInput: (id, kind, data) => { if (!isLoginTerm(id)) mgr.userInput(id, kind, data) }
   })
   const changes = new ChangesService({ store, git, manager: mgr })
   changes.start()
@@ -289,6 +291,7 @@ async function bootstrap(): Promise<void> {
   })
   await usage.load()
   usage.start()
+  const accounts = new AccountsService({ store, home, env, paths, backend, exec, usage })
   disposeUsage = () => usage.stop()
   // statfs needs a path that exists: the worktrees folder may not yet.
   let diskPath = paths.worktreesRoot
@@ -330,7 +333,7 @@ async function bootstrap(): Promise<void> {
   continueAt.start()
   disposeContinueAt = () => continueAt.stop()
   disposeIpc = registerIpc({
-    manager: mgr, changes, store, git, backend, projects, bridge, paths, exec, env, home, mutex, history, usage, systemStats, updates, pr, continueAt, send, dev: DEV,
+    manager: mgr, changes, store, git, backend, projects, bridge, paths, exec, env, home, mutex, history, usage, accounts, systemStats, updates, pr, continueAt, send, dev: DEV,
     launcher,
     onViewing: (ids) => {
       visibleIds = ids

@@ -1,5 +1,5 @@
 import type {
-  AppSettings, AppSnapshot, ArchiveCheck, ArchiveResult, ChangedFile, AccountUsage, SystemStats, ConversationList, ConversationMatch, EnvVar, FileContent, FileEntry, GhAccount, GitIdentity, HistoryHit, NewSessionDefaults, NewSessionInput, Project, RepoIdentity,
+  AccountView, AppSettings, AppSnapshot, ArchiveCheck, ArchiveResult, ChangedFile, AccountUsage, SystemStats, ConversationList, ConversationMatch, EnvVar, FileContent, FileEntry, GhAccount, GitIdentity, HistoryHit, NewSessionDefaults, NewSessionInput, Project, RepoIdentity,
   StartProgress, StartResult, StrayWorktree, SubProject, TermKind, UpdateState
 } from './types'
 
@@ -99,6 +99,20 @@ export interface PitwallApi {
   onFocusSession(cb: (sessionId: string) => void): () => void
   /** Claude subscription usage, one entry per account that has reported any. */
   getUsage(): Promise<AccountUsage[]>
+  /** Every Claude account: the default one, those added here, and folders projects set for themselves. */
+  getAccounts(): Promise<AccountView[]>
+  onAccounts(cb: (a: AccountView[]) => void): () => void
+  /** Starts adding an account: `termId` is the terminal (kind 'claude') the sign-in runs in. */
+  beginAddAccount(): Promise<{ addId: string; termId: string }>
+  /** Lists the account if someone signed in. Never makes it the active one. */
+  finishAddAccount(addId: string): Promise<{ ok: true; id: string } | { ok: false; message: string }>
+  cancelAddAccount(addId: string): Promise<void>
+  /** Signs the account out and deletes its folder; refused while a session uses it. */
+  removeAccount(id: string): Promise<void>
+  /** The default account's MCP servers again, and anything it has started sharing since. */
+  copyAccountSettings(id: string): Promise<void>
+  /** Ends a sign-in terminal opened to sign in again (terminal id `login-<id>`). */
+  endAccountLogin(id: string): Promise<void>
   /** The latest CPU, memory and disk figures, or null before the first sample (and always on Windows). */
   getSystemStats(): Promise<SystemStats | null>
   onSystemStats(cb: (s: SystemStats) => void): () => void
@@ -172,6 +186,13 @@ export const IPC = {
   openInCursor: 'pitwall:openInCursor',
   setSettings: 'pitwall:setSettings',
   getUsage: 'pitwall:getUsage',
+  getAccounts: 'pitwall:getAccounts',
+  beginAddAccount: 'pitwall:beginAddAccount',
+  finishAddAccount: 'pitwall:finishAddAccount',
+  cancelAddAccount: 'pitwall:cancelAddAccount',
+  removeAccount: 'pitwall:removeAccount',
+  copyAccountSettings: 'pitwall:copyAccountSettings',
+  endAccountLogin: 'pitwall:endAccountLogin',
   getSystemStats: 'pitwall:getSystemStats',
   appInfo: 'pitwall:appInfo',
   getUpdateState: 'pitwall:getUpdateState',
@@ -184,6 +205,7 @@ export const IPC = {
   focusSession: 'pitwall:focusSession',
   menuCommand: 'pitwall:menuCommand',
   usage: 'pitwall:usage',
+  accounts: 'pitwall:accounts',
   systemStats: 'pitwall:systemStats',
   updateState: 'pitwall:updateState'
 } as const

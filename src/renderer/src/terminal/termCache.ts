@@ -57,7 +57,9 @@ function ensureSubscribed(): void {
     e.opened = false
     e.reopenOnKey = true
     // Claude: a key relaunches the tmux session, which resumes the same conversation.
-    const text = kind === 'shell'
+    const text = id.startsWith('login-')
+      ? 'Sign-in ended — press any key to start it again'
+      : kind === 'shell'
       ? 'Shell exited — press any key to start a new one'
       : kind === 'server'
         ? 'Dev server stopped — press any key to start it again'
@@ -162,6 +164,7 @@ export function pruneTerminals(liveIds: Set<string>): void {
   for (const k of [...cache.keys()]) {
     const i = k.lastIndexOf(':')
     const id = k.slice(0, i)
-    if (!liveIds.has(id)) disposeTerminal(id, k.slice(i + 1) as TermKind)
+    // A sign-in terminal (login-<account>) is its dialog's to dispose, not a session's.
+    if (!liveIds.has(id) && !id.startsWith('login-')) disposeTerminal(id, k.slice(i + 1) as TermKind)
   }
 }

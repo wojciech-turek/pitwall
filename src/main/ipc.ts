@@ -22,6 +22,7 @@ import type { KeyedMutex } from './sessions/mutex'
 import { APP_VERSION } from '@shared/version'
 import { PARK_AFTER_MS } from '@shared/parking'
 import type { UpdateChecker } from './updates'
+import { loginTermId, type AccountsService } from './accounts-service'
 import type { UsageTracker } from './usage'
 import type { SystemMonitor } from './system-monitor'
 import type { PrPoller } from './pr'
@@ -43,6 +44,7 @@ export interface IpcDeps {
   mutex: KeyedMutex
   history: Pick<SessionHistory, 'search' | 'forgetFiles'>
   usage: Pick<UsageTracker, 'current' | 'onChange'>
+  accounts: Pick<AccountsService, 'list' | 'onChange' | 'beginAdd' | 'finishAdd' | 'cancelAdd' | 'remove' | 'copyFromDefault' | 'endLogin'>
   systemStats: Pick<SystemMonitor, 'current' | 'onChange'>
   updates: Pick<UpdateChecker, 'state' | 'checkNow' | 'onChange' | 'hasFeed'>
   pr: Pick<PrPoller, 'feedbackContext'>
@@ -78,6 +80,21 @@ export function registerIpc(d: IpcDeps): () => void {
 
   handle(IPC.getSnapshot, () => manager.snapshot())
   handle(IPC.getUsage, () => d.usage.current())
+  const accountId = (id: unknown): string => {
+    if (typeof id !== 'string' || !id) throw new Error('Invalid account.')
+    return id
+  }
+  handle(IPC.getAccounts, () => d.accounts.list())
+  // The renderer gets the terminal to show, not the folder.
+  handle(IPC.beginAddAccount, async () => {
+    const { addId } = await d.accounts.beginAdd()
+    return { addId, termId: loginTermId(addId) }
+  })
+  handle(IPC.finishAddAccount, (id: unknown) => d.accounts.finishAdd(accountId(id)))
+  handle(IPC.cancelAddAccount, (id: unknown) => d.accounts.cancelAdd(accountId(id)))
+  handle(IPC.removeAccount, (id: unknown) => d.accounts.remove(accountId(id)))
+  handle(IPC.copyAccountSettings, (id: unknown) => d.accounts.copyFromDefault(accountId(id)))
+  handle(IPC.endAccountLogin, (id: unknown) => d.accounts.endLogin(accountId(id)))
   handle(IPC.getSystemStats, () => d.systemStats.current())
   handle(IPC.appInfo, () => ({ version: APP_VERSION, dev: d.dev, updateFeed: d.updates.hasFeed(), parkAfterMs: parkAfterMs() }))
   handle(IPC.getUpdateState, () => d.updates.state())
@@ -233,11 +250,13 @@ export function registerIpc(d: IpcDeps): () => void {
 
   const unsub = manager.onSnapshot((s) => send(IPC.snapshot, s))
   const unsubUsage = d.usage.onChange((u) => send(IPC.usage, u))
+  const unsubAccounts = d.accounts.onChange((a) => send(IPC.accounts, a))
   const unsubStats = d.systemStats.onChange((s) => send(IPC.systemStats, s))
   const unsubUpdates = d.updates.onChange((u) => send(IPC.updateState, u))
   return () => {
     unsub()
     unsubUsage()
+    unsubAccounts()
     unsubStats()
     unsubUpdates()
     for (const ch of Object.values(IPC)) {

@@ -19,6 +19,10 @@ export type DialogState =
   | { type: 'stray-worktrees'; subProjectId: string }
   | { type: 'settings' }
   | { type: 'update' }
+  /** Signing in to a Claude account: a new one (addId) or one added already (accountId). */
+  | { type: 'account-login'; termId: string; addId?: string; accountId?: string; label?: string }
+  /** "Move N running sessions to <label> too?", after Switch. */
+  | { type: 'switch-account'; accountId: string; label: string; now: number; later: number }
   | { type: 'review-comment'; sessionId: string; path: string; fromLine: number; toLine: number; quote: string }
   | { type: 'discard-file'; sessionId: string; tabId: string; name: string }
 
