@@ -20,6 +20,7 @@ All notable changes to Pitwall are listed here, newest first. Pitwall shows thes
 
 ### Changed
 
+- **tmux is now optional on macOS.** Without it, Pitwall keeps your agents running in its own background process, as it does on Windows. If you have tmux, nothing changes.
 - **The usage meter shows each Claude account.** Projects that use their own `CLAUDE_CONFIG_DIR` get their own 5-hour and weekly bars, named by the account's email, with the selected session's account on top.
 - **A subagent still working in the background no longer marks its session as Working** after Claude's reply. Its own row shows it's running.
 

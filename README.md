@@ -62,7 +62,8 @@ Like a pit wall in a race, you watch every car at once and only radio in when on
 
 - macOS on Apple silicon (for Windows, see [Windows (beta)](#windows-beta))
 - [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude`), installed and logged in
-- `git` and `tmux` (`brew install tmux`)
+- `git`
+- Optional: `tmux` (`brew install tmux`). Without it, Pitwall keeps your agents running in its own background process, as it does on Windows.
 - To build: Node 24 and pnpm
 - Optional: the GitHub CLI `gh`, logged in to the accounts you use (`gh auth login`, once per account)
 
