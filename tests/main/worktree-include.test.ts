@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
@@ -90,6 +90,21 @@ describe('copyWorktreeIncludes', () => {
       const res = await run()
       expect(res.skipped).toContainEqual({ path: 'secrets/a.json', reason: 'outside' })
       await expect(readFile(join(out, 'a.json'))).rejects.toThrow()
+    } finally {
+      await rm(out, { recursive: true, force: true })
+    }
+  })
+
+  test.skipIf(WINDOWS)('never makes a folder through a symlinked directory in the worktree either', async () => {
+    const out = await mkdtemp(join(tmpdir(), 'pitwall-out-'))
+    try {
+      await mkdir(join(r.root, 'secrets', 'deep'), { recursive: true })
+      await writeFile(join(r.root, 'secrets', 'deep', 'b.json'), '{}')
+      await writeFile(join(r.root, '.worktreeinclude'), 'secrets/deep/*.json\n')
+      await symlink(out, join(wt, 'secrets'))
+      const res = await run()
+      expect(res.skipped).toContainEqual({ path: 'secrets/deep/b.json', reason: 'outside' })
+      expect(await readdir(out)).toEqual([]) // no deep/ made out there before the check
     } finally {
       await rm(out, { recursive: true, force: true })
     }

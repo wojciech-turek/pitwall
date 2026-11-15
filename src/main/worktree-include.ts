@@ -11,6 +11,17 @@ const MAX_BYTES = 20 * 1024 * 1024
 const inside = (dir: string, root: string) => dir === root || dir.startsWith(root.endsWith(sep) ? root : root + sep)
 const skipDir = (p: string) => p.split(/[\\/]/).some((s) => s === 'node_modules' || s === '.git')
 
+/** The nearest folder on the way to `dir` that exists, after symlinks; null if that is a dangling link. */
+async function nearestExisting(dir: string): Promise<string | null> {
+  let d = dir
+  while (!(await lstat(d).then(() => true, () => false))) {
+    const up = dirname(d)
+    if (up === d) return null
+    d = up
+  }
+  return realpath(d).catch(() => null)
+}
+
 /**
  * Copies the gitignored files that the repo's committed `.worktreeinclude` lists (globs relative to the repo root, like
  * .env.local) into a new worktree, since git leaves ignored files behind. Nothing is overwritten and symlinks aren't
@@ -66,6 +77,9 @@ export async function copyWorktreeIncludes(o: {
     if (copied.length >= MAX_FILES || total + st.size > MAX_BYTES) { skipped.push({ path: rel, reason: 'limit' }); continue }
     const dest = join(o.worktree, rel)
     if (await lstat(dest).then(() => true, () => false)) { skipped.push({ path: rel, reason: 'exists' }); continue }
+    // Before mkdir, which would make folders through a symlink out of the worktree.
+    const near = await nearestExisting(dirname(dest))
+    if (!near || !inside(near, wtReal)) { skipped.push({ path: rel, reason: 'outside' }); continue }
     try {
       await mkdir(dirname(dest), { recursive: true })
       if (!inside(await realpath(dirname(dest)), wtReal)) { skipped.push({ path: rel, reason: 'outside' }); continue }
