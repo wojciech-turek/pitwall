@@ -51,8 +51,8 @@ export function useHoverCard(disabled: boolean): {
   }
 }
 
-export default function HoverCard({ session, rect, projectName, subProjectName }: {
-  session: SessionView; rect: DOMRect; projectName?: string; subProjectName?: string
+export default function HoverCard({ session, rect, projectName, subProjectName, startedBy }: {
+  session: SessionView; rect: DOMRect; projectName?: string; subProjectName?: string; startedBy?: string
 }): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
   const [top, setTop] = useState(rect.top)
@@ -72,6 +72,7 @@ export default function HoverCard({ session, rect, projectName, subProjectName }
         <span className="hc-time">{relativeTime(session.lastActivityAt ?? session.createdAt)}</span>
       </div>
       <div className="hc-line">{[projectName, subProjectName].filter(Boolean).join(' · ')}</div>
+      {startedBy && <div className="hc-line" data-testid="hc-started-by">Started by {startedBy}</div>}
       {branch && <div className="hc-line hc-branch">{branch}</div>}
       {session.lastMessage && <div className="hc-message">{session.lastMessage}</div>}
       {(session.diffStat || session.pr) && (

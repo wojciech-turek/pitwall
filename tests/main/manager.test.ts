@@ -592,6 +592,29 @@ describe('muted projects and mark as unread', () => {
     expect(badges.at(-1)).toBe(0)
   })
 
+  test('a finished helper stays quiet while its parent is live, and still tells you when it needs you', async () => {
+    await addSession('parent')
+    await addSession('kid', { createdBy: 'parent' }, [{ e: 'UserPromptSubmit', t: 2000 }, { e: 'Stop', t: 3000, msg: 'done' }])
+    const m = await ready()
+    expect(status(m, 'kid')).toBe('unread')
+    await ev('kid', { e: 'UserPromptSubmit', t: Date.now() })
+    await ev('kid', { e: 'Stop', t: Date.now() + 1, msg: 'done again' })
+    await new Promise((r) => setTimeout(r, 400))
+    expect(notes).toEqual([])
+    expect(badges.at(-1)).toBe(0)
+    await ev('kid', { e: 'PermissionRequest', tool: 'Bash' })
+    await waitStatus(m, 'kid', 'needs_you')
+    expect(notes.map((n) => n.sessionId)).toEqual(['kid'])
+    expect(badges.at(-1)).toBe(1)
+  })
+
+  test('a finished helper whose parent is archived counts as any session', async () => {
+    await addSession('parent', { archivedAt: 5 })
+    await addSession('kid', { createdBy: 'parent' }, [{ e: 'UserPromptSubmit', t: 2000 }, { e: 'Stop', t: 3000, msg: 'done' }])
+    await ready()
+    expect(badges.at(-1)).toBe(1)
+  })
+
   test('an exited session carries its exit code in the snapshot', async () => {
     await addSession('a', {}, [{ e: 'SessionStart', t: 1500 }, { e: 'pitwall:exited', code: 0, t: 2000 }])
     await addSession('b', {}, [{ e: 'SessionStart', t: 1500 }, { e: 'pitwall:exited', code: 137, t: 2000 }])

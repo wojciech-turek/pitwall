@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import {
-  countStatuses, displayStatus, initialRuntime, nextAttention, reduceRuntime, sidebarOrder, STATUS_LABEL
+  countStatuses, displayStatus, initialRuntime, nextAttention, reduceRuntime, sessionDepth, sidebarOrder, STATUS_LABEL
 } from '../../src/shared/runtime'
 import type { HookEvent, SessionRuntime } from '../../src/shared/types'
 
@@ -203,6 +203,49 @@ describe('selectors', () => {
     })
     // A pinned session never leaves its folder: b2 stays under b.
     expect(out.map((x) => x.id)).toEqual(['a2', 'a4', 'a1', 'a3', 'b2', 'b1'])
+  })
+})
+
+describe('sessions under the one that started them', () => {
+  const snap = (sessions: any[]) => ({
+    projects: [{ id: 'p1', createdAt: 1 } as any], subProjects: [{ id: 'f', projectId: 'p1', name: 'f' } as any],
+    sessions: sessions.map((x) => ({ subProjectId: 'f', ...x }))
+  })
+  const ids = (sessions: any[]) => sidebarOrder(snap(sessions)).map((x) => x.id)
+
+  test('children come right after their parent, recursively, each level in its own order', () => {
+    expect(ids([
+      { id: 'X', createdAt: 1 }, { id: 'P', createdAt: 2 }, { id: 'C2', createdAt: 5, createdBy: 'P' },
+      { id: 'G', createdAt: 9, createdBy: 'C1' }, { id: 'C1', createdAt: 3, createdBy: 'P' }
+    ])).toEqual(['X', 'P', 'C1', 'G', 'C2'])
+  })
+  test('a pinned child stays under its parent; pinning orders siblings only', () => {
+    expect(ids([
+      { id: 'P', createdAt: 2 }, { id: 'Q', createdAt: 3 }, { id: 'C1', createdAt: 4, createdBy: 'P' },
+      { id: 'C2', createdAt: 5, createdBy: 'P', pinned: true }
+    ])).toEqual(['P', 'C2', 'C1', 'Q'])
+  })
+  test('a child whose parent is not listed sorts as a normal session', () => {
+    expect(ids([
+      { id: 'C1', createdAt: 3, createdBy: 'P' }, { id: 'C2', createdAt: 1, createdBy: 'gone' }, { id: 'Z', createdAt: 2 }
+    ])).toEqual(['C2', 'Z', 'C1'])
+  })
+  test('a loop in createdBy still lists every session once', () => {
+    const out = ids([
+      { id: 'A', createdAt: 1, createdBy: 'B' }, { id: 'B', createdAt: 2, createdBy: 'A' },
+      { id: 'S', createdAt: 3, createdBy: 'S' }, { id: 'T', createdAt: 4 }
+    ])
+    expect([...out].sort()).toEqual(['A', 'B', 'S', 'T'])
+  })
+  test('sessionDepth counts live ancestors, capped at 3', () => {
+    const list = [
+      { id: 'a' }, { id: 'b', createdBy: 'a' }, { id: 'c', createdBy: 'b' }, { id: 'd', createdBy: 'c' },
+      { id: 'e', createdBy: 'd' }, { id: 'o', createdBy: 'gone' }, { id: 'x', createdBy: 'y' }, { id: 'y', createdBy: 'x' }
+    ] as any[]
+    const byId = new Map(list.map((x) => [x.id, x]))
+    const live = new Set(list.map((x) => x.id))
+    const d = (id: string) => sessionDepth(byId.get(id), live, byId)
+    expect([d('a'), d('b'), d('c'), d('d'), d('e'), d('o'), d('x')]).toEqual([0, 1, 2, 3, 3, 0, 3])
   })
 })
 

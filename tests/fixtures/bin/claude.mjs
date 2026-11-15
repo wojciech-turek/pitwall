@@ -38,6 +38,9 @@ for (let i = 0; i + 1 < args.length; i++) {
   if (args[i] === '--session-id' || args[i] === '--resume') id = args[i + 1]
   if (args[i] === '--append-system-prompt-file') note = args[i + 1]
 }
+// A positional prompt is what follows `--`; Claude takes it as the first typed line.
+const dd = args.indexOf('--')
+const prompt = dd >= 0 ? args[dd + 1] : undefined
 // Like Claude, reads the file given with --append-system-prompt-file; its text is logged as NOTE=.
 if (env.STUB_CLAUDE_LOG && note) {
   let text
@@ -126,6 +129,15 @@ function statusline() {
 if (env.STUB_CLAUDE_SILENT !== '1') emit({ hook_event_name: 'SessionStart', session_id: id, source: 'startup' })
 console.log('STUB CLAUDE READY')
 
+/** A line typed to Claude: it echoes it back. */
+function typed(line) {
+  emit({ hook_event_name: 'UserPromptSubmit', session_id: id })
+  console.log(`echo: ${line}`)
+  emit({ hook_event_name: 'Stop', session_id: id, last_assistant_message: `echo: ${line}` })
+  statusline()
+}
+if (prompt) typed(prompt)
+
 const lines = createInterface({ input: process.stdin, crlfDelay: Infinity })
 lines.on('line', (line) => {
   switch (line) {
@@ -150,10 +162,7 @@ lines.on('line', (line) => {
       }, 2000)
       break
     default:
-      emit({ hook_event_name: 'UserPromptSubmit', session_id: id })
-      console.log(`echo: ${line}`)
-      emit({ hook_event_name: 'Stop', session_id: id, last_assistant_message: `echo: ${line}` })
-      statusline()
+      typed(line)
   }
 })
 lines.on('close', () => process.exit(0))

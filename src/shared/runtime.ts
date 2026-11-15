@@ -191,6 +191,46 @@ export function bySessionOrder(a: Pick<SessionView, 'createdAt' | 'pinned'>, b: 
   return Number(b.pinned === true) - Number(a.pinned === true) || a.createdAt - b.createdAt
 }
 
+/** How many live ancestors a session has (through `createdBy`), capped at 3 so a deep chain, or a loop, stops indenting. */
+export function sessionDepth(s: Pick<SessionView, 'createdBy'>, live: Set<string>, byId: Map<string, SessionView>): number {
+  let depth = 0
+  let cur: Pick<SessionView, 'createdBy'> | undefined = s
+  while (depth < 3 && cur?.createdBy && live.has(cur.createdBy)) {
+    depth++
+    cur = byId.get(cur.createdBy)
+  }
+  return depth
+}
+
+/**
+ * One folder's sessions as the sidebar lists them: each session's live children right after it (recursively, in
+ * their own order), so pinning only orders siblings. A child whose parent isn't in the list sorts as a top-level
+ * session. A loop in `createdBy` can't happen, but is still listed once, never forever.
+ */
+export function orderSessions<T extends Pick<SessionView, 'id' | 'createdAt' | 'pinned' | 'createdBy'>>(list: T[]): T[] {
+  const live = new Set(list.map((x) => x.id))
+  const kids = new Map<string, T[]>()
+  const roots: T[] = []
+  for (const x of list) {
+    if (x.createdBy && x.createdBy !== x.id && live.has(x.createdBy)) {
+      const k = kids.get(x.createdBy)
+      if (k) k.push(x)
+      else kids.set(x.createdBy, [x])
+    } else roots.push(x)
+  }
+  const out: T[] = []
+  const seen = new Set<string>()
+  const visit = (x: T): void => {
+    if (seen.has(x.id)) return
+    seen.add(x.id)
+    out.push(x)
+    for (const c of (kids.get(x.id) ?? []).sort(bySessionOrder)) visit(c)
+  }
+  for (const x of roots.sort(bySessionOrder)) visit(x)
+  for (const x of [...list].sort(bySessionOrder)) visit(x) // anything left is in a loop
+  return out
+}
+
 export function sidebarOrder(s: Pick<AppSnapshot, 'projects' | 'subProjects' | 'sessions'>): SessionView[] {
   const out: SessionView[] = []
   const projects = [...s.projects].sort((a, b) => a.createdAt - b.createdAt)
@@ -199,7 +239,7 @@ export function sidebarOrder(s: Pick<AppSnapshot, 'projects' | 'subProjects' | '
       .filter((sp) => sp.projectId === p.id)
       .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()))
     for (const sp of subs) {
-      out.push(...s.sessions.filter((x) => x.subProjectId === sp.id).sort(bySessionOrder))
+      out.push(...orderSessions(s.sessions.filter((x) => x.subProjectId === sp.id)))
     }
   }
   return out

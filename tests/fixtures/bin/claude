@@ -15,8 +15,10 @@ fi
 # The whole environment Claude started with, when a test asks for it.
 [ -n "$STUB_CLAUDE_ENV_FILE" ] && env > "$STUB_CLAUDE_ENV_FILE"
 
-settings="" id="" note="" prev=""
+settings="" id="" note="" prev="" prompt="" dd=""
 for a in "$@"; do
+  # A positional prompt is what follows `--`; Claude takes it as the first typed line.
+  if [ -n "$dd" ]; then prompt="$a"; elif [ "$a" = "--" ]; then dd=1; fi
   case "$prev" in
     --settings) settings="$a" ;;
     --session-id|--resume) id="$a" ;;
@@ -51,6 +53,16 @@ statusline() {
 
 [ "$STUB_CLAUDE_SILENT" = "1" ] || emit "{\"hook_event_name\":\"SessionStart\",\"session_id\":\"$id\",\"source\":\"startup\"}"
 echo "STUB CLAUDE READY"
+
+# A line typed to Claude: it echoes it back.
+typed() {
+  emit "{\"hook_event_name\":\"UserPromptSubmit\",\"session_id\":\"$id\"}"
+  echo "echo: $1"
+  msg=$(printf '%s' "echo: $1" | jq -Rs .)
+  emit "{\"hook_event_name\":\"Stop\",\"session_id\":\"$id\",\"last_assistant_message\":$msg}"
+  statusline
+}
+[ -n "$prompt" ] && typed "$prompt"
 while IFS= read -r line; do
   case "$line" in
     exit)
@@ -69,10 +81,6 @@ while IFS= read -r line; do
       emit "{\"hook_event_name\":\"SubagentStop\",\"session_id\":\"$id\",\"agent_id\":\"stub-1\",\"agent_type\":\"Explore\",\"last_assistant_message\":\"done\"}"
       emit "{\"hook_event_name\":\"Stop\",\"session_id\":\"$id\"}" ;;
     *)
-      emit "{\"hook_event_name\":\"UserPromptSubmit\",\"session_id\":\"$id\"}"
-      echo "echo: $line"
-      msg=$(printf '%s' "echo: $line" | jq -Rs .)
-      emit "{\"hook_event_name\":\"Stop\",\"session_id\":\"$id\",\"last_assistant_message\":$msg}"
-      statusline ;;
+      typed "$line" ;;
   esac
 done

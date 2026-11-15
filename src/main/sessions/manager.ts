@@ -491,7 +491,13 @@ export class SessionManager {
     this.publish()
   }
 
+  /** A helper another session started, finished while that session is still live: it has nothing to tell the user yet. */
+  private quietChild(s: Session, status: DisplayStatus): boolean {
+    return status === 'unread' && !!s.createdBy && this.active().some((x) => x.id === s.createdBy)
+  }
+
   private maybeNotify(s: Session, status: DisplayStatus, rt: SessionRuntime): void {
+    if (this.quietChild(s, status)) return
     if (this.viewing.focused && this.viewing.ids.has(s.id)) return
     if (this.isMuted(s)) return
     const sp = this.deps.store.state.subProjects.find((x) => x.id === s.subProjectId)
@@ -505,7 +511,7 @@ export class SessionManager {
   }
 
   private updateBadge(): void {
-    const c = countStatuses(this.active().filter((s) => !this.isMuted(s)).map((s) => ({ status: this.statusOf(s.id) })))
+    const c = countStatuses(this.active().filter((s) => !this.isMuted(s) && !this.quietChild(s, this.statusOf(s.id))).map((s) => ({ status: this.statusOf(s.id) })))
     this.deps.notifier.setBadge(c.needsYou + c.unread)
   }
 

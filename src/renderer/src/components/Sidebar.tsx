@@ -1,6 +1,6 @@
 import { Fragment } from 'react'
-import type { AppSnapshot, Project, SubProject } from '@shared/types'
-import { bySessionOrder } from '@shared/runtime'
+import type { AppSnapshot, Project, SessionView, SubProject } from '@shared/types'
+import { orderSessions, sessionDepth } from '@shared/runtime'
 import ArchivedList from './ArchivedList'
 import SessionRow from './SessionRow'
 import SubagentRows from './SubagentRows'
@@ -38,6 +38,15 @@ function Resizer(): React.JSX.Element {
     <div className="sidebar-resizer" data-testid="sidebar-resizer" role="separator" aria-orientation="vertical"
       aria-label="Resize sidebar" title="Drag to resize · double-click to reset" onPointerDown={onPointerDown} onDoubleClick={reset} />
   )
+}
+
+/** A folder's sessions in sidebar order, each with how deep it hangs and who started it. */
+function orderedSessions(all: SessionView[], folder: SessionView[]): { s: SessionView; depth: number; parentTitle?: string }[] {
+  const live = new Set(folder.map((x) => x.id))
+  const byId = new Map(all.map((x) => [x.id, x]))
+  return orderSessions(folder).map((s) => ({
+    s, depth: sessionDepth(s, live, byId), parentTitle: s.createdBy ? byId.get(s.createdBy)?.title : undefined
+  }))
 }
 
 export default function Sidebar({ snap, onSelect }: { snap: AppSnapshot; onSelect: (id: string) => void }): React.JSX.Element {
@@ -86,10 +95,9 @@ export default function Sidebar({ snap, onSelect }: { snap: AppSnapshot; onSelec
           ]} />
         </span>
       </div>
-      {snap.sessions.filter((s) => s.subProjectId === sp.id).sort(bySessionOrder)
-        .map((s) => (
+      {orderedSessions(snap.sessions, snap.sessions.filter((s) => s.subProjectId === sp.id)).map(({ s, depth, parentTitle }) => (
           <Fragment key={s.id}>
-            <SessionRow session={s} onSelect={onSelect} projectName={projectName} subProjectName={sp.name} />
+            <SessionRow session={s} depth={depth} startedBy={parentTitle} onSelect={onSelect} projectName={projectName} subProjectName={sp.name} />
             <SubagentRows session={s} onSelect={onSelect} />
           </Fragment>
         ))}

@@ -69,6 +69,22 @@ body { background: var(--bg-app); color: var(--text); font-family: var(--font-ui
 .sub-group:has(.session-row)::before { content: ''; position: absolute; z-index: 1; pointer-events: none; left: 22px; top: 22px; bottom: 14px; width: 1px; background: var(--tree-line); }
 .session-row > .status-icon { position: absolute; left: 25px; top: 50%; margin-top: -7px; }
 .session-row::after { content: ''; position: absolute; left: 14px; top: 50%; width: 9px; height: 1px; background: var(--tree-line); pointer-events: none; }
+/* A session an agent started hangs one step in per level, its tree line continuing from the parent's icon. */
+.session-row[data-depth="1"], .session-row[data-depth="2"], .session-row[data-depth="3"] { margin-left: 8px; }
+.session-row[data-depth="1"] { padding-left: 58px; }
+.session-row[data-depth="2"] { padding-left: 74px; }
+.session-row[data-depth="3"] { padding-left: 90px; }
+.session-row[data-depth="1"] > .status-icon { left: 41px; }
+.session-row[data-depth="2"] > .status-icon { left: 57px; }
+.session-row[data-depth="3"] > .status-icon { left: 73px; }
+.session-row[data-depth="1"]::after { left: 30px; width: 11px; }
+.session-row[data-depth="2"]::after { left: 46px; width: 11px; }
+.session-row[data-depth="3"]::after { left: 62px; width: 11px; }
+/* The parent's icon line drops through its helpers. */
+.session-row[data-depth="1"]::before, .session-row[data-depth="2"]::before, .session-row[data-depth="3"]::before { content: ''; position: absolute; left: 30px; top: 0; bottom: 0; width: 1px; background: var(--tree-line); pointer-events: none; }
+.session-row[data-depth="2"]::before { box-shadow: -16px 0 0 var(--tree-line); }
+.session-row[data-depth="3"]::before { box-shadow: -16px 0 0 var(--tree-line), -32px 0 0 var(--tree-line); }
+.session-row.visible[data-depth]::before { left: 0; top: 7px; bottom: 7px; width: 2px; border-radius: 1px; background: var(--accent); opacity: .7; box-shadow: none; }
 /* A session's subagents: one step further in, with their own line dropping from under the session's icon. */
 .subagents-toggle { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; padding: 0; border: 0; background: none; color: var(--text-faint); cursor: pointer; border-radius: 4px; }
 .subagents-toggle:hover { color: var(--text); background: var(--bg-hover); }

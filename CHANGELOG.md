@@ -12,6 +12,7 @@ All notable changes to Pitwall are listed here, newest first. Pitwall shows thes
 - **Each session gets its own ports.** `$PITWALL_PORT` and the 9 after it, so sessions' dev servers don't collide with each other.
 - **`.worktreeinclude`.** List gitignored files such as `.env.local` there, and every new worktree gets a copy.
 - **See a session's subagents.** While Claude runs subagents, each one hangs under its session in the sidebar, showing what it's doing and when it's done. Click the arrow to fold them away.
+- **Helpers hang under the session that started them.** In the sidebar and in ⌘J order, and the hover card says who started it. A finished helper stays quiet, with no notification and no Dock badge, while its session is open; one that needs you still tells you.
 - **Agents can start helper sessions.** Inside a session, the `pitwall` command (`pitwall new`, `list`, `wait`, `send`) starts another session on its own branch and worktree, with a first prompt. Claude is told about it, so "start a helper session" just works. Turn it off in Settings (**Let agents start sessions with the pitwall command**). macOS only.
 
 ### Changed

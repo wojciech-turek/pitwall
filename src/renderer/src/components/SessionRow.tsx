@@ -30,8 +30,10 @@ function setGhost(e: React.DragEvent<HTMLElement>, session: SessionView): void {
   setTimeout(() => ghost.remove(), 0)
 }
 
-export default function SessionRow({ session, onSelect, projectName, subProjectName }: {
+export default function SessionRow({ session, onSelect, projectName, subProjectName, depth = 0, startedBy }: {
   session: SessionView; onSelect: (id: string) => void; projectName?: string; subProjectName?: string
+  /** How many sessions above it started it (0 for a top-level session). */
+  depth?: number; startedBy?: string
 }): React.JSX.Element {
   const selected = useUi((s) => s.selectedSessionId === session.id)
   const visible = useUi((s) => s.visibleSessionIds.includes(session.id))
@@ -65,7 +67,7 @@ export default function SessionRow({ session, onSelect, projectName, subProjectN
   const counts = rowLineCounts(session)
   return (
     <div className={`row session-row${selected ? ' selected' : visible ? ' visible' : ''}${dragging ? ' dragging' : ''}${rowFaded(session) ? ' faded' : ''}`}
-      data-testid="session-row" data-status={session.status} data-session-id={session.id} {...hover.bind}
+      data-testid="session-row" data-status={session.status} data-session-id={session.id} data-depth={depth} {...hover.bind}
       draggable={!editing}
       onDragStart={(e) => {
         e.dataTransfer.setData(SESSION_MIME, session.id)
@@ -117,7 +119,7 @@ export default function SessionRow({ session, onSelect, projectName, subProjectN
           ]} />
         </span>
       )}
-      {hover.rect && <HoverCard session={session} rect={hover.rect} projectName={projectName} subProjectName={subProjectName} />}
+      {hover.rect && <HoverCard session={session} rect={hover.rect} projectName={projectName} subProjectName={subProjectName} startedBy={startedBy} />}
     </div>
   )
 }
