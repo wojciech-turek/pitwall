@@ -31,6 +31,7 @@ import { TmuxBackend } from './tmux-backend'
 import { releasesUrl, UpdateChecker } from './updates'
 import { accountKey, accountLabel } from './accounts'
 import { UsageTracker } from './usage'
+import { ContinueScheduler } from './sessions/continue-at'
 import { SystemMonitor } from './system-monitor'
 import { isViewing, viewingAfter, type ViewingEvent } from './viewing'
 import { windowChrome } from './window-chrome'
@@ -68,6 +69,7 @@ let disposeChanges: (() => void) | null = null
 let disposePr: (() => void) | null = null
 let disposeServers: (() => void) | null = null
 let disposeUsage: (() => void) | null = null
+let disposeContinueAt: (() => void) | null = null
 let disposeSystemStats: (() => void) | null = null
 let disposeUpdates: (() => void) | null = null
 let disposeCli: (() => void) | null = null
@@ -307,8 +309,17 @@ async function bootstrap(): Promise<void> {
   const onResume = (): void => updates.start()
   powerMonitor.on('resume', onResume)
   disposeUpdates = () => { powerMonitor.removeListener('resume', onResume); updates.stop() }
+  const continueAt = new ContinueScheduler({
+    store, manager: mgr,
+    usageFor: (id) => {
+      const s = mgr.snapshot().sessions.find((x) => x.id === id)
+      return s?.account ? usage.current().find((a) => a.account === s.account)?.usage : undefined
+    }
+  })
+  continueAt.start()
+  disposeContinueAt = () => continueAt.stop()
   disposeIpc = registerIpc({
-    manager: mgr, changes, store, git, backend, projects, bridge, paths, exec, env, home, mutex, history, usage, systemStats, updates, pr, send, dev: DEV,
+    manager: mgr, changes, store, git, backend, projects, bridge, paths, exec, env, home, mutex, history, usage, systemStats, updates, pr, continueAt, send, dev: DEV,
     launcher,
     onViewing: (ids) => {
       visibleIds = ids
@@ -360,6 +371,8 @@ if (!isPrimaryInstance) {
     disposeServers = null
     disposeUsage?.()
     disposeUsage = null
+    disposeContinueAt?.()
+    disposeContinueAt = null
     disposeSystemStats?.()
     disposeSystemStats = null
     disposeUpdates?.()

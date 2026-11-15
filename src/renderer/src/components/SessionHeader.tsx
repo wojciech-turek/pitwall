@@ -1,10 +1,12 @@
 import { useState } from 'react'
 import type { SessionView, SubProject } from '@shared/types'
 import { STATUS_LABEL } from '@shared/runtime'
+import { resetTimeFor } from '@shared/reset-time'
 import { useUi } from '../state/ui'
 import { useToast } from '../state/toast'
 import { cleanIpcError } from '../state/errors'
 import { requestFocus } from '../terminal/termCache'
+import { useUsage } from '../state/usage'
 import PrBadge from './PrBadge'
 import StatusIcon from './StatusIcon'
 
@@ -41,6 +43,37 @@ function PrFeedbackBanner({ testId, text, sessionId, what }: {
       <span>{text}</span>
       <button className="btn" data-testid={`${testId}-send`} disabled={sending}
         onClick={() => { setSending(true); void sendPrFeedback(sessionId, what).finally(() => setSending(false)) }}>Send to agent</button>
+    </div>
+  )
+}
+
+const shortTime = (at: number): string => new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+
+/** A session Claude stopped at a usage limit: offers to type "continue" when the limit resets. */
+function LimitBanner({ session }: { session: SessionView }): React.JSX.Element {
+  const usage = useUsage()
+  const [busy, setBusy] = useState(false)
+  const run = (fn: () => Promise<unknown>): void => {
+    setBusy(true)
+    void fn().catch((e) => useToast.getState().show(cleanIpcError(e))).finally(() => setBusy(false))
+  }
+  return (
+    <div className="banner warn" role="status" data-testid="limit-banner">
+      {session.continueAt !== undefined ? (
+        <>
+          <span>Will type "continue" at {shortTime(session.continueAt)}.</span>
+          <button className="btn" data-testid="continue-cancel" disabled={busy}
+            onClick={() => run(() => window.pitwall.cancelContinue(session.id))}>Cancel</button>
+        </>
+      ) : (
+        <>
+          <span>Claude stopped at a limit.</span>
+          <button className="btn" data-testid="continue-at" disabled={busy}
+            onClick={() => run(() => window.pitwall.scheduleContinue(session.id))}>
+            Continue at {shortTime(resetTimeFor(usage.find((a) => a.account === session.account)?.usage, Date.now()))}
+          </button>
+        </>
+      )}
     </div>
   )
 }
@@ -86,6 +119,7 @@ export default function SessionHeader({ session, subProject, multi = false, onCl
         <PrFeedbackBanner testId="pr-reviews" sessionId={session.id} what="reviews"
           text={`${session.pr.openThreads} unresolved review comment${session.pr.openThreads === 1 ? '' : 's'} on PR #${session.pr.number}`} />
       )}
+      {session.limitHit && <LimitBanner session={session} />}
       {session.startWarning && <div className="banner warn" role="status" data-testid="start-warning">{session.startWarning}</div>}
       {session.launchWarnings?.map((w) => <div key={w} className="banner warn" role="status" data-testid="launch-warning">{w}</div>)}
       {session.lastError && <div className="banner error" role="alert" data-testid="last-error">{session.lastError}</div>}

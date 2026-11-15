@@ -2,6 +2,14 @@ import type { AppSnapshot, DisplayStatus, HookEvent, SessionRuntime, SessionView
 
 export const initialRuntime: SessionRuntime = { activity: 'starting', firstEventSeen: false }
 
+/** Claude's own words for a usage limit, for when its error type isn't `rate_limit`. */
+const LIMIT_TEXT = /\b(rate|usage) limit|limit (reached|hit)|hit your limit/i
+
+function clearLimit(rt: SessionRuntime): SessionRuntime {
+  const { limitHit: _l, ...rest } = rt
+  return rest
+}
+
 function clearNeeds(rt: SessionRuntime): SessionRuntime {
   const { needsInput: _n, ...rest } = rt
   return rest
@@ -85,9 +93,9 @@ function applyMain(rt: SessionRuntime, ev: HookEvent): SessionRuntime {
   const busy = rt.activity === 'working' || rt.activity === 'needs_input'
   switch (ev.e) {
     case 'SessionStart':
-      return ev.src === 'compact' ? rt : { ...clearNeeds(clearRuns(rt)), activity: 'idle' }
+      return ev.src === 'compact' ? rt : { ...clearLimit(clearNeeds(clearRuns(rt))), activity: 'idle' }
     case 'UserPromptSubmit': {
-      const { lastError: _e, ...rest } = clearNeeds(rt)
+      const { lastError: _e, ...rest } = clearLimit(clearNeeds(rt))
       const next: SessionRuntime = { ...rest, activity: 'working' }
       if (rt.subagents) {
         const live = rt.subagents.filter((x) => x.state !== 'done')
@@ -127,7 +135,9 @@ function applyMain(rt: SessionRuntime, ev: HookEvent): SessionRuntime {
     }
     case 'StopFailure': {
       const { lastMessage: _m, ...rest } = clearNeeds(rt)
-      return { ...rest, activity: 'idle', lastFinishedAt: ev.t, lastError: ev.err ?? 'Claude stopped with an error' }
+      const next: SessionRuntime = { ...rest, activity: 'idle', lastFinishedAt: ev.t, lastError: ev.err ?? 'Claude stopped with an error' }
+      if (ev.err === 'rate_limit' || LIMIT_TEXT.test(ev.err ?? '') || LIMIT_TEXT.test(ev.msg ?? '')) next.limitHit = true
+      return next
     }
     case 'SessionEnd':
       return ev.reason === 'clear' || ev.reason === 'resume' ? rt : { ...clearNeeds(rt), activity: 'exited' }
@@ -139,7 +149,7 @@ function applyMain(rt: SessionRuntime, ev: HookEvent): SessionRuntime {
     case 'pitwall:warning':
       return ev.msg ? { ...rt, warnings: { ...rt.warnings, [ev.kind || 'other']: ev.msg } } : rt
     case 'pitwall:exited': {
-      const next: SessionRuntime = { ...clearNeeds(clearRuns(rt)), activity: 'exited' }
+      const next: SessionRuntime = { ...clearLimit(clearNeeds(clearRuns(rt))), activity: 'exited' }
       if (ev.code != null) next.exitCode = ev.code
       return next
     }

@@ -19,6 +19,17 @@ describe('reduceRuntime', () => {
     expect(o.needsInput).toBeUndefined()
     expect(o.lastError).toBeUndefined()
   })
+  test('StopFailure at a usage limit sets limitHit; other failures do not; later activity clears it', () => {
+    const hit = r(rt({ activity: 'working' }), 'StopFailure', { err: 'rate_limit', msg: 'API Error: Rate limit reached' })
+    expect(hit.limitHit).toBe(true)
+    expect(r(rt({ activity: 'working' }), 'StopFailure', { err: 'server_error', msg: 'Usage limit reached' }).limitHit).toBe(true)
+    expect(r(rt({ activity: 'working' }), 'StopFailure', { err: 'server_error', msg: 'You hit your limit' }).limitHit).toBe(true)
+    expect(r(rt({ activity: 'working' }), 'StopFailure', { err: 'server_error', msg: 'oops' }).limitHit).toBeUndefined()
+    expect(r(hit, 'UserPromptSubmit').limitHit).toBeUndefined()
+    expect(r(hit, 'SessionStart', { src: 'startup' }).limitHit).toBeUndefined()
+    expect(r(hit, 'SessionStart', { src: 'compact' }).limitHit).toBe(true)
+    expect(r(hit, 'pitwall:exited', { code: 0 }).limitHit).toBeUndefined()
+  })
   test('PreToolUse', () => {
     expect(r(rt({ activity: 'idle' }), 'PreToolUse', { tool: 'Bash' }).activity).toBe('working')
     expect(r(rt({ activity: 'working' }), 'PreToolUse', { tool: 'AskUserQuestion' })).toMatchObject({ activity: 'needs_input', needsInput: 'question' })

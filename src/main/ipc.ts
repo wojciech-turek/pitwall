@@ -25,6 +25,7 @@ import type { UpdateChecker } from './updates'
 import type { UsageTracker } from './usage'
 import type { SystemMonitor } from './system-monitor'
 import type { PrPoller } from './pr'
+import type { ContinueScheduler } from './sessions/continue-at'
 import { checksMessage, fetchReviewThreads, reviewsMessage } from './pr-feedback'
 
 export interface IpcDeps {
@@ -45,6 +46,7 @@ export interface IpcDeps {
   systemStats: Pick<SystemMonitor, 'current' | 'onChange'>
   updates: Pick<UpdateChecker, 'state' | 'checkNow' | 'onChange' | 'hasFeed'>
   pr: Pick<PrPoller, 'feedbackContext'>
+  continueAt: Pick<ContinueScheduler, 'schedule' | 'cancel'>
   /** True for an unpackaged (dev) run. */
   dev: boolean
   /** What starts Claude (archiving relaunches it when the worktree can't be removed). */
@@ -115,6 +117,12 @@ export function registerIpc(d: IpcDeps): () => void {
     sessionFolder(id)
     await backend.pasteText(claudeTmuxName(id), text) // bracketed paste, never Enter
   })
+  const liveSession = (id: unknown): string => {
+    if (typeof id !== 'string' || !store.state.sessions.some((x) => x.id === id && x.archivedAt === undefined)) throw new Error('Session not found')
+    return id
+  }
+  handle(IPC.scheduleContinue, async (id: unknown) => ({ at: await d.continueAt.schedule(liveSession(id)) }))
+  handle(IPC.cancelContinue, (id: unknown) => d.continueAt.cancel(liveSession(id)))
   handle(IPC.sendPrFeedback, async (id: unknown, what: unknown): Promise<{ ok: true; count: number } | { ok: false; message: string }> => {
     if (typeof id !== 'string' || (what !== 'checks' && what !== 'reviews')) return { ok: false, message: 'Invalid request.' }
     const c = await d.pr.feedbackContext(id)

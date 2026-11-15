@@ -43,6 +43,8 @@ export interface Session {
   continuedFrom?: string
   /** The first of the session's block of 10 ports, exported as $PITWALL_PORT. */
   portBase?: number
+  /** When Pitwall will type "continue" (ms): the limit Claude stopped at resets then. */
+  continueAt?: number
   /** The id of the session that started this one with the `pitwall` command. */
   createdBy?: string
 }
@@ -86,6 +88,8 @@ export interface SessionRuntime {
   warnings?: Record<string, string>
   /** What the session was doing before a subagent needed the user; restored once that is answered. */
   resumeActivity?: Activity
+  /** Claude stopped its last turn at a usage limit. */
+  limitHit?: boolean
   /** The newest subagent runs, oldest first. */
   subagents?: SubagentRun[]
   /** Agent-tool descriptions waiting for their SubagentStart, oldest first, at most 20. */
@@ -111,6 +115,8 @@ export interface SessionView extends Session {
   server?: { running: boolean; ports: number[] }
   /** The launcher's warnings for this run of Claude (a terminal repaint can wipe its printed lines). */
   launchWarnings?: string[]
+  /** Claude stopped its last turn at a usage limit. */
+  limitHit?: boolean
   /** The session's subagent runs (oldest first). */
   subagents?: SubagentRun[]
 }

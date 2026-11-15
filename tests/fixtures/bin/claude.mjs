@@ -161,6 +161,10 @@ lines.on('line', (line) => {
         emit({ hook_event_name: 'Stop', session_id: id })
       }, 2000)
       break
+    case 'limit':
+      // Like Claude stopping a turn at a usage limit.
+      emit({ hook_event_name: 'StopFailure', session_id: id, error: 'rate_limit', last_assistant_message: 'API Error: Rate limit reached' })
+      break
     default:
       typed(line)
   }

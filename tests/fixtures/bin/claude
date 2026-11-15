@@ -80,6 +80,9 @@ while IFS= read -r line; do
       sleep 2
       emit "{\"hook_event_name\":\"SubagentStop\",\"session_id\":\"$id\",\"agent_id\":\"stub-1\",\"agent_type\":\"Explore\",\"last_assistant_message\":\"done\"}"
       emit "{\"hook_event_name\":\"Stop\",\"session_id\":\"$id\"}" ;;
+    limit)
+      # Like Claude stopping a turn at a usage limit.
+      emit "{\"hook_event_name\":\"StopFailure\",\"session_id\":\"$id\",\"error\":\"rate_limit\",\"last_assistant_message\":\"API Error: Rate limit reached\"}" ;;
     *)
       typed "$line" ;;
   esac

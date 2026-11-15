@@ -145,6 +145,7 @@ export class SessionManager {
       const warning = this.warnings.get(s.id)
       if (warning) view.startWarning = warning
       if (rt.warnings) view.launchWarnings = Object.values(rt.warnings)
+      if (rt.limitHit) view.limitHit = true
       if (rt.subagents?.length) view.subagents = rt.subagents.map((x) => ({ ...x }))
       return view
     })
