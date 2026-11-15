@@ -220,6 +220,18 @@ describe('removeStrayWorktrees', () => {
     expect(await t.git.branchExists(t.root, 'keep-branch')).toBe(true)
   })
 
+  test('the default branch is never deleted, even merged and checked out only in the worktree being removed', async () => {
+    const t = await setup()
+    await t.sh(t.root, 'checkout', '-q', '-b', 'dev') // the main checkout moves on; an agent put main in a worktree
+    const p = t.wt('on-main')
+    await t.sh(t.root, 'worktree', 'add', '-q', p, 'main')
+    expect(await t.git.defaultBranch(t.root)).toBe('main')
+    const res = await removeStrayWorktrees({ ...t.base(), paths: [p], deleteBranches: true })
+    expect(res).toEqual([{ path: p, ok: true }])
+    expect(await exists(p)).toBe(false)
+    expect(await t.git.branchExists(t.root, 'main')).toBe(true)
+  })
+
   test('never forces: no --force on worktree remove, and branches go with -d, never -D', async () => {
     const t = await setup()
     const a = await t.stray('a')

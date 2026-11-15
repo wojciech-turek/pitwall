@@ -151,6 +151,8 @@ export interface RemoveResult { path: string; ok: boolean; message?: string }
 export async function removeStrayWorktrees(o: StrayOptions & { paths: string[]; deleteBranches: boolean }): Promise<RemoveResult[]> {
   const platform = o.platform ?? process.platform
   const strays = await findStrayWorktrees(o)
+  // The default branch is "merged" into itself: its worktree may go, the branch never (unknown: no branch goes).
+  const keep = o.deleteBranches ? await o.git.defaultBranch(o.repoRoot).catch(() => null) : null
   const keyed = await Promise.all(strays.map(async (w) => ({ w, key: await canon(w.path, platform) })))
   const results: RemoveResult[] = []
   const done = new Set<string>()
@@ -173,7 +175,7 @@ export async function removeStrayWorktrees(o: StrayOptions & { paths: string[]; 
         continue
       }
       // `branch -d`: git itself refuses a branch that isn't merged.
-      if (o.deleteBranches && w.branch) await o.git.deleteMergedBranch(o.repoRoot, w.branch).catch(() => undefined)
+      if (o.deleteBranches && w.branch && keep && w.branch !== keep) await o.git.deleteMergedBranch(o.repoRoot, w.branch).catch(() => undefined)
       results.push({ path, ok: true })
     }
   }
