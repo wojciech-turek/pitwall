@@ -129,6 +129,8 @@ export function buildSessionEnv(input: {
   userStatusLine?: string
   /** Windows: Git Bash, which runs the user's status line as Claude Code would (else PowerShell does). */
   gitBash?: string
+  /** The folder of the added Claude account the session runs on (never given for the default account or a pinned project). */
+  claudeAccountDir?: string
   /** The `pitwall` command (not on Windows): its socket, this session's token, the Node and client that run it, its bin dir. */
   cli?: { socket: string; token: string; node: string; js: string; dir: string }
   home: string
@@ -158,6 +160,11 @@ export function buildSessionEnv(input: {
     PITWALL_EVENTS_FILE: input.eventsFile,
     PITWALL_CLAUDE_BIN: input.claudeBin
   })
+  if (input.claudeAccountDir) {
+    // The launcher drops inherited Claude credentials for these sessions: they outrank the account's login.
+    env.CLAUDE_CONFIG_DIR = input.claudeAccountDir
+    env.PITWALL_CLAUDE_ACCOUNT = '1'
+  }
   if (input.portBase !== undefined) env.PITWALL_PORT = String(input.portBase)
   if (input.setupCommand) env.PITWALL_SETUP_COMMAND = input.setupCommand
   if (input.devCommand) env.PITWALL_DEV_COMMAND = input.devCommand

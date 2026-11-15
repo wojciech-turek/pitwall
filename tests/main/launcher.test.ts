@@ -23,7 +23,7 @@ const project: Project = {
   identity: { sshKeyPath: '/k/id', ghAccount: 'dev-work', gitName: 'Jane', gitEmail: 'm@x.io' }
 }
 
-async function writeEnv(p: Project, setupCommand?: string, userStatusLine?: string, server?: { devCommand?: string; portBase?: number }) {
+async function writeEnv(p: Project, setupCommand?: string, userStatusLine?: string, server?: { devCommand?: string; portBase?: number; claudeAccountDir?: string }) {
   const env = buildSessionEnv({
     project: p, session: { id: ID, title: TITLE }, rootPath: cwd, sessionDir: sd, eventsFile: eventsFile(t.paths, ID),
     claudeBin: t.paths.claudeBin, ghBin: t.paths.ghBin, setupCommand, userStatusLine, home: t.tmp, ...server
@@ -31,7 +31,7 @@ async function writeEnv(p: Project, setupCommand?: string, userStatusLine?: stri
   await writeFile(join(sd, 'env.sh'), renderEnvFile(env), { mode: 0o600 })
 }
 
-async function setup(extra: { setupCommand?: string; silent?: boolean; project?: Project; userStatusLine?: string; dir?: string; server?: { devCommand?: string; portBase?: number } } = {}) {
+async function setup(extra: { setupCommand?: string; silent?: boolean; project?: Project; userStatusLine?: string; dir?: string; server?: { devCommand?: string; portBase?: number; claudeAccountDir?: string } } = {}) {
   sd = extra.dir ?? sessionDir(t.paths, ID)
   cwd = join(t.tmp, 'work dir')
   await mkdir(sd, { recursive: true })
@@ -299,6 +299,42 @@ describe('pitwall-launch', () => {
     expect(after).toEqual(expect.arrayContaining([
       'GIT_AUTHOR_EMAIL=new@x.io', 'GIT_SSH_COMMAND=', 'GH_TOKEN=token-for-dev-personal', 'GH_CONFIG_DIR='
     ]))
+  })
+
+  describe('Claude credentials inherited from the environment', () => {
+    const KEYS = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN']
+    const claudeEnv = async (): Promise<Record<string, string>> => {
+      const file = join(t.tmp, 'claude.env')
+      t.env.STUB_CLAUDE_ENV_FILE = file
+      for (const k of KEYS) t.env[k] = `inherited-${k}`
+      await start()
+      await waitCapture('STUB CLAUDE READY')
+      return Object.fromEntries((await readFile(file, 'utf8')).split('\n').filter((l) => l.includes('=')).map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]))
+    }
+
+    test('on an added account they are dropped, so the account shown is the one used', async () => {
+      await setup({ server: { claudeAccountDir: join(t.tmp, 'acct') } })
+      const env = await claudeEnv()
+      expect(env.CLAUDE_CONFIG_DIR).toBe(join(t.tmp, 'acct'))
+      for (const k of KEYS) expect(k in env).toBe(false)
+    })
+
+    test("on an added account, one the project set itself stays", async () => {
+      await setup({
+        project: { ...project, extraEnv: [{ key: 'ANTHROPIC_API_KEY', value: 'from-project' }] },
+        server: { claudeAccountDir: join(t.tmp, 'acct') }
+      })
+      const env = await claudeEnv()
+      expect(env.ANTHROPIC_API_KEY).toBe('from-project')
+      expect('ANTHROPIC_AUTH_TOKEN' in env).toBe(false)
+    })
+
+    test('on the default account they pass through, as before', async () => {
+      await setup()
+      const env = await claudeEnv()
+      for (const k of KEYS) expect(env[k]).toBe(`inherited-${k}`)
+      expect('CLAUDE_CONFIG_DIR' in env).toBe(false)
+    })
   })
 
   test('token fetch failure fails closed: gh runs signed out, not as the active account', async () => {

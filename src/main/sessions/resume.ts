@@ -6,7 +6,7 @@ import { samePath, uniquePath } from '../git'
 import { sessionDir } from '../paths'
 import { claudeTmuxName } from '../tmux'
 import { copyWorktreeIncludes } from '../worktree-include'
-import { checkIdentity, launchTmuxFor, msg, progressSteps, StepError, takenPorts, writeSessionFiles, type StarterDeps } from './starter'
+import { accountForNew, checkIdentity, launchTmuxFor, msg, progressSteps, StepError, takenPorts, writeSessionFiles, type StarterDeps } from './starter'
 
 const isDir = (p: string) => stat(p).then((s) => s.isDirectory(), () => false)
 /** A path as git records it, symlinks resolved, though the folder (and some of its parents) may be gone. */
@@ -175,6 +175,10 @@ async function doResume(
     }
 
     const session = restore(s, r, newBranch)
+    // Back on the account that is active now (the one it was archived on may be the one that ran out).
+    const account = accountForNew(project, undefined, deps)
+    if (account) session.account = account
+    else delete session.account
     await run('files', async () => {
       created.dir = true
       if (deps.ports) {
@@ -195,6 +199,8 @@ async function doResume(
         const i = d.sessions.findIndex((x) => x.id === sessionId)
         if (i < 0) throw new Error('Session not found.')
         d.sessions[i] = restore(d.sessions[i], r, newBranch)
+        if (account) d.sessions[i].account = account
+        else delete d.sessions[i].account
       })
     })
 

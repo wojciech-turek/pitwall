@@ -137,6 +137,57 @@ describe('startSession', () => {
     expect(await has(join(d, 'continue-note.txt'))).toBe(false)
   })
 
+  describe('the Claude account of a new session', () => {
+    const acct = () => ({ id: 'a1', dir: join(t.tmp, 'claude-accounts', 'a1'), addedAt: 1 })
+    const envSh = (id: string) => readFile(join(sessionDir(t.paths, id), 'env.sh'), 'utf8')
+
+    test('the default account: no account on the session, no CLAUDE_CONFIG_DIR in its environment', async () => {
+      const { sp } = await addRepo()
+      await start(input(sp))
+      const s = store.state.sessions[0]
+      expect('account' in s).toBe(false)
+      expect(await envSh(s.id)).not.toContain('CLAUDE_CONFIG_DIR')
+      expect(await envSh(s.id)).not.toContain('PITWALL_CLAUDE_ACCOUNT')
+    })
+
+    test('the active account, with its folder in the environment', async () => {
+      const { sp } = await addRepo()
+      await store.update((d) => { d.settings.claudeAccounts = [acct()]; d.settings.activeAccount = 'a1' })
+      await start(input(sp))
+      const s = store.state.sessions[0]
+      expect(s.account).toBe('a1')
+      expect(await envSh(s.id)).toContain(`export CLAUDE_CONFIG_DIR='${acct().dir}'`)
+      expect(await envSh(s.id)).toContain("export PITWALL_CLAUDE_ACCOUNT='1'")
+    })
+
+    test("a helper takes its parent's account, not the active one", async () => {
+      const { sp } = await addRepo()
+      await store.update((d) => { d.settings.claudeAccounts = [acct()]; d.settings.activeAccount = 'a1' })
+      await start(input(sp, { title: 'Parent' }))
+      const parent = store.state.sessions[0]
+      await store.update((d) => { delete d.settings.activeAccount })
+      await start(input(sp, { title: 'Helper', createdBy: parent.id }))
+      expect(store.state.sessions[1].account).toBe('a1')
+      // And the other way round: a parent on the default account, while another is active.
+      await store.update((d) => { delete d.sessions[0].account; d.settings.activeAccount = 'a1' })
+      await start(input(sp, { title: 'Helper two', createdBy: parent.id }))
+      expect('account' in store.state.sessions[2]).toBe(false)
+    })
+
+    test("a project that sets its own CLAUDE_CONFIG_DIR keeps it; the session records no account", async () => {
+      const { sp } = await addRepo()
+      await store.update((d) => {
+        d.settings.claudeAccounts = [acct()]; d.settings.activeAccount = 'a1'
+        d.projects[0].extraEnv = [{ key: 'CLAUDE_CONFIG_DIR', value: join(t.tmp, 'pinned') }]
+      })
+      await start(input(sp))
+      const s = store.state.sessions[0]
+      expect('account' in s).toBe(false)
+      expect(await envSh(s.id)).toContain(`export CLAUDE_CONFIG_DIR='${join(t.tmp, 'pinned')}'`)
+      expect(await envSh(s.id)).not.toContain('PITWALL_CLAUDE_ACCOUNT')
+    })
+  })
+
   test('no first prompt and no createdBy: neither file nor field', async () => {
     const { sp } = await addRepo()
     await start(input(sp))

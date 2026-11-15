@@ -8,6 +8,12 @@ load_identity() {
   . "$dir/env.sh"
   # The `pitwall` command (load_identity runs in a fresh subshell per launch, so this never stacks).
   [ -n "$PITWALL_CLI_DIR" ] && PATH="$PITWALL_CLI_DIR:$PATH" && export PATH
+  if [ -n "$PITWALL_CLAUDE_ACCOUNT" ]; then
+    # On an added Claude account, credentials inherited from the user's shell must not stand in for its login (Claude
+    # prefers them). Drop them, then re-apply env.sh so one the project set on purpose stays.
+    unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_OAUTH_TOKEN
+    . "$dir/env.sh"
+  fi
   if [ -n "$PITWALL_GH_ACCOUNT" ]; then
     # Tokens inherited from the user's shell must not stand in for the project's account (gh prefers them, even
     # for `gh auth token`). Drop them, then re-apply env.sh so the project's own extra variables stay.

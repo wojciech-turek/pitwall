@@ -14,7 +14,7 @@ import {
   buildHookSettings, findUserStatusLine, hookCommandFor, statusLineCommandFor, windowsHookCommand, windowsStatusLineCommand
 } from '../hooks/settings'
 import { cliSocketPath, cliToken } from '../cli/auth'
-import { sessionConfigDir } from '../accounts'
+import { DEFAULT_ACCOUNT_ID, sessionAccountId, sessionConfigDir } from '../accounts'
 import { buildSessionEnv, getGhToken, renderEnvFile } from '../identity'
 import { eventsFile, sessionDir, type AppPaths } from '../paths'
 import { findGitBash, windowsPowerShell } from '../platform'
@@ -127,11 +127,14 @@ export async function writeSessionFiles(session: Session, deps: StarterDeps): Pr
   const events = eventsFile(deps.paths, session.id)
   const windows = (deps.platform ?? process.platform) === 'win32'
   const accounts = { settings: deps.store.state.settings, home: deps.home, env: deps.env }
-  const userStatusLine = await findUserStatusLine(session.cwd, sessionConfigDir(project, session, accounts))
+  const configDir = sessionConfigDir(project, session, accounts)
+  const accountId = sessionAccountId(project, session, accounts)
+  const userStatusLine = await findUserStatusLine(session.cwd, configDir)
   const env = buildSessionEnv({
     project,
     session,
     portBase: session.portBase,
+    claudeAccountDir: accountId !== null && accountId !== DEFAULT_ACCOUNT_ID ? configDir : undefined,
     rootPath: sp.repoRoot ?? sp.path,
     sessionDir: dir,
     eventsFile: events,
@@ -172,6 +175,18 @@ export async function writeSessionFiles(session: Session, deps: StarterDeps): Pr
   const note = [cont.trimEnd(), agent].filter(Boolean).join('\n\n')
   if (note) await writeFileAtomic(join(dir, 'system-note.txt'), note + '\n')
   else await rm(join(dir, 'system-note.txt'), { force: true })
+}
+
+/**
+ * The account a session starting now runs on: its parent's when a session started it with the `pitwall` command (a
+ * helper stays with the session it works for), else the active one. Undefined for the default account and for a
+ * project that sets its own.
+ */
+export function accountForNew(project: Project, createdBy: string | undefined, deps: Pick<StarterDeps, 'store' | 'home' | 'env'>): string | undefined {
+  const st = deps.store.state
+  const parent = createdBy === undefined ? undefined : st.sessions.find((s) => s.id === createdBy)
+  const id = sessionAccountId(project, { account: parent ? parent.account : st.settings.activeAccount }, { settings: st.settings, home: deps.home, env: deps.env })
+  return id === null || id === DEFAULT_ACCOUNT_ID ? undefined : id
 }
 
 /** What an agent is told about the `pitwall` command (Settings can turn it off). */
@@ -340,6 +355,8 @@ export async function startSessionLocked(
       lastViewedAt: Date.now()
     }
     if (input.createdBy) session.createdBy = input.createdBy
+    const account = accountForNew(project, input.createdBy, deps)
+    if (account) session.account = account
     if (input.continueClaudeId && input.continuedFrom) session.continuedFrom = input.continuedFrom
 
     await run('files', async () => {

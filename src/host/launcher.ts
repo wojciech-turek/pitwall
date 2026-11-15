@@ -81,6 +81,8 @@ const PROBE_SECONDS = 20
 const SLOW_PROBE_MS = 5_000
 
 const TOKENS = ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN']
+/** Credentials Claude reads before an account's login; inherited ones must never stand in for an added account. */
+export const CLAUDE_CREDENTIAL_VARS = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN']
 
 /** The words the shell launcher uses (resources/bin/pitwall-launch); a test keeps the two in step. */
 export const MESSAGES = {
@@ -432,8 +434,10 @@ export class Launcher {
     const { platform } = this.o
     const session = this.readSessionEnv()
     const account = session.PITWALL_GH_ACCOUNT
-    if (!account) return mergeEnv(this.o.env, session, platform)
     const base = { ...this.o.env }
+    // On an added Claude account, inherited credentials go; the session's own variables go on top, so one the project set stays.
+    if (session.PITWALL_CLAUDE_ACCOUNT) for (const k of CLAUDE_CREDENTIAL_VARS) deleteEnv(base, k, platform)
+    if (!account) return mergeEnv(base, session, platform)
     for (const k of TOKENS) deleteEnv(base, k, platform)
     // The session's own variables go on top again, so a project's extra variables stay.
     const env = mergeEnv(base, session, platform)

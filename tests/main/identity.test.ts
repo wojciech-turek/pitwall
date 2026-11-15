@@ -83,6 +83,15 @@ describe('identity', () => {
     expect(bad('1BAD')).toThrow(/invalid/)
   })
 
+  test("an added Claude account: its folder and a flag for the launcher; without one, nothing is added", () => {
+    const env = buildSessionEnv({ ...base, claudeAccountDir: '/data/claude-accounts/a1' })
+    expect(env.CLAUDE_CONFIG_DIR).toBe('/data/claude-accounts/a1')
+    expect(env.PITWALL_CLAUDE_ACCOUNT).toBe('1')
+    const plain = buildSessionEnv(base)
+    expect('CLAUDE_CONFIG_DIR' in plain).toBe(false)
+    expect('PITWALL_CLAUDE_ACCOUNT' in plain).toBe(false)
+  })
+
   test('the pitwall command: socket, token, node, client and bin dir, only when given', () => {
     const cli = { socket: '/d/cli.sock', token: 'abc', node: '/app/node', js: '/app/out/cli/index.js', dir: '/d/cli-bin' }
     const env = buildSessionEnv({ ...base, cli })

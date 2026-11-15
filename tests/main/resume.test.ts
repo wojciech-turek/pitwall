@@ -167,6 +167,22 @@ describe('resumeSession', () => {
     await waitFor(async () => manager.snapshot().sessions[0].status !== 'starting', 8000, 'tracked')
   })
 
+  test('a session brought back from the archive takes the active Claude account', async () => {
+    const { sp } = await addRepo()
+    const s = await startOne(sp)
+    await archive(s)
+    const acct = { id: 'a1', dir: join(t.tmp, 'claude-accounts', 'a1'), addedAt: 1 }
+    await store.update((d) => { d.settings.claudeAccounts = [acct]; d.settings.activeAccount = 'a1' })
+    expect((await manager.resume(s.id, 'rq', () => {})).ok).toBe(true)
+    expect(get(s.id).account).toBe('a1')
+    expect(await readFile(join(sessionDir(t.paths, s.id), 'env.sh'), 'utf8')).toContain(`export CLAUDE_CONFIG_DIR='${acct.dir}'`)
+    // And back to the default one when that is active again.
+    await archive(get(s.id))
+    await store.update((d) => { delete d.settings.activeAccount })
+    expect((await manager.resume(s.id, 'rq2', () => {})).ok).toBe(true)
+    expect('account' in get(s.id)).toBe(false)
+  })
+
   test('the original branch is reused when it still exists', async () => {
     const { r, sp } = await addRepo()
     await git(r, r.root, 'checkout', '-b', 'feature/x')

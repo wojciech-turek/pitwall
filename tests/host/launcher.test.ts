@@ -96,6 +96,42 @@ beforeEach(() => {
 afterEach(() => rmSync(dir, { recursive: true, force: true }))
 
 describe('the host launcher', () => {
+  describe('Claude credentials inherited from the environment', () => {
+    const KEYS = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN']
+    const inherited = (): Record<string, string> =>
+      ({ PATH: '/usr/bin', HOME: dir, ...Object.fromEntries(KEYS.map((k) => [k, `inherited-${k}`])) })
+    const claudeEnv = async (): Promise<Record<string, string>> => {
+      launcher({ env: inherited() }).start()
+      await until(() => spawned.length === 1, 'claude started')
+      return lastPty().env
+    }
+
+    test('on an added account they are dropped, so the account shown is the one used', async () => {
+      writeEnv({ ...baseVars(), CLAUDE_CONFIG_DIR: '/data/acct', PITWALL_CLAUDE_ACCOUNT: '1' })
+      const env = await claudeEnv()
+      expect(env.CLAUDE_CONFIG_DIR).toBe('/data/acct')
+      for (const k of KEYS) expect(k in env).toBe(false)
+    })
+
+    test('on an added account, one the project set itself stays', async () => {
+      writeEnv({ ...baseVars(), CLAUDE_CONFIG_DIR: '/data/acct', PITWALL_CLAUDE_ACCOUNT: '1', ANTHROPIC_API_KEY: 'from-project' })
+      const env = await claudeEnv()
+      expect(env.ANTHROPIC_API_KEY).toBe('from-project')
+      expect('ANTHROPIC_AUTH_TOKEN' in env).toBe(false)
+    })
+
+    test('with no GitHub account either, they are still dropped', async () => {
+      writeEnv({ ...baseVars(), PITWALL_GH_ACCOUNT: '', CLAUDE_CONFIG_DIR: '/data/acct', PITWALL_CLAUDE_ACCOUNT: '1' })
+      const env = await claudeEnv()
+      for (const k of KEYS) expect(k in env).toBe(false)
+    })
+
+    test('on the default account they pass through, as before', async () => {
+      const env = await claudeEnv()
+      for (const k of KEYS) expect(env[k]).toBe(`inherited-${k}`)
+    })
+  })
+
   test('first launch: session id, settings and name; the token only in the environment; inherited tokens never used', async () => {
     const l = launcher()
     l.start()
