@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type CSSProperties, type RefObject } from 'react'
 import type { AppSnapshot } from '@shared/types'
 import { panes, type LayoutNode, type PaneNode, type SplitNode } from '../state/layout'
-import { useUi } from '../state/ui'
+import { effectiveTab, showsServerTab, useUi, withServerTab } from '../state/ui'
+import { useSnapStore } from '../state/snapshot'
 import { requestFocus } from '../terminal/termCache'
 import DropLayer from './DropLayer'
 import { focusActiveFile } from './FileEditor'
@@ -33,8 +34,12 @@ export function focusActivePane(): void {
   if (!paneId || !sessionId || ui.dialog || ui.palette) return
   const el = document.querySelector(`.pane[data-pane-id="${CSS.escape(paneId)}"]`)
   if (!el || el.contains(document.activeElement)) return
-  const tab = ui.activeTab[sessionId] ?? 'claude'
-  if (tab === 'claude' || tab === 'shell') requestFocus(sessionId, tab)
+  const snap = useSnapStore.getState().snap
+  const session = snap?.sessions.find((s) => s.id === sessionId)
+  const sub = snap?.subProjects.find((s) => s.id === session?.subProjectId)
+  const shown = withServerTab(ui.tabs[sessionId] ?? [{ id: 'claude' }], showsServerTab(sub?.devCommand))
+  const tab = effectiveTab(ui.activeTab[sessionId] ?? 'claude', shown)
+  if (tab === 'claude' || tab === 'shell' || tab === 'server') requestFocus(sessionId, tab)
   else if (!focusActiveFile(sessionId) && document.activeElement instanceof HTMLElement) document.activeElement.blur()
 }
 

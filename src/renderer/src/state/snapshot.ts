@@ -3,7 +3,7 @@ import { create } from 'zustand'
 import type { AppSnapshot } from '@shared/types'
 import type { PitwallApi } from '@shared/api'
 
-const useSnapStore = create<{ snap: AppSnapshot | null }>()(() => ({ snap: null }))
+export const useSnapStore = create<{ snap: AppSnapshot | null }>()(() => ({ snap: null }))
 let started = false
 const api = (): PitwallApi => (globalThis as unknown as { pitwall: PitwallApi }).pitwall
 let pushSeq = 0 // bumped on every pushed snapshot

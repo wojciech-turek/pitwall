@@ -1,7 +1,6 @@
 import { useEffect } from 'react'
 import type { AppSnapshot } from '@shared/types'
-import { platform } from '../platform'
-import { useUi, withServerTab } from '../state/ui'
+import { effectiveTab, showsServerTab, useUi, withServerTab } from '../state/ui'
 import SessionHeader from './SessionHeader'
 import TabStrip from './TabStrip'
 import DiffView from './DiffView'
@@ -19,9 +18,9 @@ export default function MainArea({ snap, sessionId, paneId, multi }: {
   const session = snap.sessions.find((s) => s.id === sessionId)
   if (!session || !stored) return null
   const sub = snap.subProjects.find((s) => s.id === session.subProjectId)
-  const tabs = withServerTab(stored, !!sub?.devCommand && platform() !== 'win32')
+  const tabs = withServerTab(stored, showsServerTab(sub?.devCommand))
   // An active Server tab that isn't shown (no dev command) reads as Claude; nothing is written to the store.
-  const activeTab = tabs.find((t) => t.id === active) ?? tabs[0]
+  const activeTab = tabs.find((t) => t.id === effectiveTab(active, tabs))!
   return (
     <div className="main-area">
       <SessionHeader session={session} subProject={sub} multi={multi} onClose={() => closePane(paneId)} />

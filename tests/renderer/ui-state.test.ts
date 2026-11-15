@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { layoutStorage, useUi, withServerTab, type MainTab } from '../../src/renderer/src/state/ui'
+import { layoutStorage, useUi, effectiveTab, withServerTab, type MainTab } from '../../src/renderer/src/state/ui'
 import { EMPTY_LAYOUT, panes, parseLayout, type Layout } from '../../src/renderer/src/state/layout'
 
 const file = (p: string) => ({ id: `file:${p}`, kind: 'file' as const, path: p })
@@ -298,5 +298,16 @@ describe('withServerTab', () => {
     useUi.setState({ tabs: { s1: withServerTab(useUi.getState().tabs['s1'], true) } })
     ui.closeTab('s1', 'server')
     expect(ids(useUi.getState().tabs['s1'])).toContain('server')
+  })
+})
+
+describe('effectiveTab', () => {
+  const shown: MainTab[] = [{ id: 'claude' }, { id: 'shell' }]
+  test('a shown tab stays active', () => {
+    expect(effectiveTab('shell', shown)).toBe('shell')
+    expect(effectiveTab('server', withServerTab(shown, true))).toBe('server')
+  })
+  test('a hidden server tab reads as claude', () => {
+    expect(effectiveTab('server', shown)).toBe('claude')
   })
 })
