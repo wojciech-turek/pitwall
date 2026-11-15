@@ -42,8 +42,8 @@ subagents, the `pitwall` command, the resource view, accounts, and running witho
   - The oldest Claude Code that keeps logins apart per config folder: `MIN_CLAUDE_FOR_ACCOUNTS` is a placeholder
     (it works at 2.1.325; the changelog doesn't say since when).
   - Two accounts running at once for over an hour: is either login wiped when both refresh?
-  - Does changing a setting inside Claude on an added account replace the `settings.json` link with a real file?
-  - The whole flow in Pitwall Dev with two real accounts (so far: the fake `claude` in the e2e, and real Claude by hand).
+  - Two folders signed in to the same account (after a `/login` in a terminal) show as two rows with one label:
+    say which is the default one, or offer to remove the duplicate.
 - Does the permission `Notification` for a subagent's prompt carry `agent_id`? This decides whether a session always
   returns from Needs you.
 - What's on screen when a subscription limit is hit: plain text, or a menu? Typing `continue` plus Enter must not

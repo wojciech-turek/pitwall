@@ -286,3 +286,18 @@ plan (a scratch folder), then signed out and removed again.
    detected"). With every "already seen" flag copied from the default profile it opens at its prompt. So a new
    account now takes those flags by shape (`isProfileKey` in `src/main/account-folders.ts`), not three named keys.
    User-level MCP servers are listed there but need signing in again, as designed.
+
+### In the app itself (same day, an isolated dev build, real Claude Code, two real logins)
+
+- Add account…, Switch, moving a session from its header and Move back all worked. The moved session opened at its
+  prompt on the other account in about 2.5 seconds and answered from the conversation it had before the move.
+- Found and fixed there: Claude keeps a worktree's folder trust under the **main repo's** folder, so the first move
+  stopped at the trust prompt (the "Waiting on …" banner and Move back did their job); and a moved session's last
+  usage report was counted for its new account.
+- **A setting changed inside Claude on the added account (`/effort high`) is written through the `settings.json`
+  link** to the default folder's file. The link stays a link. So settings really are shared, both ways.
+- Not covered: the default folder was re-signed to the personal account part-way through (`/login` in a terminal),
+  so from then on both folders held the same account. Two folders signed in to one account are listed as two rows
+  with the same label.
+- Token refresh with two folders in use at once: being watched (a session on each, prompted every 90 minutes).
+
