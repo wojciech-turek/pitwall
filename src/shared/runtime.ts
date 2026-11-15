@@ -48,15 +48,28 @@ function applySubagent(rt: SessionRuntime, ev: HookEvent): SessionRuntime | null
     return withRun(rt, id, (x) => ({ ...x, state: 'done', endedAt: ev.t, lastMessage: ev.msg ?? undefined, needsYou: false }))
   }
   if (id && TOOL_EVENTS.has(ev.e)) {
-    const base = needsUser(ev) ? applyMain(rt, ev) : rt
+    const need = needsUser(ev)
+    let base = rt
+    if (need) {
+      base = applyMain(rt, ev)
+      if (rt.activity !== 'needs_input') base = { ...base, resumeActivity: rt.activity }
+      else if (rt.resumeActivity) base = { ...base, resumeActivity: rt.resumeActivity }
+    }
     const post = ev.e === 'PostToolUse' || ev.e === 'PostToolUseFailure'
-    return withRun(base, id, (x) => {
+    const out = withRun(base, id, (x) => {
       const run: SubagentRun = { ...x }
       if (ev.tool) run.lastTool = ev.tool
-      if (needsUser(ev)) run.needsYou = true
+      if (need) run.needsYou = true
       else if (post) run.needsYou = false
       return run
     })
+    // The question is answered: the parent goes back to what it was doing.
+    if (post && out.resumeActivity && !out.subagents?.some((x) => x.needsYou) &&
+        (out.activity === 'needs_input' || out.activity === 'working')) {
+      const { needsInput: _n, resumeActivity, ...rest } = out
+      return { ...rest, activity: resumeActivity }
+    }
+    return out
   }
   if (ev.e === 'PreToolUse' && ev.tool === 'Agent' && ev.desc) {
     return { ...applyMain(rt, ev), agentDescs: [...(rt.agentDescs ?? []), ev.desc].slice(-MAX_DESCS) }
@@ -141,6 +154,8 @@ function applyMain(rt: SessionRuntime, ev: HookEvent): SessionRuntime {
 
 export function reduceRuntime(rt: SessionRuntime, ev: HookEvent): SessionRuntime {
   const next = { ...apply(rt, ev) }
+  // The parent's own events take over from a subagent's question (a typed answer keeps it).
+  if (!ev.aid && ev.e !== 'pitwall:user-input') delete next.resumeActivity
   if (ev.sid) next.claudeSessionId = ev.sid
   next.lastEventAt = ev.t
   if (!ev.e.startsWith('pitwall:')) next.firstEventSeen = true

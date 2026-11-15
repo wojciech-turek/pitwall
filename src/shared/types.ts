@@ -79,6 +79,8 @@ export interface SessionRuntime {
   firstEventSeen: boolean; lastEventAt?: number; lastFinishedAt?: number; lastMessage?: string; lastError?: string; exitCode?: number
   /** What the launcher warned about since Claude last started, by kind (pitwall:warning). */
   warnings?: Record<string, string>
+  /** What the session was doing before a subagent needed the user; restored once that is answered. */
+  resumeActivity?: Activity
   /** The newest subagent runs, oldest first. */
   subagents?: SubagentRun[]
   /** Agent-tool descriptions waiting for their SubagentStart, oldest first, at most 20. */
