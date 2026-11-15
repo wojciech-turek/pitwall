@@ -85,6 +85,16 @@ describe.skipIf(process.platform !== 'win32')('pitwall-hook.ps1', () => {
     expect(evs.slice(1).map((e) => e.desc)).toEqual(['Find the bug', 'd'.repeat(120), null, null])
   })
 
+  test('an Agent tool_input that is not an object still gets its line, with desc null', async () => {
+    const f = join(await folder(), 'events.jsonl')
+    for (const tool_input of ['x', [1]]) {
+      await hook(f, JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', tool_name: 'Agent', tool_input }))
+    }
+    const evs = (await lines(f)).map((l) => parseEventLine(l)!)
+    expect(evs).toHaveLength(2)
+    for (const ev of evs) expect(ev).toMatchObject({ e: 'PreToolUse', sid: 's', tool: 'Agent', desc: null })
+  })
+
   test('invalid stdin: exit 0, nothing written', async () => {
     const f = join(await folder(), 'events.jsonl')
     expect(await hook(f, 'not json {')).toMatchObject({ code: 0, stdout: '' })

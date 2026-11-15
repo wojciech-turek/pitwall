@@ -15,7 +15,7 @@ line=$(printf '%s' "$input" | "$JQ" -c --arg c "$2" '{c:$c, t:(now*1000|floor), 
   msg:((.last_assistant_message // .message // null) | if type=="string" then .[0:300] else null end),
   err:((.error // null) | if .==null then null elif type=="string" then .[0:300] else (tojson|.[0:300]) end),
   aid:.agent_id, at:.agent_type,
-  desc:(if .tool_name=="Agent" then ((.tool_input.description // null) | if type=="string" then .[0:120] else null end) else null end)}') || exit 0
+  desc:(if .tool_name=="Agent" then (((.tool_input | objects | .description) // null) | if type=="string" then .[0:120] else null end) else null end)}') || exit 0
 [ -n "$line" ] || exit 0
 
 printf '%s\n' "$line" >> "$1"

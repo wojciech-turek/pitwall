@@ -65,6 +65,16 @@ describe('pitwall-hook', () => {
     expect(evs[0].aid).toBeNull()
   })
 
+  test('an Agent tool_input that is not an object still gets its line, with desc null', async () => {
+    const f = await eventsFile()
+    for (const tool_input of ['x', [1]]) {
+      await run(f, JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', tool_name: 'Agent', tool_input }))
+    }
+    const evs = (await lines(f)).map((l) => parseEventLine(l)!)
+    expect(evs).toHaveLength(2)
+    for (const ev of evs) expect(ev).toMatchObject({ e: 'PreToolUse', sid: 's', tool: 'Agent', desc: null })
+  })
+
   test('50 parallel invocations with 100KB tool_input -> 50 valid lines', async () => {
     const f = await eventsFile()
     const body = JSON.stringify({ hook_event_name: 'PostToolUse', session_id: 'p', tool_name: 'Write', tool_input: { content: 'z'.repeat(100_000) } })
