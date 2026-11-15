@@ -14,21 +14,21 @@ test('defaults', () => {
   expect(p.cliBinDir).toBe('/Users/w/Library/Application Support/pitwall/cli-bin')
   expect(p.worktreesRoot).toBe('/Users/w/pitwall/worktrees')
   expect(p.sshDir).toBe('/Users/w/.ssh')
-  expect(p).toMatchObject({ tmuxSocket: 'pitwall', claudeBin: 'claude', ghBin: 'gh', notificationsDisabled: false })
+  expect(p).toMatchObject({ tmuxSocket: 'pitwall', claudeBin: 'claude', tmuxBin: '', ghBin: 'gh', notificationsDisabled: false })
 })
 
 test('env overrides', () => {
   const p = resolvePaths(
     {
       PITWALL_DATA_DIR: '/t/d', PITWALL_WORKTREES_DIR: '/t/w', PITWALL_TMUX_SOCKET: 's1',
-      PITWALL_CLAUDE_BIN: '/t/claude', PITWALL_GH_BIN: '/t/gh', PITWALL_SSH_DIR: '/t/ssh',
+      PITWALL_CLAUDE_BIN: '/t/claude', PITWALL_TMUX_BIN: '/t/tmux', PITWALL_GH_BIN: '/t/gh', PITWALL_SSH_DIR: '/t/ssh',
       PITWALL_TEST_PICK_FOLDER: '/t/repo', PITWALL_DISABLE_NOTIFICATIONS: '1'
     },
     '/Users/w'
   )
   expect(p).toMatchObject({
     dataDir: '/t/d', stateFile: '/t/d/state.json', worktreesRoot: '/t/w', tmuxSocket: 's1',
-    claudeBin: '/t/claude', ghBin: '/t/gh', sshDir: '/t/ssh', testPickFolder: '/t/repo', notificationsDisabled: true
+    claudeBin: '/t/claude', tmuxBin: '/t/tmux', ghBin: '/t/gh', sshDir: '/t/ssh', testPickFolder: '/t/repo', notificationsDisabled: true
   })
   expect(eventsFile(p, 's_abc')).toBe('/t/d/sessions/s_abc/events.jsonl')
 })

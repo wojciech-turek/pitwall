@@ -31,8 +31,9 @@ function pathWithoutTmux(path: string): string {
 
 test.beforeAll(async () => {
   e = await makeE2eEnv()
-  // A plain sh as the login shell, so the developer's own rc files can't put tmux back on PATH.
-  env = { ...e.env, PATH: pathWithoutTmux(e.env.PATH), SHELL: '/bin/sh' }
+  // A plain sh as the login shell, so the developer's own rc files can't put tmux back on PATH; PITWALL_TMUX_BIN=none
+  // because a login shell can still add Homebrew's (path_helper, the /opt/homebrew fallback).
+  env = { ...e.env, PATH: pathWithoutTmux(e.env.PATH), SHELL: '/bin/sh', PITWALL_TMUX_BIN: 'none' }
   delete env.PITWALL_SESSION_BACKEND // the choice under test is the app's own
   host = new HostBackend({ dataDir: e.dataDir, appVersion: 'e2e', launch: null })
 })

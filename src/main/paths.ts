@@ -19,6 +19,8 @@ export interface AppPaths {
   sshDir: string
   tmuxSocket: string
   claudeBin: string
+  /** PITWALL_TMUX_BIN: an absolute tmux path, or `none` (act as if tmux isn't installed). '' = look on PATH. */
+  tmuxBin: string
   ghBin: string
   testPickFolder?: string
   notificationsDisabled: boolean
@@ -53,6 +55,7 @@ export function resolvePaths(
     sshDir: env.PITWALL_SSH_DIR || join(home, '.ssh'),
     tmuxSocket: env.PITWALL_TMUX_SOCKET || `pitwall${suffix}`,
     claudeBin: env.PITWALL_CLAUDE_BIN || 'claude',
+    tmuxBin: env.PITWALL_TMUX_BIN || '',
     ghBin: env.PITWALL_GH_BIN || 'gh',
     testPickFolder: env.PITWALL_TEST_PICK_FOLDER || undefined,
     notificationsDisabled: !!env.PITWALL_DISABLE_NOTIFICATIONS && env.PITWALL_DISABLE_NOTIFICATIONS !== '0'

@@ -183,7 +183,8 @@ function focusSession(sessionId: string): void {
  */
 async function createBackend(env: Record<string, string>, store: Store): Promise<SessionBackend> {
   const file = join(paths.dataDir, 'backend.json')
-  const tmuxPath = findExecutable('tmux', env.PATH)
+  // PITWALL_TMUX_BIN: a path to use, or `none` to act as if tmux isn't installed (a login shell can always find Homebrew's).
+  const tmuxPath = paths.tmuxBin === 'none' ? null : paths.tmuxBin || findExecutable('tmux', env.PATH)
   const recorded = await readRecordedBackend(file)
   const liveSessions = store.state.sessions.filter((s) => s.archivedAt === undefined).length
   const choice = chooseBackend({
