@@ -96,6 +96,16 @@ body { background: var(--bg-app); color: var(--text); font-family: var(--font-ui
 .subagent-row > .status-icon { position: absolute; left: 41px; top: 50%; margin-top: -7px; }
 .subagent-row::before { content: ''; position: absolute; left: 32px; top: 0; bottom: 0; width: 1px; background: var(--tree-line); pointer-events: none; }
 .subagent-row::after { content: ''; position: absolute; left: 32px; top: 50%; width: 7px; height: 1px; background: var(--tree-line); pointer-events: none; }
+/* Under a session an agent started: one step in from that session, as its own row is from its parent's. */
+.subagent-row[data-depth="1"] { padding-left: 74px; }
+.subagent-row[data-depth="2"] { padding-left: 90px; }
+.subagent-row[data-depth="3"] { padding-left: 106px; }
+.subagent-row[data-depth="1"] > .status-icon { left: 57px; }
+.subagent-row[data-depth="2"] > .status-icon { left: 73px; }
+.subagent-row[data-depth="3"] > .status-icon { left: 89px; }
+.subagent-row[data-depth="1"]::before, .subagent-row[data-depth="1"]::after { left: 48px; }
+.subagent-row[data-depth="2"]::before, .subagent-row[data-depth="2"]::after { left: 64px; }
+.subagent-row[data-depth="3"]::before, .subagent-row[data-depth="3"]::after { left: 80px; }
 .subagent-elapsed { flex: none; font-size: 11.5px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
 .tag { font-size: 10.5px; color: var(--text-faint); border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; line-height: 15px; white-space: nowrap; align-self: center; flex: none; }
 .row-actions { display: flex; align-items: center; gap: 2px; margin-left: auto; opacity: 0; }

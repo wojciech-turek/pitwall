@@ -17,9 +17,9 @@ function tooltip(r: SubagentRun): string | undefined {
   return r.state === 'running' ? r.lastTool : r.lastMessage?.slice(0, 300)
 }
 
-/** The session's subagent runs, one row each, under its row. */
-export default function SubagentRows({ session, onSelect }: {
-  session: SessionView; onSelect: (id: string) => void
+/** The session's subagent runs, one row each, under its row: one step in from it, at the session's own `depth`. */
+export default function SubagentRows({ session, depth = 0, onSelect }: {
+  session: SessionView; depth?: number; onSelect: (id: string) => void
 }): React.JSX.Element | null {
   const open = useSubagentsOpen(session.id)
   const runs = session.subagents ?? []
@@ -36,7 +36,7 @@ export default function SubagentRows({ session, onSelect }: {
   return (
     <>
       {runs.map((r) => (
-        <div key={r.id} className="row subagent-row" data-testid="subagent-row" data-state={r.state}
+        <div key={r.id} className="row subagent-row" data-testid="subagent-row" data-state={r.state} data-depth={depth}
           title={tooltip(r)} onClick={() => onSelect(session.id)}>
           <StatusIcon status={runStatus(r)} />
           <span className="row-title">{r.description ? `${r.type} · ${r.description}` : r.type}</span>

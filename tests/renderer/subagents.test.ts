@@ -54,3 +54,17 @@ describe('subagents open flag', () => {
     expect(JSON.parse(data.get(KEY)!)).toEqual({})
   })
 })
+
+describe('SubagentRows', () => {
+  test("they hang one step under their session, at the session's own depth", async () => {
+    fakeStorage()
+    vi.resetModules()
+    const { createElement } = await import('react')
+    const { renderToStaticMarkup } = await import('react-dom/server')
+    const { default: SubagentRows } = await import('../../src/renderer/src/components/SubagentRows')
+    const session = { id: 's1', title: 'Child', status: 'working', subagents: [run('running')] } as never
+    const html = (depth?: number) => renderToStaticMarkup(createElement(SubagentRows, { session, depth, onSelect: () => {} }))
+    expect(html()).toContain('data-depth="0"')
+    expect(html(2)).toContain('data-depth="2"')
+  })
+})

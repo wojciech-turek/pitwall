@@ -102,7 +102,7 @@ export default function Sidebar({ snap, onSelect }: { snap: AppSnapshot; onSelec
       {orderedSessions(snap.sessions, snap.sessions.filter((s) => s.subProjectId === sp.id)).map(({ s, depth, parentTitle }) => (
           <Fragment key={s.id}>
             <SessionRow session={s} depth={depth} startedBy={parentTitle} onSelect={onSelect} projectName={projectName} subProjectName={sp.name} />
-            <SubagentRows session={s} onSelect={onSelect} />
+            <SubagentRows session={s} depth={depth} onSelect={onSelect} />
           </Fragment>
         ))}
     </div>
