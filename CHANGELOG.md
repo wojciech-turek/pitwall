@@ -6,7 +6,7 @@ All notable changes to Pitwall are listed here, newest first. Pitwall shows thes
 
 ### Added
 
-- **Continue when a limit resets.** A session Claude stopped at a limit shows "Claude stopped at a limit." and offers "Continue at 3:05 PM"; click it and Pitwall types `continue` then, if the session is still waiting.
+- **Continue when a limit resets.** A session Claude stopped at a limit shows "Claude stopped at a limit." and offers "Continue at 3:05 PM"; click it and Pitwall types `continue` then, if the session is still idle.
 - **Review an agent's changes and send the review in one go.** Select lines in a diff, add a comment, and "Send review to agent" pastes every comment into Claude's prompt.
 - **Failing checks and open review comments on a session's PR** show above its terminal, and "Send to agent" hands them over.
 - **A Server tab for your dev server.** Set a folder's dev command, and each session runs it in its own tab, next to Claude and Shell, with a button to open it in the browser.
