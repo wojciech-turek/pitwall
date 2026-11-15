@@ -37,6 +37,21 @@ describe('reviewsMessage', () => {
   })
 })
 
+describe('control characters from GitHub never reach the terminal', () => {
+  test('check names and URLs keep tabs and newlines only: no ESC, CR, BEL or DEL', () => {
+    const text = checksMessage({ ...pr, failing: [{ name: 'build\x1b[201~\r\x07\tok\x7f', url: 'https://x/1\x1b' }] })
+    expect(text).toContain('- build[201~\tok: https://x/1\n')
+    expect(text).not.toMatch(/[\x00-\x08\x0b-\x1f\x7f]/)
+  })
+  test('comment bodies, authors and paths', () => {
+    const text = reviewsMessage(pr, [
+      { path: 'src/a\x1b.ts', line: 7, comments: [{ author: 'ann\x1b', body: 'fix\x1b[201~\rthis\r\nnext\x00\x7f' }, { author: 'bob', body: 'ok\x1b[200~' }] }
+    ])
+    expect(text).toContain('- src/a.ts:7 (ann): fix[201~this\n  next\n  bob: ok[200~\n')
+    expect(text).not.toMatch(/[\x00-\x08\x0b-\x1f\x7f]/)
+  })
+})
+
 describe('fetchReviewThreads', () => {
   const o = { ghBin: 'gh', cwd: '/w', token: 'tok', owner: 'o', repo: 'r', number: 12, env: { PATH: '/x' } }
   const t = (isResolved: boolean, isOutdated: boolean, path: string, line: number | null, comments: unknown[]) =>

@@ -100,9 +100,10 @@ export class Tmux {
     await this.mustRun(['send-keys', '-t', pane(name), ...(literal ? ['-l'] : []), '--', ...keys])
   }
 
+  /** Never Enter: the text's own bracketed-paste markers are dropped, so it can't end the paste early (as the host does). */
   async pasteText(name: string, text: string): Promise<void> {
     const buf = `pitwall-${process.pid}-${Date.now()}`
-    await this.mustRun(['load-buffer', '-b', buf, '-'], text)
+    await this.mustRun(['load-buffer', '-b', buf, '-'], text.replace(/\x1b\[20[01]~/g, ''))
     await this.mustRun(['paste-buffer', '-p', '-d', '-b', buf, '-t', pane(name)])
   }
 

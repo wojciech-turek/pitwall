@@ -31,6 +31,12 @@ describe('formatReview', () => {
     expect(formatReview([c({ path: 'src\\a.ts' })], 'win32')).toContain('1. @src/a.ts (line 1)\n')
   })
 
+  test('control characters in the quote or note are dropped (tabs and newlines stay), so the paste can never press keys', () => {
+    const text = formatReview([c({ quote: 'a\x1b[201~\r\tb', note: 'go\x1b\x7f\x08\nnow' })])
+    expect(text).toContain('   > a[201~\tb\n   go\n   now\n')
+    expect(text).not.toMatch(/[\x00-\x08\x0b-\x1f\x7f]/)
+  })
+
   test('nothing to say gives an empty string', () => {
     expect(formatReview([])).toBe('')
   })

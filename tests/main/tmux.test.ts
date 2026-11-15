@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { exec } from '../../src/main/exec'
 import { claudeTmuxName, serverTmuxName, shellTmuxName, tmuxNameFor } from '../../src/main/tmux'
-import { access } from 'node:fs/promises'
+import { access, readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { makeTestEnv, tmuxSocketPath } from '../helpers/env'
 import { waitFor } from '../helpers/wait'
 
@@ -78,6 +79,14 @@ describe('Tmux', () => {
     await t.tmux.newSession({ name: 'pw-p', cwd: t.tmp, argv: ['cat'] })
     await t.tmux.pasteText('pw-p', 'hello @x')
     await waitFor(async () => (await t.tmux.capturePane('pw-p')).includes('hello @x'), 8000, 'pasted text')
+  })
+
+  test('pasteText drops bracketed-paste markers from the text, so a paste can never end itself and press Enter', async () => {
+    const out = join(t.tmp, 'pasted.txt')
+    await t.tmux.newSession({ name: 'pw-b', cwd: t.tmp, argv: ['sh', '-c', `cat > '${out}'`] })
+    await t.tmux.pasteText('pw-b', 'before\x1b[201~after\x1b[200~end\n')
+    await waitFor(async () => (await readFile(out, 'utf8').catch(() => '')).includes('end'), 8000, 'pasted line')
+    expect(await readFile(out, 'utf8')).toBe('beforeafterend\n')
   })
 
   test('sendKeys and attachCommand', async () => {

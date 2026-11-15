@@ -1,12 +1,14 @@
 import type { Exec } from './exec'
+import { plainText } from '../shared/plain-text'
 import type { PrInfo, ReviewThread } from '../shared/types'
 
 const MAX_BODY = 2000
 
+/** Both messages are pasted into Claude's prompt: what GitHub said in them loses its control characters. */
 export function checksMessage(pr: PrInfo): string {
   const list = (pr.failing ?? []).map((f) => (f.url ? `- ${f.name}: ${f.url}` : `- ${f.name}`)).join('\n')
-  return `CI checks are failing on PR #${pr.number} (${pr.url}):\n${list}\n\n` +
-    `Look at the failures (for example \`gh pr checks ${pr.number}\`, or \`gh run view <run id> --log-failed\`), fix them, and push.`
+  return plainText(`CI checks are failing on PR #${pr.number} (${pr.url}):\n${list}\n\n` +
+    `Look at the failures (for example \`gh pr checks ${pr.number}\`, or \`gh run view <run id> --log-failed\`), fix them, and push.`)
 }
 
 const indent = (s: string): string => s.replace(/\n/g, '\n  ')
@@ -19,8 +21,8 @@ export function reviewsMessage(pr: PrInfo, threads: ReviewThread[]): string {
     for (const c of rest) lines.push(`  ${c.author}: ${indent(c.body)}`)
     return lines.join('\n')
   })
-  return `Unresolved review comments on PR #${pr.number} (${pr.url}):\n\n${items.join('\n')}\n\n` +
-    'Address these review comments, then push. Reply on GitHub only if a comment asks a question.'
+  return plainText(`Unresolved review comments on PR #${pr.number} (${pr.url}):\n\n${items.join('\n')}\n\n` +
+    'Address these review comments, then push. Reply on GitHub only if a comment asks a question.')
 }
 
 const QUERY =
