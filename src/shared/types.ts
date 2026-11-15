@@ -69,11 +69,20 @@ export interface HookEvent {
 }
 export type Activity = 'starting' | 'idle' | 'working' | 'needs_input' | 'exited'
 export type NeedsInputReason = 'permission' | 'question' | 'other'
+/** One run of a subagent, kept so the sidebar can list what a session's helpers are doing. */
+export interface SubagentRun {
+  id: string; type: string; description?: string; state: 'running' | 'done'; startedAt: number; endedAt?: number
+  lastTool?: string; needsYou?: boolean; lastMessage?: string
+}
 export interface SessionRuntime {
   activity: Activity; needsInput?: NeedsInputReason; claudeSessionId?: string
   firstEventSeen: boolean; lastEventAt?: number; lastFinishedAt?: number; lastMessage?: string; lastError?: string; exitCode?: number
   /** What the launcher warned about since Claude last started, by kind (pitwall:warning). */
   warnings?: Record<string, string>
+  /** The newest subagent runs, oldest first. */
+  subagents?: SubagentRun[]
+  /** Agent-tool descriptions waiting for their SubagentStart, oldest first, at most 20. */
+  agentDescs?: string[]
 }
 export type DisplayStatus = 'starting' | 'working' | 'needs_you' | 'unread' | 'read' | 'exited'
 export interface ChangedFile { path: string; status: 'M' | 'A' | 'D' | '?'; additions: number; deletions: number; binary: boolean }
@@ -93,6 +102,8 @@ export interface SessionView extends Session {
   server?: { running: boolean; ports: number[] }
   /** The launcher's warnings for this run of Claude (a terminal repaint can wipe its printed lines). */
   launchWarnings?: string[]
+  /** The session's subagent runs (oldest first). */
+  subagents?: SubagentRun[]
 }
 export interface AppSnapshot {
   projects: Project[]; subProjects: SubProject[]; sessions: SessionView[]; archived: Session[]; settings: AppSettings

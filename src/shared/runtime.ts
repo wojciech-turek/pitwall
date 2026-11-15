@@ -1,4 +1,4 @@
-import type { AppSnapshot, DisplayStatus, HookEvent, SessionRuntime, SessionView } from './types'
+import type { AppSnapshot, DisplayStatus, HookEvent, SessionRuntime, SessionView, SubagentRun } from './types'
 
 export const initialRuntime: SessionRuntime = { activity: 'starting', firstEventSeen: false }
 
@@ -7,14 +7,81 @@ function clearNeeds(rt: SessionRuntime): SessionRuntime {
   return rest
 }
 
+function clearRuns(rt: SessionRuntime): SessionRuntime {
+  const { subagents: _s, agentDescs: _d, ...rest } = rt
+  return rest
+}
+
+const MAX_RUNS = 30
+const MAX_DESCS = 20
+const TOOL_EVENTS = new Set(['PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Notification', 'PermissionRequest'])
+
+/** A permission prompt or question raised from inside a subagent still needs the user. */
+function needsUser(ev: HookEvent): boolean {
+  return ev.e === 'PermissionRequest' ||
+    (ev.e === 'Notification' && (ev.nt === 'permission_prompt' || ev.nt === 'elicitation_dialog' || ev.nt === 'agent_needs_input'))
+}
+
+function withRun(rt: SessionRuntime, id: string, patch: (r: SubagentRun) => SubagentRun): SessionRuntime {
+  if (!rt.subagents?.some((x) => x.id === id)) return rt
+  return { ...rt, subagents: rt.subagents.map((x) => (x.id === id ? patch(x) : x)) }
+}
+
+/** Subagent bookkeeping. Returns null for events that are not about a subagent. */
+function applySubagent(rt: SessionRuntime, ev: HookEvent): SessionRuntime | null {
+  const id = ev.aid
+  if (ev.e === 'SubagentStart') {
+    if (!id || !ev.at) return rt
+    if (rt.subagents?.some((x) => x.id === id)) {
+      return withRun(rt, id, ({ endedAt: _e, ...x }) => ({ ...x, state: 'running' }))
+    }
+    const descs = rt.agentDescs ? [...rt.agentDescs] : []
+    const description = descs.shift()
+    const run: SubagentRun = { id, type: ev.at, state: 'running', startedAt: ev.t }
+    if (description !== undefined) run.description = description
+    const next: SessionRuntime = { ...rt, subagents: [...(rt.subagents ?? []), run].slice(-MAX_RUNS) }
+    if (rt.agentDescs) next.agentDescs = descs
+    return next
+  }
+  if (ev.e === 'SubagentStop') {
+    if (!id) return rt
+    return withRun(rt, id, (x) => ({ ...x, state: 'done', endedAt: ev.t, lastMessage: ev.msg ?? undefined, needsYou: false }))
+  }
+  if (id && TOOL_EVENTS.has(ev.e)) {
+    const base = needsUser(ev) ? applyMain(rt, ev) : rt
+    const post = ev.e === 'PostToolUse' || ev.e === 'PostToolUseFailure'
+    return withRun(base, id, (x) => {
+      const run: SubagentRun = { ...x }
+      if (ev.tool) run.lastTool = ev.tool
+      if (needsUser(ev)) run.needsYou = true
+      else if (post) run.needsYou = false
+      return run
+    })
+  }
+  if (ev.e === 'PreToolUse' && ev.tool === 'Agent' && ev.desc) {
+    return { ...applyMain(rt, ev), agentDescs: [...(rt.agentDescs ?? []), ev.desc].slice(-MAX_DESCS) }
+  }
+  return null
+}
+
 function apply(rt: SessionRuntime, ev: HookEvent): SessionRuntime {
+  return applySubagent(rt, ev) ?? applyMain(rt, ev)
+}
+
+function applyMain(rt: SessionRuntime, ev: HookEvent): SessionRuntime {
   const busy = rt.activity === 'working' || rt.activity === 'needs_input'
   switch (ev.e) {
     case 'SessionStart':
-      return ev.src === 'compact' ? rt : { ...clearNeeds(rt), activity: 'idle' }
+      return ev.src === 'compact' ? rt : { ...clearNeeds(clearRuns(rt)), activity: 'idle' }
     case 'UserPromptSubmit': {
       const { lastError: _e, ...rest } = clearNeeds(rt)
-      return { ...rest, activity: 'working' }
+      const next: SessionRuntime = { ...rest, activity: 'working' }
+      if (rt.subagents) {
+        const live = rt.subagents.filter((x) => x.state !== 'done')
+        if (live.length) next.subagents = live
+        else delete next.subagents
+      }
+      return next
     }
     case 'PreToolUse':
       return ev.tool === 'AskUserQuestion'
@@ -59,7 +126,7 @@ function apply(rt: SessionRuntime, ev: HookEvent): SessionRuntime {
     case 'pitwall:warning':
       return ev.msg ? { ...rt, warnings: { ...rt.warnings, [ev.kind || 'other']: ev.msg } } : rt
     case 'pitwall:exited': {
-      const next: SessionRuntime = { ...clearNeeds(rt), activity: 'exited' }
+      const next: SessionRuntime = { ...clearNeeds(clearRuns(rt)), activity: 'exited' }
       if (ev.code != null) next.exitCode = ev.code
       return next
     }

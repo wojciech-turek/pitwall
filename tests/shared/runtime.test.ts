@@ -205,3 +205,93 @@ describe('selectors', () => {
     expect(out.map((x) => x.id)).toEqual(['a2', 'a4', 'a1', 'a3', 'b2', 'b1'])
   })
 })
+
+describe('subagent runs', () => {
+  const started = (aid = 'a', at = 'Explore') => r(r(rt({ activity: 'working' }), 'Stop'), 'SubagentStart', { aid, at, t: 200 })
+  test('SubagentStart adds a running run and leaves activity alone', () => {
+    const o = started()
+    expect(o.activity).toBe('idle')
+    expect(o.subagents).toEqual([{ id: 'a', type: 'Explore', state: 'running', startedAt: 200 }])
+  })
+  test('internal agents (empty type) never show', () => {
+    expect(r(rt({}), 'SubagentStart', { aid: 'x', at: '' }).subagents).toBeUndefined()
+  })
+  test('the same aid starting again updates the run', () => {
+    const done = r(started(), 'SubagentStop', { aid: 'a', t: 300 })
+    const o = r(done, 'SubagentStart', { aid: 'a', at: 'Explore', t: 400 })
+    expect(o.subagents).toHaveLength(1)
+    expect(o.subagents![0]).toMatchObject({ state: 'running', startedAt: 200 })
+    expect(o.subagents![0].endedAt).toBeUndefined()
+  })
+  test('a tool call inside a subagent records lastTool and keeps the parent idle', () => {
+    const o = r(started(), 'PreToolUse', { aid: 'a', tool: 'Bash' })
+    expect(o.activity).toBe('idle')
+    expect(o.subagents![0].lastTool).toBe('Bash')
+  })
+  test('a background subagent outlives the parent Stop', () => {
+    const o = r(r(rt({ activity: 'working' }), 'SubagentStart', { aid: 'a', at: 'Explore' }), 'Stop', { t: 500 })
+    expect(o.activity).toBe('idle')
+    expect(o.subagents![0].state).toBe('running')
+    expect(displayStatus(o, 0)).toBe('unread')
+  })
+  test('a permission prompt inside a subagent needs you; Post* clears the run', () => {
+    const o = r(started(), 'PermissionRequest', { aid: 'a', tool: 'Bash' })
+    expect(o).toMatchObject({ activity: 'needs_input', needsInput: 'permission' })
+    expect(o.subagents![0].needsYou).toBe(true)
+    const p = r(o, 'PostToolUse', { aid: 'a', tool: 'Bash' })
+    expect(p.subagents![0].needsYou).toBe(false)
+    expect(p.activity).toBe('needs_input')
+  })
+  test('a permission Notification inside a subagent needs you; idle_prompt does not', () => {
+    const o = r(started(), 'Notification', { aid: 'a', nt: 'permission_prompt' })
+    expect(o.activity).toBe('needs_input')
+    expect(o.subagents![0].needsYou).toBe(true)
+    expect(r(started(), 'Notification', { aid: 'a', nt: 'idle_prompt' }).activity).toBe('idle')
+  })
+  test('SubagentStop marks the run done; unknown ids are ignored', () => {
+    const o = r(started(), 'SubagentStop', { aid: 'a', msg: 'found it', t: 300 })
+    expect(o.subagents![0]).toMatchObject({ state: 'done', endedAt: 300, lastMessage: 'found it', needsYou: false })
+    expect(r(o, 'SubagentStop', { aid: 'zz' }).subagents).toEqual(o.subagents)
+  })
+  test('the Agent tool description goes to the next run', () => {
+    const o = r(rt({ activity: 'working' }), 'PreToolUse', { tool: 'Agent', desc: 'Find things' })
+    expect(o.activity).toBe('working')
+    expect(o.agentDescs).toEqual(['Find things'])
+    const s = r(o, 'SubagentStart', { aid: 'a', at: 'Explore' })
+    expect(s.subagents![0].description).toBe('Find things')
+    expect(s.agentDescs).toEqual([])
+  })
+  test('agentDescs keep the newest 20, runs the newest 30', () => {
+    let o = rt({})
+    for (let i = 0; i < 25; i++) o = r(o, 'PreToolUse', { tool: 'Agent', desc: `d${i}` })
+    expect(o.agentDescs).toHaveLength(20)
+    expect(o.agentDescs![0]).toBe('d5')
+    let q = rt({})
+    for (let i = 0; i < 35; i++) q = r(q, 'SubagentStart', { aid: `a${i}`, at: 'X' })
+    expect(q.subagents).toHaveLength(30)
+    expect(q.subagents![0].id).toBe('a5')
+  })
+  test('UserPromptSubmit drops done runs only', () => {
+    const two = r(started('b'), 'SubagentStart', { aid: 'c', at: 'Plan' })
+    const o = r(r(two, 'SubagentStop', { aid: 'b' }), 'UserPromptSubmit')
+    expect(o.subagents!.map((x) => x.id)).toEqual(['c'])
+  })
+  test('SessionStart (not compact) and pitwall:exited clear runs and descs', () => {
+    const base = { ...started(), agentDescs: ['x'] }
+    expect(r(base, 'SessionStart', { src: 'compact' }).subagents).toHaveLength(1)
+    for (const o of [r(base, 'SessionStart', { src: 'startup' }), r(base, 'pitwall:exited')]) {
+      expect(o.subagents).toBeUndefined()
+      expect(o.agentDescs).toBeUndefined()
+    }
+  })
+  test('the reducer does not mutate the old runs', () => {
+    const before = started()
+    const copy = JSON.parse(JSON.stringify(before))
+    r(r(before, 'PreToolUse', { aid: 'a', tool: 'Bash' }), 'SubagentStop', { aid: 'a' })
+    expect(before).toEqual(copy)
+  })
+  test('aid events still record lastEventAt and firstEventSeen', () => {
+    const o = r(rt({}), 'SubagentStart', { aid: 'a', at: 'X', sid: 'S', t: 777 })
+    expect(o).toMatchObject({ lastEventAt: 777, firstEventSeen: true, claudeSessionId: 'S' })
+  })
+})
