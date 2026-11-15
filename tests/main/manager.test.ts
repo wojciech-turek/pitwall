@@ -7,6 +7,7 @@ import { GitClient } from '../../src/main/git'
 import { appendEvent } from '../../src/main/hooks/events'
 import { eventsFile, sessionDir } from '../../src/main/paths'
 import { SessionManager } from '../../src/main/sessions/manager'
+import { PortAllocator } from '../../src/main/ports'
 import { KeyedMutex } from '../../src/main/sessions/mutex'
 import { Store } from '../../src/main/store'
 import { claudeTmuxName, shellTmuxName } from '../../src/main/tmux'
@@ -90,6 +91,23 @@ async function ready(firstEventTimeoutMs?: number): Promise<SessionManager> {
 }
 
 describe('SessionManager', () => {
+  test('init gives a live session without a port block one, and leaves another its own', async () => {
+    await addSession('a')
+    await addSession('b', { portBase: 40000 })
+    const m = new SessionManager({
+      store, paths: t.paths, git: new GitClient(exec, t.env), backend: t.backend, exec, env: t.env, home: t.tmp,
+      mutex: new KeyedMutex(), firstEventTimeoutMs: 8000, notifier,
+      ports: new PortAllocator({ isFree: async () => true })
+    })
+    managers.push(m)
+    await m.init()
+    const a = store.state.sessions.find((x) => x.id === 'a')!
+    expect(a.portBase).toBe(40010) // 40000 is b's
+    expect(store.state.sessions.find((x) => x.id === 'b')!.portBase).toBe(40000)
+    expect(await readFile(join(sessionDir(t.paths, 'a'), 'env.sh'), 'utf8')).toContain("export PITWALL_PORT='40010'")
+    expect(await readFile(join(sessionDir(t.paths, 'b'), 'env.sh'), 'utf8')).toContain("export PITWALL_PORT='40000'")
+  })
+
   test('replay derives status without notifying', async () => {
     await addSession('a', {}, [{ e: 'UserPromptSubmit', t: 2000 }, { e: 'Stop', t: 3000, msg: 'done' }])
     const m = await ready()

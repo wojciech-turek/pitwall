@@ -20,6 +20,18 @@ describe('PortAllocator', () => {
     expect(await Promise.all([a.allocate([]), a.allocate([])])).toEqual([40000, 40010])
     expect(await a.allocate([])).toBe(40020)
   })
+  test('reserve() keeps a block from being handed out', async () => {
+    const a = new PortAllocator({ isFree: always })
+    a.reserve(40000)
+    a.reserve(40020)
+    expect(await a.allocate([])).toBe(40010)
+    expect(await a.allocate([])).toBe(40030)
+  })
+  test('isFree is the injected check', async () => {
+    const a = new PortAllocator({ isFree: async (p) => p === 40010 })
+    expect(await a.isFree(40010)).toBe(true)
+    expect(await a.isFree(40000)).toBe(false)
+  })
   test('a busy block is not left reserved', async () => {
     let busy = true
     const a = new PortAllocator({ isFree: async () => !busy })

@@ -8,6 +8,7 @@ import { fromGit, GitClient } from '../../src/main/git'
 import { sessionDir } from '../../src/main/paths'
 import { archiveSession, type ArchiveDeps } from '../../src/main/sessions/archive'
 import { SessionManager } from '../../src/main/sessions/manager'
+import { PortAllocator } from '../../src/main/ports'
 import { KeyedMutex } from '../../src/main/sessions/mutex'
 import { resumeSession } from '../../src/main/sessions/resume'
 import { Store } from '../../src/main/store'
@@ -485,5 +486,38 @@ describe('resumeSession', () => {
     expect((await resume(s.id)).ok).toBe(true)
     expect(await readFile(join(sessionDir(t.paths, s.id), 'claude-id'), 'utf8')).toBe(`${s.claudeSessionId}-cleared\n`)
     expect(get(s.id).pastClaudeIds).toEqual([s.claudeSessionId])
+  })
+
+  describe('ports', () => {
+    /** An archived folder session that had 40050, resumed with an allocator whose first-port check says `free(port)`. */
+    async function resumeWith(o: { free?: (port: number) => boolean; otherLive?: number }) {
+      const { sp } = await addFolder()
+      const s = await startOne(sp)
+      await store.update((d) => { d.sessions.find((x) => x.id === s.id)!.portBase = 40050 })
+      await archive(s)
+      if (o.otherLive !== undefined) {
+        await store.update((d) => {
+          d.sessions.push({ ...s, id: 's_other', slug: 'other', claudeSessionId: 'c-other', archivedAt: undefined, portBase: o.otherLive })
+        })
+      }
+      const free = o.free ?? (() => true)
+      const d = setup(t.env, { ports: new PortAllocator({ isFree: async (p) => free(p) }) })
+      expect((await resume(s.id, d)).ok).toBe(true)
+      return get(s.id).portBase
+    }
+
+    test('keeps its block when nobody else has it and it is free', async () => {
+      expect(await resumeWith({})).toBe(40050)
+    })
+    test('gets a new block when another live session holds it', async () => {
+      const got = await resumeWith({ otherLive: 40050 })
+      expect(got).toBeDefined()
+      expect(got).not.toBe(40050)
+    })
+    test('gets a new block when its first port is busy', async () => {
+      const got = await resumeWith({ free: (p) => p !== 40050 })
+      expect(got).toBeDefined()
+      expect(got).not.toBe(40050)
+    })
   })
 })
