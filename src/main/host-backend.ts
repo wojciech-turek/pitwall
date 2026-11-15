@@ -1,9 +1,10 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { appendFileSync, mkdirSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import * as net from 'node:net'
 import { StringDecoder } from 'node:string_decoder'
 import { checkProof, HostKeyError, newNonce, proofFor, readHostKey } from '../host/auth'
-import { hostLogFile, hostSocketPath } from '../host/paths'
+import { hostLogFile, hostPidFile, hostSocketPath } from '../host/paths'
 import {
   encodeDataChunks, encodeJson, FrameDecoder, MAX_TERM_SIZE, parseHostMessage, PROTOCOL, type ErrorCode, type Frame,
   type HostMessage, type ProcessRoots, type Request
@@ -602,6 +603,25 @@ export function powershellText(stderr: string): string {
       .replace(/_x([0-9A-Fa-f]{4})_/g, (_, h: string) => String.fromCharCode(parseInt(h, 16))))
     .join('')
   return text || stderr // no complete error record (cut at the cap, another shape): the raw text beats an empty log
+}
+
+/**
+ * Whether this data dir's Pitwall host is running: host.pid (written once it listens, removed when it exits) names a
+ * live process, and its socket takes a connection. Cheap: no handshake, the connection is dropped at once.
+ */
+export async function hostAlive(dataDir: string, timeoutMs = 1000): Promise<boolean> {
+  const pid = Number((await readFile(hostPidFile(dataDir), 'utf8').catch(() => '')).trim())
+  if (!Number.isInteger(pid) || pid <= 1 || !alive(pid)) return false
+  return new Promise<boolean>((resolve) => {
+    const socket = net.connect(hostSocketPath(dataDir))
+    const done = (ok: boolean): void => {
+      clearTimeout(timer)
+      socket.destroy()
+      resolve(ok)
+    }
+    const timer = setTimeout(() => done(false), timeoutMs)
+    socket.once('connect', () => done(true)).once('error', () => done(false))
+  })
 }
 
 function missing(name: string): never {

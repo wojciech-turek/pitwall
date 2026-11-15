@@ -3,11 +3,10 @@ import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { app, BrowserWindow, dialog, Menu, nativeImage, powerMonitor, shell } from 'electron'
 import { IPC } from '@shared/api'
-import { chooseBackend, launcherChoice, readRecordedBackend, type SessionBackend } from './backend'
-import { writeFileAtomic } from './atomic'
+import { chooseBackend, launcherChoice, readRecordedBackend, recordBackend, type SessionBackend } from './backend'
 import { exec, findExecutable } from './exec'
 import { historySources, SessionHistory } from './history'
-import { HostBackend } from './host-backend'
+import { HostBackend, hostAlive } from './host-backend'
 import { buildMenuTemplate } from './menu'
 import { GitClient } from './git'
 import { ChangesService } from './changes'
@@ -185,18 +184,14 @@ function focusSession(sessionId: string): void {
 async function createBackend(env: Record<string, string>, store: Store): Promise<SessionBackend> {
   const file = join(paths.dataDir, 'backend.json')
   const tmuxPath = findExecutable('tmux', env.PATH)
+  const recorded = await readRecordedBackend(file)
+  const liveSessions = store.state.sessions.filter((s) => s.archivedAt === undefined).length
   const choice = chooseBackend({
-    env: process.env, platform: process.platform, tmuxPath,
-    recorded: await readRecordedBackend(file),
-    liveSessions: store.state.sessions.filter((s) => s.archivedAt === undefined).length
+    env: process.env, platform: process.platform, tmuxPath, recorded, liveSessions,
+    // Only asked when it can decide anything: no record, and sessions to keep.
+    hostAlive: !WINDOWS && recorded === null && liveSessions > 0 && await hostAlive(paths.dataDir)
   })
-  if (choice.record) {
-    try {
-      await writeFileAtomic(file, JSON.stringify({ kind: choice.kind }))
-    } catch (e) {
-      console.error('could not record the session backend:', e)
-    }
-  }
+  if (choice.record) await recordBackend(file, choice.kind, recorded)
   if (choice.kind === 'tmux') {
     return new TmuxBackend(new Tmux({ socket: paths.tmuxSocket, confPath: paths.tmuxConf, env, exec, tmuxBin: tmuxPath ?? undefined }), env)
   }

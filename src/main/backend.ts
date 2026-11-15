@@ -1,5 +1,6 @@
-import { readFile } from 'node:fs/promises'
+import { readFile, rm } from 'node:fs/promises'
 import type { LauncherSpec } from '../host/protocol'
+import { writeFileAtomic } from './atomic'
 
 export type { LauncherSpec }
 
@@ -90,21 +91,40 @@ export function launcherChoice(env: Record<string, string | undefined>, platform
  * recorded for them (never switch a running set between tmux and the host). Otherwise tmux if it is installed, else
  * the host. "Live" means not archived, even when not running (after a reboot, say): a set of sessions keeps its
  * backend until every one is archived. `record` says to write the choice to backend.json. A recorded tmux with no tmux found still gives tmux:
- * its sessions then fail one by one with tmux's own error instead of being orphaned.
+ * its sessions then fail one by one with tmux's own error instead of being orphaned. `hostAlive`: this data dir's
+ * host is running (see hostAlive in host-backend.ts).
  */
 export function chooseBackend(o: {
   env: Record<string, string | undefined>; platform: NodeJS.Platform; tmuxPath: string | null
-  recorded: BackendKind | null; liveSessions: number
+  recorded: BackendKind | null; liveSessions: number; hostAlive: boolean
 }): { kind: BackendKind; record: boolean } {
   if (o.platform === 'win32') return { kind: 'host', record: false }
   if (o.env.PITWALL_SESSION_BACKEND === 'host') return { kind: 'host', record: false }
   if (o.env.PITWALL_SESSION_BACKEND === 'tmux') return { kind: 'tmux', record: false }
   if (o.recorded && o.liveSessions > 0) return { kind: o.recorded, record: false }
+  // No record (its write failed, or it was lost) while this data dir's host runs: the sessions are in the host.
+  if (o.liveSessions > 0 && o.hostAlive) return { kind: 'host', record: true }
   // No record but sessions exist: they predate backend.json, when macOS could only be tmux. Starting them in the host
   // would run each agent twice while the old tmux server may still hold it.
   if (o.liveSessions > 0) return { kind: 'tmux', record: true }
   if (o.tmuxPath) return { kind: 'tmux', record: true }
   return { kind: 'host', record: true }
+}
+
+/**
+ * Writes the choice to backend.json. If that fails, a record naming the other backend is removed rather than left
+ * wrong: with none, the next startup decides again (asking whether the host runs) and writes it then.
+ */
+export async function recordBackend(
+  file: string, kind: BackendKind, recorded: BackendKind | null,
+  write: (file: string, content: string) => Promise<void> = writeFileAtomic
+): Promise<void> {
+  try {
+    await write(file, JSON.stringify({ kind }))
+  } catch (e) {
+    console.error('could not record the session backend:', e)
+    if (recorded && recorded !== kind) await rm(file, { force: true }).catch(() => {})
+  }
 }
 
 /** backend.json's `kind`; null when the file is missing, unreadable or says anything else. */
