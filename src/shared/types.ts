@@ -62,6 +62,10 @@ export interface HookEvent {
   src?: string | null; reason?: string | null; msg?: string | null; err?: string | null; code?: number | null; mode?: string | null
   /** pitwall:warning: what the warning is about (one banner per kind). */
   kind?: string | null
+  /** Subagent id and type: on SubagentStart/Stop, and on tool events fired inside a subagent. */
+  aid?: string | null; at?: string | null
+  /** PreToolUse of the Agent tool: the task description, up to 120 characters. */
+  desc?: string | null
 }
 export type Activity = 'starting' | 'idle' | 'working' | 'needs_input' | 'exited'
 export type NeedsInputReason = 'permission' | 'question' | 'other'

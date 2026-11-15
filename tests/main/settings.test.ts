@@ -16,6 +16,8 @@ test('buildHookSettings registers every event with timeout 10 and no matcher', (
   for (const e of HOOK_EVENTS) {
     expect(s.hooks[e]).toEqual([{ hooks: [{ type: 'command', command: 'cmd', timeout: 10 }] }])
   }
+  expect(HOOK_EVENTS).toContain('SubagentStart')
+  expect(HOOK_EVENTS).toContain('SubagentStop')
   expect('statusLine' in s).toBe(false)
 })
 

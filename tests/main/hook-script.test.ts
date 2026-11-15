@@ -45,6 +45,26 @@ describe('pitwall-hook', () => {
     expect(ev!.msg).toHaveLength(300)
   })
 
+  test('subagent events carry the agent id and type', async () => {
+    const f = await eventsFile()
+    await run(f, JSON.stringify({ hook_event_name: 'SubagentStart', session_id: 's', agent_id: 'a1', agent_type: 'Explore' }))
+    expect(parseEventLine((await lines(f))[0])).toMatchObject({ e: 'SubagentStart', aid: 'a1', at: 'Explore', desc: null })
+  })
+
+  test('the Agent tool\'s description is recorded as desc, cut to 120; other tools get null', async () => {
+    const f = await eventsFile()
+    const pre = (tool_name: string, tool_input: unknown) =>
+      run(f, JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 's', tool_name, tool_input }))
+    await pre('Agent', { description: 'Find the bug' })
+    await pre('Agent', { description: 'd'.repeat(200) })
+    await pre('Agent', { prompt: 'no description' })
+    await pre('Agent', { description: 5 })
+    await pre('Bash', { command: 'ls', description: 'List files' })
+    const evs = (await lines(f)).map((l) => parseEventLine(l)!)
+    expect(evs.map((e) => e.desc)).toEqual(['Find the bug', 'd'.repeat(120), null, null, null])
+    expect(evs[0].aid).toBeNull()
+  })
+
   test('50 parallel invocations with 100KB tool_input -> 50 valid lines', async () => {
     const f = await eventsFile()
     const body = JSON.stringify({ hook_event_name: 'PostToolUse', session_id: 'p', tool_name: 'Write', tool_input: { content: 'z'.repeat(100_000) } })

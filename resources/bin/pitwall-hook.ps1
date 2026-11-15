@@ -118,6 +118,16 @@ try {
   elseif ($err -is [string]) { $err = Get-Prefix $err 300 }
   else { $err = Get-Prefix (Format-Json $err) 300 }
 
+  # The Agent tool's task description (tool_input may be missing or not an object).
+  $desc = $null
+  if ((Get-Field $p 'tool_name') -eq 'Agent') {
+    $ti = Get-Field $p 'tool_input'
+    if (($ti -is [System.Collections.IDictionary]) -or ($ti -is [System.Management.Automation.PSCustomObject])) {
+      $d = Get-Field $ti 'description'
+      if ($d -is [string]) { $desc = Get-Prefix $d 120 }
+    }
+  }
+
   $now = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
   $line = '{"c":' + (Format-JsonString $c) +
     ',"t":' + $now.ToString([System.Globalization.CultureInfo]::InvariantCulture) +
@@ -128,7 +138,10 @@ try {
     ',"src":' + (Format-Json (Get-Field $p 'source')) +
     ',"reason":' + (Format-Json (Get-Field $p 'reason')) +
     ',"msg":' + (Format-Json $msg) +
-    ',"err":' + (Format-Json $err) + '}'
+    ',"err":' + (Format-Json $err) +
+    ',"aid":' + (Format-Json (Get-Field $p 'agent_id')) +
+    ',"at":' + (Format-Json (Get-Field $p 'agent_type')) +
+    ',"desc":' + (Format-Json $desc) + '}'
   $bytes = (New-Object System.Text.UTF8Encoding $false).GetBytes($line + "`n")
 
   $dir = [System.IO.Path]::GetDirectoryName($file)
