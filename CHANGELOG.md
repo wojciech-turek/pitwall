@@ -2,6 +2,12 @@
 
 All notable changes to Pitwall are listed here, newest first. Pitwall shows these notes when an update is available, before you download it.
 
+## [Unreleased]
+
+### Changed
+
+- **A terminal you haven't looked at for a minute lets go of its resources.** Its live connection, its screen buffer and its graphics context are freed, and tmux redraws it when you come back. Sessions keep running; nothing you typed or read is lost.
+
 ## [0.3.5] - 2026-11-04
 
 ### Added

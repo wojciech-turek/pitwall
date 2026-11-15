@@ -68,3 +68,15 @@ describe('ParkingLot', () => {
     expect(lot.parked('a')).toBe(false)
   })
 })
+
+describe('ParkingLot hidden twice', () => {
+  test('hidden on an already hidden key does not re-arm the timer', () => {
+    const { lot, park, fire, timers } = setup()
+    lot.shown('a'); lot.hidden('a'); fire()
+    expect(park).toHaveBeenCalledTimes(1)
+    lot.hidden('a')
+    expect(timers.size).toBe(0)
+    fire()
+    expect(park).toHaveBeenCalledTimes(1)
+  })
+})

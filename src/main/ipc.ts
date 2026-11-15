@@ -18,6 +18,7 @@ import { archiveSession, checkArchive } from './sessions/archive'
 import type { SessionManager } from './sessions/manager'
 import type { KeyedMutex } from './sessions/mutex'
 import { APP_VERSION } from '@shared/version'
+import { PARK_AFTER_MS } from '@shared/parking'
 import type { UpdateChecker } from './updates'
 import type { UsageTracker } from './usage'
 
@@ -47,6 +48,12 @@ export interface IpcDeps {
   onViewing: (sessionIds: string[]) => void
 }
 
+/** How long a hidden terminal waits before parking; PITWALL_PARK_AFTER_MS (an integer of at least 100) overrides, for tests. */
+function parkAfterMs(): number {
+  const n = Number(process.env.PITWALL_PARK_AFTER_MS)
+  return Number.isInteger(n) && n >= 100 ? n : PARK_AFTER_MS
+}
+
 /** Registers every IPC handler and wires manager snapshots to the renderer. Returns a disposer. */
 export function registerIpc(d: IpcDeps): () => void {
   const { manager, projects, bridge, paths, exec, env, send, store, git, backend } = d
@@ -59,7 +66,7 @@ export function registerIpc(d: IpcDeps): () => void {
 
   handle(IPC.getSnapshot, () => manager.snapshot())
   handle(IPC.getUsage, () => d.usage.current())
-  handle(IPC.appInfo, () => ({ version: APP_VERSION, dev: d.dev, updateFeed: d.updates.hasFeed() }))
+  handle(IPC.appInfo, () => ({ version: APP_VERSION, dev: d.dev, updateFeed: d.updates.hasFeed(), parkAfterMs: parkAfterMs() }))
   handle(IPC.getUpdateState, () => d.updates.state())
   handle(IPC.checkForUpdates, () => d.updates.checkNow())
   handle(IPC.listSshKeys, () => listSshKeys(paths.sshDir))

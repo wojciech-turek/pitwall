@@ -30,6 +30,9 @@ export class ParkingLot {
     this.clearTimer = o.clearTimer ?? ((t) => clearTimeout(t as ReturnType<typeof setTimeout>))
   }
 
+  /** Applies to timers armed from now on. */
+  setAfterMs(ms: number): void { this.afterMs = ms }
+
   shown(key: string): void {
     this.cancel(key)
     this.parkedKeys.delete(key)
@@ -38,7 +41,7 @@ export class ParkingLot {
 
   hidden(key: string): void {
     const n = this.counts.get(key)
-    if (n === undefined) return
+    if (!n) return // unknown or already hidden: never re-arm
     if (n > 1) { this.counts.set(key, n - 1); return }
     this.counts.set(key, 0)
     this.cancel(key)

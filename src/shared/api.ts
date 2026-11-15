@@ -86,7 +86,7 @@ export interface PitwallApi {
    * Build version, whether this is a dev (unpackaged) run, and whether it looks for updates at all (a dev build only
    * when pointed at a feed with PITWALL_RELEASES_URL).
    */
-  appInfo(): Promise<{ version: string; dev: boolean; updateFeed: boolean }>
+  appInfo(): Promise<{ version: string; dev: boolean; updateFeed: boolean; parkAfterMs: number }>
   onUsage(cb: (u: ClaudeUsage | null) => void): () => void
   /** What the last update check found (nothing until one succeeds). */
   getUpdateState(): Promise<UpdateState>

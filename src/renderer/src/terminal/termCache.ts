@@ -8,6 +8,7 @@ import { shouldPassToApp } from './keys'
 import { plainText } from './plain-text'
 import { TERMINAL_THEME } from './theme'
 import { DEFAULT_SETTINGS } from '@shared/types'
+import { ParkingLot, PARK_AFTER_MS } from './parking'
 
 export { shouldPassToApp }
 
@@ -24,6 +25,19 @@ const keyOf = (id: string, kind: TermKind): string => `${id}:${kind}`
 let font = { family: DEFAULT_SETTINGS.monoFont, size: DEFAULT_SETTINGS.monoFontSize }
 let subscribed = false
 let pendingFocus: string | null = null
+
+function parkKey(key: string): void {
+  const i = key.lastIndexOf(':')
+  parkTerminal(key.slice(0, i), key.slice(i + 1) as TermKind)
+}
+const lot = new ParkingLot({ afterMs: PARK_AFTER_MS, park: parkKey })
+
+/** Set how long a hidden terminal waits before parking. Called at startup; later hides use it. */
+export function configureParking(afterMs: number): void {
+  lot.setAfterMs(afterMs)
+}
+export const markShown = (sessionId: string, kind: TermKind): void => lot.shown(keyOf(sessionId, kind))
+export const markHidden = (sessionId: string, kind: TermKind): void => lot.hidden(keyOf(sessionId, kind))
 
 export function setTerminalFont(family: string, size: number): void {
   font = { family, size }
@@ -123,10 +137,22 @@ export function disposeTerminal(sessionId: string, kind: TermKind): void {
   const k = keyOf(sessionId, kind)
   const e = cache.get(k)
   if (!e) return
+  lot.forget(k)
   cache.delete(k)
   e.opened = false
   e.term.dispose()
   window.pitwall.termClose(sessionId, kind)
+}
+
+/**
+ * Let go of a terminal that has been off screen for a while: its pty stream, xterm buffer and WebGL context.
+ * Showing it again rebuilds it and tmux redraws. Not while on screen, and not one waiting for a key (its
+ * "exited" notice would be lost and the next show would silently start a new shell).
+ */
+export function parkTerminal(sessionId: string, kind: TermKind): void {
+  const e = cache.get(keyOf(sessionId, kind))
+  if (!e || e.reopenOnKey || e.term.element?.isConnected) return
+  disposeTerminal(sessionId, kind)
 }
 
 /** Dispose every cached terminal whose session is no longer live. */
