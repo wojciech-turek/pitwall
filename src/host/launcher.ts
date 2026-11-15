@@ -312,9 +312,11 @@ export class Launcher {
 
   /** Claude with these arguments, and with a conversation continued from outside Pitwall, the note (as the script). */
   private startClaude(args: string[], env: Record<string, string>): Promise<number> {
-    const note = this.file('continue-note.txt')
-    const continued = existsSync(note) ? ['--system-prompt-snapshot', 'off', '--append-system-prompt-file', note] : []
-    return this.run(this.claudeBin(env), [...args, ...continued], env)
+    const cont = this.file('continue-note.txt')
+    const sys = this.file('system-note.txt')
+    const note = existsSync(sys) ? sys : existsSync(cont) ? cont : null // (before system-note.txt, the continue note was it all)
+    const flags = [...(existsSync(cont) ? ['--system-prompt-snapshot', 'off'] : []), ...(note ? ['--append-system-prompt-file', note] : [])]
+    return this.run(this.claudeBin(env), [...args, ...flags], env)
   }
 
   /** pitwall:launch, then this run's warnings again (the app clears its banners at each launch). */

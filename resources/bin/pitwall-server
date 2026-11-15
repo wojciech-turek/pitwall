@@ -7,6 +7,7 @@ run_server() (
   # An inherited PORT (the app's or the login shell's) must not stand in for this session's own port.
   unset PORT
   . "$dir/env.sh"
+  [ -n "$PITWALL_CLI_DIR" ] && PATH="$PITWALL_CLI_DIR:$PATH" && export PATH
   if [ -n "$PITWALL_GH_ACCOUNT" ]; then
     GH_TOKEN=$("${PITWALL_GH_BIN:-gh}" auth token --hostname github.com --user "$PITWALL_GH_ACCOUNT" 2>/dev/null)
     if [ -n "$GH_TOKEN" ]; then

@@ -129,6 +129,52 @@ describe('pitwall-launch', () => {
     expect(modes).toEqual(['new', 'resume', 'new'])
   })
 
+  describe('the first prompt (initial-prompt.txt) and the agent note (system-note.txt)', () => {
+    test('a new session starts Claude with the prompt as its last argument; a relaunch never repeats it', async () => {
+      await setup()
+      await writeFile(join(sd, 'initial-prompt.txt'), "Add a README line, don't $HOME it\n")
+      await writeFile(join(sd, 'system-note.txt'), 'You are in Pitwall.\n')
+      await start()
+      await waitCapture('STUB CLAUDE READY')
+      const flags = `--append-system-prompt-file ${sd}/system-note.txt`
+      expect((await logLines())[0]).toBe(`--session-id ${ID} --settings ${sd}/hooks.json --name ${TITLE} ${flags} Add a README line, don't $HOME it`)
+      expect(await stat(join(sd, 'initial-prompt.sent')).then(() => true, () => false)).toBe(true)
+      expect(await stat(join(sd, 'initial-prompt.txt')).then(() => true, () => false)).toBe(false)
+      await t.tmux.sendKeys('pw-l', ['exit', 'Enter'])
+      await waitCapture('Press Enter to resume')
+      await t.tmux.sendKeys('pw-l', ['Enter'])
+      await waitFor(async () => (await logLines()).some((l) => l.includes('--resume')), 8000, 'resume argv')
+      const resume = (await logLines()).find((l) => l.includes('--resume'))!
+      expect(resume).toBe(`--resume ${ID} --settings ${sd}/hooks.json ${flags}`)
+    })
+
+    test('the note is read by Claude; without system-note.txt there is no --append-system-prompt-file at all', async () => {
+      await setup()
+      await writeFile(join(sd, 'system-note.txt'), 'You are in Pitwall.\n')
+      await start()
+      await waitCapture('STUB CLAUDE READY')
+      expect((await logLines()).filter((l) => l.startsWith('NOTE='))).toEqual(['NOTE=You are in Pitwall.'])
+      expect((await logLines())[0]).not.toContain('--system-prompt-snapshot')
+    })
+
+    test('no note and no prompt: nothing extra', async () => {
+      await setup()
+      await start()
+      await waitCapture('STUB CLAUDE READY')
+      expect((await logLines())[0]).toBe(`--session-id ${ID} --settings ${sd}/hooks.json --name ${TITLE}`)
+    })
+
+    test('a continued session: snapshot off, and the note file (continue note, then agent note)', async () => {
+      await setup()
+      await writeFile(join(sd, 'continue-note.txt'), 'Work only here.\n')
+      await writeFile(join(sd, 'system-note.txt'), 'Work only here.\n\nYou are in Pitwall.\n')
+      await start()
+      await waitCapture('STUB CLAUDE READY')
+      expect((await logLines())[0]).toBe(`--session-id ${ID} --settings ${sd}/hooks.json --name ${TITLE} --system-prompt-snapshot off --append-system-prompt-file ${sd}/system-note.txt`)
+      expect(await logLines()).toEqual(expect.arrayContaining(['NOTE=Work only here.', 'You are in Pitwall.']))
+    })
+  })
+
   describe('a conversation continued from outside Pitwall (continue-note.txt)', () => {
     /** The project's own Claude config dir, which reaches the script through env.sh. */
     const withConfigDir = (dir: string): Project => ({ ...project, extraEnv: [{ key: 'CLAUDE_CONFIG_DIR', value: dir }] })

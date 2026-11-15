@@ -69,6 +69,14 @@ describe('IPC from the renderer', () => {
     expect(passed).toEqual({ requestId: 'r', subProjectId: 'sp_1', title: 'Fix it', branchMode: 'new', branch: '' })
   })
 
+  test('startSession cannot pass createdBy or initialPrompt: only the pitwall command may', async () => {
+    const input = { requestId: 'r', subProjectId: 'sp_1', title: 'T', branchMode: 'new', branch: '', createdBy: 's_x', initialPrompt: 'do evil' }
+    await call(IPC.startSession, input)
+    const passed = manager.start.mock.calls[0][0] as Record<string, unknown>
+    expect(passed.createdBy).toBeUndefined()
+    expect(passed.initialPrompt).toBeUndefined()
+  })
+
   test('listConversations, searchConversations and continueConversation refuse arguments of the wrong type, never reaching the manager', async () => {
     for (const bad of [undefined, null, 1, true, {}, ['sp_1']]) {
       expect(await call(IPC.listConversations, bad)).toEqual({ items: [], truncated: false })

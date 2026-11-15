@@ -84,8 +84,9 @@ export function registerIpc(d: IpcDeps): () => void {
   handle(IPC.updateSubProject, (id: string, patch: { setupCommand?: string; teardownCommand?: string; devCommand?: string }) => projects.updateSubProject(id, patch))
   handle(IPC.prepareNewSession, (id: string) => manager.prepareNew(id))
   // Only continueConversation continues an outside conversation: it checks it and keeps Claude to the worktree.
+  // Only the pitwall command (over its socket) says who started a session or gives it a first prompt.
   handle(IPC.startSession, (i: NewSessionInput) =>
-    manager.start({ ...i, continueClaudeId: undefined, continuedFrom: undefined }, (p) => send(IPC.startProgress, p)))
+    manager.start({ ...i, continueClaudeId: undefined, continuedFrom: undefined, createdBy: undefined, initialPrompt: undefined }, (p) => send(IPC.startProgress, p)))
   handle(IPC.renameSession, (id: string, title: string) => manager.rename(id, title))
   handle(IPC.setProjectMuted, (id: string, muted: boolean) => projects.setProjectMuted(id, muted === true))
   handle(IPC.markSessionUnread, (id: string) => manager.markUnread(id))
@@ -170,9 +171,14 @@ export function registerIpc(d: IpcDeps): () => void {
   })
   handle(IPC.setSettings, async (s: unknown) => {
     const wasOn = store.state.settings.checkForUpdates !== false
+    const agentWas = store.state.settings.agentCli !== false
     const r = await store.update((d) => { d.settings = settingsFrom(s, d.settings) })
     // Turned back on: check now rather than up to a day later.
     if (!wasOn && store.state.settings.checkForUpdates !== false) void d.updates.checkNow()
+    // The agent note is in each session's files: rewrite them, so the change applies at their next launch.
+    if (agentWas !== (store.state.settings.agentCli !== false)) {
+      for (const p of store.state.projects) void manager.rewriteProjectSessionFiles(p.id)
+    }
     return r
   })
 

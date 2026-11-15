@@ -27,7 +27,7 @@ const hit = (sessionId: string, title: string, o: Partial<HistoryHit> = {}): His
 function snapOf(o: Partial<AppSnapshot> = {}): AppSnapshot {
   return {
     projects: [project('p1')], subProjects: [sub('tax')], sessions: [], archived: [],
-    settings: { monoFont: '', monoFontSize: 13, checkForUpdates: true }, ...o
+    settings: { monoFont: '', monoFontSize: 13, checkForUpdates: true, agentCli: true }, ...o
   }
 }
 function ctxOf(o: Partial<ActionContext> = {}): ActionContext {

@@ -13,6 +13,7 @@ import { isFile } from '../exec'
 import {
   buildHookSettings, findUserStatusLine, hookCommandFor, statusLineCommandFor, windowsHookCommand, windowsStatusLineCommand
 } from '../hooks/settings'
+import { cliSocketPath, cliToken } from '../cli/auth'
 import { buildSessionEnv, claudeConfigDir, getGhToken, renderEnvFile } from '../identity'
 import { eventsFile, sessionDir, type AppPaths } from '../paths'
 import { findGitBash, windowsPowerShell } from '../platform'
@@ -39,6 +40,10 @@ export interface StarterDeps {
   launcher?: LauncherChoice
   /** Gives each session its block of ports. Without one, sessions get none. */
   ports?: PortAllocator
+  /** The key that signs sessions' `pitwall` command tokens. Without it, sessions get no command. */
+  cliKey?: Buffer
+  /** The bundled client (out/cli/index.js) the `pitwall` command runs. */
+  cliJs?: string
 }
 
 /** True when the host's launcher runs this app's sessions (Windows; PITWALL_LAUNCHER=host elsewhere). */
@@ -133,6 +138,9 @@ export async function writeSessionFiles(session: Session, deps: StarterDeps): Pr
     setupCommand: sp.setupCommand,
     devCommand: sp.devCommand,
     userStatusLine,
+    cli: !windows && deps.cliKey && deps.cliJs
+      ? { socket: cliSocketPath(deps.paths.dataDir), token: cliToken(deps.cliKey, session.id), node: process.execPath, js: deps.cliJs, dir: deps.paths.cliBinDir }
+      : undefined,
     gitBash: windows && userStatusLine ? findGitBash(deps.env, isFile) ?? undefined : undefined,
     home: deps.home,
     platform: deps.platform
@@ -155,8 +163,22 @@ export async function writeSessionFiles(session: Session, deps: StarterDeps): Pr
   const claudeId = deps.store.state.sessions.find((x) => x.id === session.id)?.claudeSessionId ?? session.claudeSessionId
   await writeFileAtomic(join(dir, 'claude-id'), claudeId + '\n')
   // Read by the launcher at every start of Claude (written again here, so it follows the session to a new folder).
-  if (session.continuedFrom) await writeFileAtomic(join(dir, 'continue-note.txt'), continueNote(session))
+  const cont = session.continuedFrom ? continueNote(session) : ''
+  if (cont) await writeFileAtomic(join(dir, 'continue-note.txt'), cont)
+  // What Claude appends to its system prompt: the continue note, then the agent note. Gone when there is neither.
+  const agent = !windows && deps.store.state.settings.agentCli !== false ? AGENT_NOTE : ''
+  const note = [cont.trimEnd(), agent].filter(Boolean).join('\n\n')
+  if (note) await writeFileAtomic(join(dir, 'system-note.txt'), note + '\n')
+  else await rm(join(dir, 'system-note.txt'), { force: true })
 }
+
+/** What an agent is told about the `pitwall` command (Settings can turn it off). */
+export const AGENT_NOTE =
+  'You are running inside Pitwall, which shows the user every agent session. To hand work to a parallel agent, use ' +
+  'the `pitwall` command instead of creating git worktrees yourself: `pitwall new "<title>" --prompt "<task>"` ' +
+  'starts a session on its own branch and worktree; `pitwall wait <id>` waits until it finishes and prints its ' +
+  'reply; `pitwall list` shows the sessions in this folder; `pitwall send <id> "<text>"` gives a session you started ' +
+  'a follow-up. Run `pitwall --help` for details.'
 
 /**
  * What Claude is told in a session that continues a conversation run outside Pitwall. Its recorded system prompt names
@@ -314,11 +336,14 @@ export async function startSessionLocked(
       createdAt: Date.now(),
       lastViewedAt: Date.now()
     }
+    if (input.createdBy) session.createdBy = input.createdBy
     if (input.continueClaudeId && input.continuedFrom) session.continuedFrom = input.continuedFrom
 
     await run('files', async () => {
       if (deps.ports) session.portBase = await deps.ports.allocate(takenPorts(deps))
       await writeSessionFiles(session, deps)
+      // Read by the launcher at Claude's first start only (it then renames the file, so a relaunch never repeats it).
+      if (input.initialPrompt) await writeFileAtomic(join(dir, 'initial-prompt.txt'), input.initialPrompt)
       // A conversation to continue exists already: the launcher resumes it (as after resuming an archived session).
       if (input.continueClaudeId) await writeFile(join(dir, 'started'), '')
     })

@@ -129,6 +129,8 @@ export function buildSessionEnv(input: {
   userStatusLine?: string
   /** Windows: Git Bash, which runs the user's status line as Claude Code would (else PowerShell does). */
   gitBash?: string
+  /** The `pitwall` command (not on Windows): its socket, this session's token, the Node and client that run it, its bin dir. */
+  cli?: { socket: string; token: string; node: string; js: string; dir: string }
   home: string
   platform?: NodeJS.Platform
 }): Record<string, string> {
@@ -161,6 +163,13 @@ export function buildSessionEnv(input: {
   if (input.devCommand) env.PITWALL_DEV_COMMAND = input.devCommand
   if (input.userStatusLine) env.PITWALL_USER_STATUSLINE = input.userStatusLine
   if (input.userStatusLine && input.gitBash) env.PITWALL_GIT_BASH = input.gitBash
+  if (input.cli) {
+    env.PITWALL_CLI_SOCKET = input.cli.socket
+    env.PITWALL_CLI_TOKEN = input.cli.token
+    env.PITWALL_NODE = input.cli.node
+    env.PITWALL_CLI_JS = input.cli.js
+    env.PITWALL_CLI_DIR = input.cli.dir
+  }
   return env
 }
 

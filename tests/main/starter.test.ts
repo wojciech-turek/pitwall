@@ -3,6 +3,7 @@ import { access, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promi
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
+import { cliSocketPath, cliToken } from '../../src/main/cli/auth'
 import { exec } from '../../src/main/exec'
 import { GitClient } from '../../src/main/git'
 import { forwardSlashes } from '../../src/main/hooks/settings'
@@ -114,6 +115,75 @@ describe('startSession', () => {
     expect(progress.at(-1)?.message).toBe('Started — answer any prompt in the terminal')
     expect(res).toEqual({ ok: true, sessionId: s.id })
     expect(r.root).toBeTruthy()
+  })
+
+  test('createdBy is stored; initialPrompt and the agent note are written for the launcher', async () => {
+    const { sp } = await addRepo()
+    const res = await start(input(sp, { createdBy: 's_parent', initialPrompt: 'Add a README line' }))
+    expect(res.ok).toBe(true)
+    const s = store.state.sessions[0]
+    expect(s.createdBy).toBe('s_parent')
+    const d = sessionDir(t.paths, s.id)
+    expect(await readFile(join(d, 'initial-prompt.txt'), 'utf8')).toBe('Add a README line')
+    const note = await readFile(join(d, 'system-note.txt'), 'utf8')
+    expect(note).toContain('You are running inside Pitwall')
+    expect(note).toContain('`pitwall new "<title>" --prompt "<task>"`')
+    expect(await has(join(d, 'continue-note.txt'))).toBe(false)
+  })
+
+  test('no first prompt and no createdBy: neither file nor field', async () => {
+    const { sp } = await addRepo()
+    await start(input(sp))
+    expect(store.state.sessions[0].createdBy).toBeUndefined()
+    expect(await has(join(sessionDir(t.paths, store.state.sessions[0].id), 'initial-prompt.txt'))).toBe(false)
+  })
+
+  test('agentCli off: no system-note.txt for a fresh session, and a stale one is removed', async () => {
+    const { sp } = await addRepo()
+    await start(input(sp))
+    const s = store.state.sessions[0]
+    const f = join(sessionDir(t.paths, s.id), 'system-note.txt')
+    expect(await has(f)).toBe(true)
+    await store.update((d) => { d.settings.agentCli = false })
+    await writeSessionFiles(s, deps)
+    expect(await has(f)).toBe(false)
+  })
+
+  test('a continued session: continue note, a blank line, then the agent note; continue-note.txt stays the marker', async () => {
+    const { sp } = await addRepo()
+    await start(input(sp, { continueClaudeId: '00000001-0000-4000-8000-00000000000a', continuedFrom: '/x/repo' }))
+    const d = sessionDir(t.paths, store.state.sessions[0].id)
+    const cont = await readFile(join(d, 'continue-note.txt'), 'utf8')
+    const note = await readFile(join(d, 'system-note.txt'), 'utf8')
+    expect(note.startsWith(cont + '\n')).toBe(true)
+    expect(note).toContain('You are running inside Pitwall')
+    await store.update((x) => { x.settings.agentCli = false })
+    await writeSessionFiles(store.state.sessions[0], deps)
+    expect(await readFile(join(d, 'system-note.txt'), 'utf8')).toBe(cont)
+  })
+
+  test('Windows gets no agent note and no pitwall command variables', async () => {
+    const { sp } = await addRepo()
+    deps = { ...deps, platform: 'win32', cliKey: Buffer.alloc(32, 1), cliJs: '/x/cli.js' }
+    const s = { id: 's_w', subProjectId: sp.id, title: 'W', slug: 'w', claudeSessionId: 'c', cwd: sp.path, createdAt: 0, lastViewedAt: 0 } as Session
+    await mkdir(sessionDir(t.paths, s.id), { recursive: true })
+    await writeSessionFiles(s, deps)
+    expect(await has(join(sessionDir(t.paths, s.id), 'system-note.txt'))).toBe(false)
+    expect(await readFile(join(sessionDir(t.paths, s.id), 'env.json'), 'utf8')).not.toContain('PITWALL_CLI')
+  })
+
+  test.skipIf(WINDOWS)('with a CLI key, the session env has the command variables and a token only that session can use', async () => {
+    const { sp } = await addRepo()
+    const key = Buffer.alloc(32, 7)
+    deps = { ...deps, cliKey: key, cliJs: '/app/out/cli/index.js' }
+    await start(input(sp))
+    const s = store.state.sessions[0]
+    const vars = JSON.parse(await readFile(join(sessionDir(t.paths, s.id), 'env.json'), 'utf8')) as Record<string, string>
+    expect(vars.PITWALL_CLI_SOCKET).toBe(cliSocketPath(t.paths.dataDir))
+    expect(vars.PITWALL_CLI_TOKEN).toBe(cliToken(key, s.id))
+    expect(vars.PITWALL_NODE).toBe(process.execPath)
+    expect(vars.PITWALL_CLI_JS).toBe('/app/out/cli/index.js')
+    expect(vars.PITWALL_CLI_DIR).toBe(t.paths.cliBinDir)
   })
 
   test('files listed in .worktreeinclude are copied into the new worktree', async () => {

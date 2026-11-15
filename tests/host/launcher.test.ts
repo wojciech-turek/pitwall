@@ -411,6 +411,23 @@ describe('a conversation continued from outside Pitwall (continue-note.txt)', ()
     expect(lastPty().args).toEqual(['--session-id', ID, '--settings', join(sd, 'hooks.json'), '--name', TITLE, ...flags()])
   })
 
+  test('the note file (system-note.txt) is what Claude appends; snapshot off only with continue-note.txt as the marker', async () => {
+    const sn = join(sd, 'system-note.txt')
+    writeFileSync(sn, 'You are in Pitwall.\n')
+    writeFileSync(join(sd, 'started'), '')
+    const l = launcher()
+    l.start()
+    await until(() => spawned.length === 1, 'resume')
+    expect(lastPty().args).toEqual(['--resume', ID, '--settings', join(sd, 'hooks.json'), '--append-system-prompt-file', sn])
+    lastPty().exit(0)
+    await until(() => screen.includes('Press Enter'), 'prompt')
+    writeFileSync(note(), 'Work only here.\n')
+    writeFileSync(sn, 'Work only here.\n\nYou are in Pitwall.\n')
+    l.write('\r')
+    await until(() => spawned.length === 2, 'resumed again')
+    expect(lastPty().args).toEqual(['--resume', ID, '--settings', join(sd, 'hooks.json'), '--system-prompt-snapshot', 'off', '--append-system-prompt-file', sn])
+  })
+
   test('a session that already started resumes with them too', async () => {
     writeFileSync(note(), 'Work only here.\n')
     writeFileSync(join(sd, 'started'), '')

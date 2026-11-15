@@ -18,7 +18,7 @@ function parseState(text: string): PersistedState {
     subProjects: Array.isArray(raw.subProjects) ? raw.subProjects : [],
     sessions: Array.isArray(raw.sessions) ? raw.sessions : [],
     // A state file from before the update check has no checkForUpdates: checking is on.
-    settings: { ...settings, checkForUpdates: settings.checkForUpdates !== false }
+    settings: { ...settings, checkForUpdates: settings.checkForUpdates !== false, agentCli: settings.agentCli !== false }
   }
 }
 
@@ -32,7 +32,8 @@ export function settingsFrom(input: unknown, current: AppSettings): AppSettings 
   const size = Number(s.monoFontSize)
   const monoFontSize = Number.isFinite(size) ? Math.min(32, Math.max(8, Math.round(size))) : DEFAULT_SETTINGS.monoFontSize
   const checkForUpdates = typeof s.checkForUpdates === 'boolean' ? s.checkForUpdates : current.checkForUpdates !== false
-  return { monoFont, monoFontSize, checkForUpdates }
+  const agentCli = typeof s.agentCli === 'boolean' ? s.agentCli : current.agentCli !== false
+  return { monoFont, monoFontSize, checkForUpdates, agentCli }
 }
 
 async function tryLoad(file: string): Promise<PersistedState | 'missing' | 'corrupt'> {

@@ -1,0 +1,7 @@
+#!/bin/sh
+# The `pitwall` command, on a session's PATH (see PITWALL_CLI_DIR). Runs the client with the app's own Node.
+if [ -z "$PITWALL_NODE" ] || [ -z "$PITWALL_CLI_JS" ] || [ -z "$PITWALL_CLI_SOCKET" ]; then
+  echo "pitwall: run this inside a Pitwall session." >&2
+  exit 2
+fi
+ELECTRON_RUN_AS_NODE=1 exec "$PITWALL_NODE" "$PITWALL_CLI_JS" "$@"

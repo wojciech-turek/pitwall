@@ -50,11 +50,14 @@ export interface AppSettings {
   monoFont: string; monoFontSize: number
   /** Look for newer releases on GitHub, about once a day. */
   checkForUpdates: boolean
+  /** Tell agents about the `pitwall` command (so they start helper sessions with it). Not offered on Windows. */
+  agentCli: boolean
 }
 export const DEFAULT_SETTINGS: AppSettings = {
   monoFont: '"SF Mono","JetBrains Mono",Menlo,monospace',
   monoFontSize: 13,
-  checkForUpdates: true
+  checkForUpdates: true,
+  agentCli: true
 }
 export interface PersistedState {
   version: 1; projects: Project[]; subProjects: SubProject[]; sessions: Session[]; settings: AppSettings

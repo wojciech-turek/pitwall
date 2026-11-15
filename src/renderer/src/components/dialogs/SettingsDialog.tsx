@@ -6,6 +6,7 @@ import { useToast } from '../../state/toast'
 import { cleanIpcError } from '../../state/errors'
 import { useAppInfo } from '../../state/appInfo'
 import { checkForUpdatesNow } from '../../state/updates'
+import { platform } from '../../platform'
 
 export default function SettingsDialog(): React.JSX.Element | null {
   const snap = useSnapshot()
@@ -15,6 +16,7 @@ export default function SettingsDialog(): React.JSX.Element | null {
   const [font, setFont] = useState(snap?.settings.monoFont ?? '')
   const [size, setSize] = useState(String(snap?.settings.monoFontSize ?? 13))
   const [checkUpdates, setCheckUpdates] = useState(snap?.settings.checkForUpdates !== false)
+  const [agentCli, setAgentCli] = useState(snap?.settings.agentCli !== false)
   const [checking, setChecking] = useState(false)
   const [checkResult, setCheckResult] = useState('')
   if (!snap) return null
@@ -24,7 +26,8 @@ export default function SettingsDialog(): React.JSX.Element | null {
       await window.pitwall.setSettings({
         monoFont: font.trim() || snap.settings.monoFont,
         monoFontSize: Number.isFinite(n) && n > 0 ? n : snap.settings.monoFontSize,
-        checkForUpdates: checkUpdates
+        checkForUpdates: checkUpdates,
+        agentCli
       })
       closeDialog()
     } catch (e) {
@@ -68,6 +71,16 @@ export default function SettingsDialog(): React.JSX.Element | null {
             </span>
           </div>
         </div>
+        {platform() !== 'win32' && (
+          <div className="settings-updates">
+            <label className="check-row">
+              <input type="checkbox" data-testid="setting-agent-cli" checked={agentCli}
+                onChange={(e) => setAgentCli(e.target.checked)} />
+              Let agents start sessions with the pitwall command
+            </label>
+            <p className="settings-note">Agents are told they can run <code>pitwall new</code> to hand work to a parallel session, which appears in the sidebar. Applies the next time a session's Claude starts.</p>
+          </div>
+        )}
         {info && (
           <p className="muted-text help" data-testid="settings-version" style={{ marginTop: 12 }}>
             Pitwall {info.version}{info.dev ? ' (dev build)' : ''}

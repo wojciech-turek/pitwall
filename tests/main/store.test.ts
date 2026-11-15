@@ -43,15 +43,15 @@ describe('Store', () => {
 
   test('settings persist', async () => {
     const s = await Store.open(f)
-    await s.update((d) => { d.settings = { monoFont: 'Menlo', monoFontSize: 15, checkForUpdates: false } })
+    await s.update((d) => { d.settings = { monoFont: 'Menlo', monoFontSize: 15, checkForUpdates: false, agentCli: true } })
     const s2 = await Store.open(f)
-    expect(s2.state.settings).toEqual({ monoFont: 'Menlo', monoFontSize: 15, checkForUpdates: false })
+    expect(s2.state.settings).toEqual({ monoFont: 'Menlo', monoFontSize: 15, checkForUpdates: false, agentCli: true })
   })
 
   test('a state file from before the update check means checking is on', async () => {
     await writeFile(f, JSON.stringify({ version: 1, projects: [], subProjects: [], sessions: [], settings: { monoFont: 'Menlo', monoFontSize: 15 } }))
     const s = await Store.open(f)
-    expect(s.state.settings).toEqual({ monoFont: 'Menlo', monoFontSize: 15, checkForUpdates: true })
+    expect(s.state.settings).toEqual({ monoFont: 'Menlo', monoFontSize: 15, checkForUpdates: true, agentCli: true })
     expect(DEFAULT_SETTINGS.checkForUpdates).toBe(true)
   })
 
@@ -159,13 +159,13 @@ test('newId format', () => {
 })
 
 describe('settingsFrom (what the renderer may save)', () => {
-  const current = { monoFont: 'Menlo', monoFontSize: 15, checkForUpdates: false }
+  const current = { monoFont: 'Menlo', monoFontSize: 15, checkForUpdates: false, agentCli: true }
 
   test('takes valid fields, trimming and clamping', () => {
     expect(settingsFrom({ monoFont: ' Iosevka ', monoFontSize: 40.4, checkForUpdates: true }, current))
-      .toEqual({ monoFont: 'Iosevka', monoFontSize: 32, checkForUpdates: true })
+      .toEqual({ monoFont: 'Iosevka', monoFontSize: 32, checkForUpdates: true, agentCli: true })
     expect(settingsFrom({ monoFont: 'Iosevka', monoFontSize: 2, checkForUpdates: false }, DEFAULT_SETTINGS))
-      .toEqual({ monoFont: 'Iosevka', monoFontSize: 8, checkForUpdates: false })
+      .toEqual({ monoFont: 'Iosevka', monoFontSize: 8, checkForUpdates: false, agentCli: true })
   })
 
   test('saving fonts alone keeps the update setting', () => {
@@ -174,9 +174,16 @@ describe('settingsFrom (what the renderer may save)', () => {
     expect(settingsFrom({ monoFont: 'Iosevka', monoFontSize: 14 }, { monoFont: 'x', monoFontSize: 13 } as never).checkForUpdates).toBe(true)
   })
 
+  test('agentCli is kept when valid, else the current value (default on)', () => {
+    expect(settingsFrom({ monoFont: 'x', monoFontSize: 13, agentCli: false }, DEFAULT_SETTINGS).agentCli).toBe(false)
+    expect(settingsFrom({ monoFont: 'x', monoFontSize: 13 }, { ...DEFAULT_SETTINGS, agentCli: false }).agentCli).toBe(false)
+    expect(settingsFrom({ monoFont: 'x', monoFontSize: 13, agentCli: 'no' }, DEFAULT_SETTINGS).agentCli).toBe(true)
+    expect(settingsFrom({}, { monoFont: 'x', monoFontSize: 13 } as never).agentCli).toBe(true)
+  })
+
   test('invalid fonts fall back to the defaults', () => {
-    expect(settingsFrom(null, current)).toEqual({ ...DEFAULT_SETTINGS, checkForUpdates: false })
+    expect(settingsFrom(null, current)).toEqual({ ...DEFAULT_SETTINGS, checkForUpdates: false, agentCli: true })
     expect(settingsFrom({ monoFont: '   ', monoFontSize: 'big' }, current))
-      .toEqual({ monoFont: DEFAULT_SETTINGS.monoFont, monoFontSize: DEFAULT_SETTINGS.monoFontSize, checkForUpdates: false })
+      .toEqual({ monoFont: DEFAULT_SETTINGS.monoFont, monoFontSize: DEFAULT_SETTINGS.monoFontSize, checkForUpdates: false, agentCli: true })
   })
 })

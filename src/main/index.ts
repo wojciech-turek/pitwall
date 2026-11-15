@@ -210,13 +210,23 @@ async function bootstrap(): Promise<void> {
   const launcher = launcherChoice(process.env)
   // Searches every session's conversation (⌘K) and a folder's (Continue a conversation).
   const history = new SessionHistory(() => historySources(mgr.snapshot(), home, env))
-  const mgr = new SessionManager({ store, paths, git, backend, exec, env, home, mutex, notifier, launcher, history, ports: new PortAllocator() })
+  // The `pitwall` command (not on Windows: no unix sockets): its key signs each session's token, so load it first.
+  let cliKey: Buffer | undefined
+  if (!WINDOWS) {
+    try {
+      cliKey = await loadCliKey(paths.cliKey)
+    } catch (e) {
+      console.error('pitwall command key unavailable:', e)
+    }
+  }
+  const cliJs = join(import.meta.dirname, '../cli/index.js')
+  const mgr = new SessionManager({ store, paths, git, backend, exec, env, home, mutex, notifier, launcher, history, ports: new PortAllocator(), cliKey, cliJs })
   manager = mgr
   await mgr.init()
   // The `pitwall` command's socket: sessions ask Pitwall to start and watch helper sessions. Not on Windows (no unix sockets).
-  if (!WINDOWS) {
+  if (cliKey) {
     try {
-      const cli = new CliServer({ key: await loadCliKey(paths.cliKey), socketPath: cliSocketPath(paths.dataDir), manager: mgr })
+      const cli = new CliServer({ key: cliKey, socketPath: cliSocketPath(paths.dataDir), manager: mgr })
       await cli.start()
       disposeCli = () => { void cli.stop() }
     } catch (e) {
