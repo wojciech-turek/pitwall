@@ -5,7 +5,8 @@ import type {
 import { mergeEnv } from '../../host/win-command'
 import { CONVERSATION_ID, listOutsideConversations } from '../conversations'
 import type { SessionHistory } from '../history'
-import { buildSessionEnv, claudeConfigDir } from '../identity'
+import { sessionConfigDir } from '../accounts'
+import { buildSessionEnv } from '../identity'
 import { msg, startLockKey, startSessionLocked, type StarterDeps } from './starter'
 
 /**
@@ -153,7 +154,9 @@ export class Conversations {
 
   /** Where the project's Claude keeps its transcripts. */
   private configDir(project: Project): string {
-    return claudeConfigDir(project, this.deps.home, this.deps.env)
+    // No session yet: the list is what a session started now, on the active account, would see.
+    const { store, home, env } = this.deps
+    return sessionConfigDir(project, { account: store.state.settings.activeAccount }, { settings: store.state.settings, home, env })
   }
 
   /** The folder's path without a separator at the end: Claude names a folder's transcripts by its path as it ran. */

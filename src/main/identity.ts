@@ -84,7 +84,7 @@ export function shellQuote(s: string): string {
   return `'${s.replace(/'/g, `'"'"'`)}'`
 }
 
-function expandHome(p: string, home: string, platform: NodeJS.Platform = process.platform): string {
+export function expandHome(p: string, home: string, platform: NodeJS.Platform = process.platform): string {
   if (p === '~') return home
   if (platform === 'win32') return /^~[\\/]/.test(p) ? win32.join(home, p.slice(2)) : p
   return p.startsWith('~/') ? posix.join(home, p.slice(2)) : p
@@ -171,13 +171,6 @@ export function buildSessionEnv(input: {
     env.PITWALL_CLI_DIR = input.cli.dir
   }
   return env
-}
-
-/** Where a session's Claude keeps its user settings: the project's CLAUDE_CONFIG_DIR, else the app's, else ~/.claude. */
-export function claudeConfigDir(project: Project, home: string, env: Record<string, string> = {}): string {
-  const own = project.extraEnv.filter((e) => e.key === 'CLAUDE_CONFIG_DIR').at(-1)?.value
-  if (own) return expandHome(own, home)
-  return env.CLAUDE_CONFIG_DIR || join(home, '.claude')
 }
 
 export function renderEnvFile(env: Record<string, string>): string {

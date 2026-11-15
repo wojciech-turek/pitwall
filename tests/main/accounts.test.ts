@@ -1,34 +1,110 @@
-import { mkdtemp, mkdir, rm, utimes, writeFile } from 'node:fs/promises'
+import { realpathSync } from 'node:fs'
+import { mkdtemp, mkdir, rm, symlink, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, test } from 'vitest'
-import { accountKey, accountLabel } from '../../src/main/accounts'
-import type { Project } from '@shared/types'
+import {
+  accountKey, accountLabel, accountMissing, defaultAccountDir, isPinned, normalizeDir, sessionAccountId, sessionConfigDir,
+  DEFAULT_ACCOUNT_ID, type AccountCtx
+} from '../../src/main/accounts'
+import { DEFAULT_SETTINGS, type AppSettings, type Project } from '@shared/types'
 
 const mkProject = (dir?: string): Project => ({
   id: 'p1', name: 'P', createdAt: 0,
   identity: { sshKeyPath: '', ghAccount: '', gitName: 'a', gitEmail: 'a@b.c' },
   extraEnv: dir ? [{ key: 'CLAUDE_CONFIG_DIR', value: dir }] : []
 })
-const tmpHome = () => mkdtemp(join(tmpdir(), 'pitwall-acct-'))
+// The real path: a temp folder is often reached through a symlink (/var on macOS), and account folders are real paths.
+const tmpHome = async () => realpathSync(await mkdtemp(join(tmpdir(), 'pitwall-acct-')))
+const ctxOf = (home: string, over: Partial<AppSettings> = {}, env: Record<string, string> = {}): AccountCtx =>
+  ({ settings: { ...DEFAULT_SETTINGS, ...over }, home, env })
 
 describe('accountKey', () => {
   test('~/.claude-work and <home>/.claude-work/ are the same account', async () => {
     const home = await tmpHome()
-    const a = accountKey(mkProject('~/.claude-work'), home, {})
-    const b = accountKey(mkProject(join(home, '.claude-work') + '/'), home, {})
+    const a = accountKey(mkProject('~/.claude-work'), {}, ctxOf(home))
+    const b = accountKey(mkProject(join(home, '.claude-work') + '/'), {}, ctxOf(home))
     expect(a).toBe(join(home, '.claude-work'))
     expect(b).toBe(a)
   })
 
   test('no CLAUDE_CONFIG_DIR is <home>/.claude', async () => {
     const home = await tmpHome()
-    expect(accountKey(mkProject(), home, {})).toBe(join(home, '.claude'))
+    expect(accountKey(mkProject(), {}, ctxOf(home))).toBe(join(home, '.claude'))
   })
 
   test('the app environment CLAUDE_CONFIG_DIR is used when the project has none', async () => {
     const home = await tmpHome()
-    expect(accountKey(mkProject(), home, { CLAUDE_CONFIG_DIR: join(home, 'x') + '/' })).toBe(join(home, 'x'))
+    expect(accountKey(mkProject(), {}, ctxOf(home, {}, { CLAUDE_CONFIG_DIR: join(home, 'x') + '/' }))).toBe(join(home, 'x'))
+  })
+})
+
+describe("a session's account", () => {
+  const added = (home: string) => ({ id: 'a1', dir: join(home, 'data', 'claude-accounts', 'a1'), addedAt: 1 })
+
+  test('a session with no account runs on Default', async () => {
+    const home = await tmpHome()
+    expect(sessionAccountId(mkProject(), {}, ctxOf(home))).toBe(DEFAULT_ACCOUNT_ID)
+    expect(DEFAULT_ACCOUNT_ID).toBe('default')
+    expect(sessionConfigDir(mkProject(), {}, ctxOf(home))).toBe(join(home, '.claude'))
+  })
+
+  test("a session's own account gives that account's folder", async () => {
+    const home = await tmpHome()
+    const ctx = ctxOf(home, { claudeAccounts: [added(home)] })
+    expect(sessionAccountId(mkProject(), { account: 'a1' }, ctx)).toBe('a1')
+    expect(sessionConfigDir(mkProject(), { account: 'a1' }, ctx)).toBe(added(home).dir)
+    expect(accountKey(mkProject(), { account: 'a1' }, ctx)).toBe(added(home).dir)
+  })
+
+  test('a project that sets CLAUDE_CONFIG_DIR is pinned and wins over the session account', async () => {
+    const home = await tmpHome()
+    const p = mkProject('~/work-claude')
+    const ctx = ctxOf(home, { claudeAccounts: [added(home)] })
+    expect(isPinned(p)).toBe(true)
+    expect(isPinned(mkProject())).toBe(false)
+    expect(sessionAccountId(p, { account: 'a1' }, ctx)).toBeNull()
+    expect(sessionConfigDir(p, { account: 'a1' }, ctx)).toBe(join(home, 'work-claude'))
+  })
+
+  test("of several CLAUDE_CONFIG_DIR values the last wins, and an empty one doesn't pin", async () => {
+    const home = await tmpHome()
+    const withDirs = (...values: string[]): Project =>
+      ({ ...mkProject(), extraEnv: values.map((value) => ({ key: 'CLAUDE_CONFIG_DIR', value })) })
+    expect(sessionConfigDir(withDirs(join(home, 'a'), join(home, 'b')), {}, ctxOf(home))).toBe(join(home, 'b'))
+    expect(isPinned(withDirs(''))).toBe(false)
+    expect(sessionConfigDir(withDirs(''), {}, ctxOf(home))).toBe(join(home, '.claude'))
+  })
+
+  test('an account that no longer exists falls back to Default and is reported missing', async () => {
+    const home = await tmpHome()
+    expect(sessionAccountId(mkProject(), { account: 'gone' }, ctxOf(home))).toBe('default')
+    expect(sessionConfigDir(mkProject(), { account: 'gone' }, ctxOf(home))).toBe(join(home, '.claude'))
+    expect(accountMissing({ account: 'gone' }, ctxOf(home))).toBe(true)
+    expect(accountMissing({}, ctxOf(home))).toBe(false)
+    expect(accountMissing({ account: 'default' }, ctxOf(home))).toBe(false)
+    expect(accountMissing({ account: 'a1' }, ctxOf(home, { claudeAccounts: [added(home)] }))).toBe(false)
+  })
+
+  test("the app's own CLAUDE_CONFIG_DIR starting with ~ is expanded", async () => {
+    const home = await tmpHome()
+    expect(defaultAccountDir(ctxOf(home, {}, { CLAUDE_CONFIG_DIR: '~/alt' }))).toBe(join(home, 'alt'))
+    expect(defaultAccountDir(ctxOf(home))).toBe(join(home, '.claude'))
+  })
+})
+
+describe('normalizeDir', () => {
+  test('expands ~ and drops a trailing slash', async () => {
+    const home = await tmpHome()
+    expect(normalizeDir('~/x/', home)).toBe(join(home, 'x'))
+    expect(normalizeDir('~', home)).toBe(home)
+  })
+
+  test.skipIf(process.platform === 'win32')('a symlinked spelling of a folder is the same folder', async () => {
+    const home = await tmpHome()
+    await mkdir(join(home, 'real'))
+    await symlink(join(home, 'real'), join(home, 'link'))
+    expect(normalizeDir(join(home, 'link'), home)).toBe(join(home, 'real'))
   })
 })
 

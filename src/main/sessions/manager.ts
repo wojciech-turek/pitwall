@@ -1,4 +1,4 @@
-import { accountKey } from '../accounts'
+import { accountKey, accountMissing, sessionAccountId, type AccountCtx } from '../accounts'
 import { writeFileAtomic } from '../atomic'
 import { readFile, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -30,6 +30,9 @@ type Deps = StarterDeps & {
 type Extras = Partial<Pick<SessionView, 'diffStat' | 'liveBranch' | 'server'>>
 
 const FIRST_EVENT_TIMEOUT_MS = 20000
+export const ACCOUNT_GONE_WARNING = "This session's Claude account was removed. It runs on the default account."
+/** The account a session runs on: its folder, its id (null when its project sets its own) and whether the one it names is gone. */
+interface SessionAccount { key: string; id: string | null; missing: boolean }
 export const START_WARNING =
   'Claude hasn\'t reported in yet. If it\'s asking whether to trust this folder, choose "Yes, I trust this folder" — ' +
   'the default is "No, exit".'
@@ -58,8 +61,8 @@ export class SessionManager {
   private clearing = new Set<string>()
   private warnings = new Map<string, string>()
   private errors = new Map<string, string>()
-  /** Project id -> its account, cleared whenever the store changes (an env edit can move a project). */
-  private accounts = new Map<string, string>()
+  /** Session id -> its account, cleared whenever the store changes (a move or an env edit changes it). */
+  private accounts = new Map<string, SessionAccount>()
   private snapshotCbs = new Set<(s: AppSnapshot) => void>()
   private eventCbs = new Set<(id: string, ev: HookEvent) => void>()
   private waiters = new Map<string, Set<() => void>>()
@@ -114,16 +117,17 @@ export class SessionManager {
 
   // ---- queries -----------------------------------------------------------
 
-  private accountOf(subProjectId: string): string | undefined {
+  private accountOf(s: Session): SessionAccount | undefined {
     const st = this.deps.store.state
-    const project = st.projects.find((p) => p.id === st.subProjects.find((x) => x.id === subProjectId)?.projectId)
+    const project = st.projects.find((p) => p.id === st.subProjects.find((x) => x.id === s.subProjectId)?.projectId)
     if (!project) return undefined
-    let key = this.accounts.get(project.id)
-    if (key === undefined) {
-      key = accountKey(project, this.deps.home, this.deps.env)
-      this.accounts.set(project.id, key)
+    let hit = this.accounts.get(s.id)
+    if (hit === undefined) {
+      const ctx: AccountCtx = { settings: st.settings, home: this.deps.home, env: this.deps.env }
+      hit = { key: accountKey(project, s, ctx), id: sessionAccountId(project, s, ctx), missing: accountMissing(s, ctx) }
+      this.accounts.set(s.id, hit)
     }
-    return key
+    return hit
   }
 
   snapshot(): AppSnapshot {
@@ -137,14 +141,18 @@ export class SessionManager {
         status: this.statusOf(s.id),
         ...this.extras.get(s.id)
       }
-      const account = this.accountOf(s.subProjectId)
-      if (account) view.account = account
+      const account = this.accountOf(s)
+      if (account) {
+        view.account = account.key
+        if (account.id === null) view.accountPinned = true
+        else view.accountId = account.id
+      }
       if (rt.needsInput) view.needsInput = rt.needsInput
       if (rt.activity === 'exited' && rt.exitCode !== undefined) view.exitCode = rt.exitCode
       if (rt.lastEventAt) view.lastActivityAt = rt.lastEventAt
       const lastError = rt.lastError ?? this.errors.get(s.id)
       if (lastError) view.lastError = lastError
-      const warning = this.warnings.get(s.id)
+      const warning = this.warnings.get(s.id) ?? (account?.id !== null && account?.missing ? ACCOUNT_GONE_WARNING : undefined)
       if (warning) view.startWarning = warning
       if (rt.warnings) view.launchWarnings = Object.values(rt.warnings)
       if (rt.limitHit) view.limitHit = true

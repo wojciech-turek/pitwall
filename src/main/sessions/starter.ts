@@ -14,7 +14,8 @@ import {
   buildHookSettings, findUserStatusLine, hookCommandFor, statusLineCommandFor, windowsHookCommand, windowsStatusLineCommand
 } from '../hooks/settings'
 import { cliSocketPath, cliToken } from '../cli/auth'
-import { buildSessionEnv, claudeConfigDir, getGhToken, renderEnvFile } from '../identity'
+import { sessionConfigDir } from '../accounts'
+import { buildSessionEnv, getGhToken, renderEnvFile } from '../identity'
 import { eventsFile, sessionDir, type AppPaths } from '../paths'
 import { findGitBash, windowsPowerShell } from '../platform'
 import type { PortAllocator } from '../ports'
@@ -125,7 +126,8 @@ export async function writeSessionFiles(session: Session, deps: StarterDeps): Pr
   const dir = sessionDir(deps.paths, session.id)
   const events = eventsFile(deps.paths, session.id)
   const windows = (deps.platform ?? process.platform) === 'win32'
-  const userStatusLine = await findUserStatusLine(session.cwd, claudeConfigDir(project, deps.home, deps.env))
+  const accounts = { settings: deps.store.state.settings, home: deps.home, env: deps.env }
+  const userStatusLine = await findUserStatusLine(session.cwd, sessionConfigDir(project, session, accounts))
   const env = buildSessionEnv({
     project,
     session,

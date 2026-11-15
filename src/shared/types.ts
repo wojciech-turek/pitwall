@@ -47,13 +47,23 @@ export interface Session {
   continueAt?: number
   /** The id of the session that started this one with the `pitwall` command. */
   createdBy?: string
+  /** The Claude account (a ClaudeAccount id) this session runs on; absent means the default one. */
+  account?: string
+  /** The account this session moves to once it is idle. */
+  moveTo?: string
 }
+/** A Claude account added in Pitwall: its own config folder, which Claude Code keeps the login for. */
+export interface ClaudeAccount { id: string; dir: string; addedAt: number }
 export interface AppSettings {
   monoFont: string; monoFontSize: number
   /** Look for newer releases on GitHub, about once a day. */
   checkForUpdates: boolean
   /** Tell agents about the `pitwall` command (so they start helper sessions with it). Not offered on Windows. */
   agentCli: boolean
+  /** Claude accounts added in Pitwall (the default one is never listed here). */
+  claudeAccounts?: ClaudeAccount[]
+  /** The account new sessions start on; absent means the default one. */
+  activeAccount?: string
 }
 export const DEFAULT_SETTINGS: AppSettings = {
   monoFont: '"SF Mono","JetBrains Mono",Menlo,monospace',
@@ -113,8 +123,12 @@ export interface SessionView extends Session {
   exitCode?: number
   diffStat?: { additions: number; deletions: number }; liveBranch?: string; startWarning?: string
   lastActivityAt?: number
-  /** The Claude account (config folder) this session's project uses. */
+  /** The config folder of the Claude account this session runs on. */
   account?: string
+  /** That account's id ('default' for the default one); absent when the session's project sets its own. */
+  accountId?: string
+  /** The session's project sets CLAUDE_CONFIG_DIR itself, so the session can't be moved. */
+  accountPinned?: boolean
   /** The Server tab's dev server: whether it runs and the ports it listens on. Absent when the folder has no dev command. */
   server?: { running: boolean; ports: number[] }
   /** The launcher's warnings for this run of Claude (a terminal repaint can wipe its printed lines). */

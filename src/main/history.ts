@@ -1,7 +1,7 @@
 import { open, readdir, stat, type FileHandle } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { AppSnapshot, HistoryHit, Session } from '@shared/types'
-import { claudeConfigDir } from './identity'
+import { DEFAULT_SETTINGS, type AppSettings, type AppSnapshot, type HistoryHit, type Session } from '@shared/types'
+import { defaultAccountDir, sessionConfigDir } from './accounts'
 
 export type { HistoryHit }
 
@@ -40,10 +40,11 @@ export interface HistorySource {
 
 /** Every running and archived session, with its Claude config dir. */
 export function historySources(
-  snap: Pick<AppSnapshot, 'projects' | 'subProjects' | 'sessions' | 'archived'>,
+  snap: Pick<AppSnapshot, 'projects' | 'subProjects' | 'sessions' | 'archived'> & { settings?: AppSettings },
   home: string,
   env: Record<string, string>
 ): HistorySource[] {
+  const ctx = { settings: snap.settings ?? DEFAULT_SETTINGS, home, env }
   const make = (s: Session, archived: boolean, updatedAt: number): HistorySource => {
     const sp = snap.subProjects.find((x) => x.id === s.subProjectId)
     const project = sp && snap.projects.find((p) => p.id === sp.projectId)
@@ -51,7 +52,7 @@ export function historySources(
       session: s, archived, updatedAt,
       projectName: project?.name ?? '',
       subProjectName: sp?.name ?? '',
-      configDir: project ? claudeConfigDir(project, home, env) : env.CLAUDE_CONFIG_DIR || join(home, '.claude')
+      configDir: project ? sessionConfigDir(project, s, ctx) : defaultAccountDir(ctx)
     }
   }
   return [

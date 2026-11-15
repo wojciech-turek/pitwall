@@ -5,7 +5,7 @@ import { homedir } from 'node:os'
 import { describe, expect, test } from 'vitest'
 import { exec } from '../../src/main/exec'
 import {
-  applyRepoIdentity, buildSessionEnv, buildSshCommand, claudeConfigDir, getGhToken, identityMatches, listGhAccounts,
+  applyRepoIdentity, buildSessionEnv, buildSshCommand, getGhToken, identityMatches, listGhAccounts,
   listSshKeys, readRepoIdentity, renderEnvFile, shellQuote
 } from '../../src/main/identity'
 import type { Project } from '@shared/types'
@@ -102,15 +102,6 @@ describe('identity', () => {
   test('the user status line is passed on as PITWALL_USER_STATUSLINE, only when there is one', () => {
     expect(buildSessionEnv({ ...base, userStatusLine: '~/.claude/line.sh --x' }).PITWALL_USER_STATUSLINE).toBe('~/.claude/line.sh --x')
     expect('PITWALL_USER_STATUSLINE' in buildSessionEnv({ ...base, userStatusLine: '' })).toBe(false)
-  })
-
-  test("claudeConfigDir: the project's CLAUDE_CONFIG_DIR (~ expanded, last one wins), else the app's, else ~/.claude", () => {
-    const withDir = (...values: string[]) => ({ ...project, extraEnv: values.map((value) => ({ key: 'CLAUDE_CONFIG_DIR', value })) })
-    expect(claudeConfigDir(project, '/home/u')).toBe('/home/u/.claude')
-    expect(claudeConfigDir(project, '/home/u', { CLAUDE_CONFIG_DIR: '/shell/claude' })).toBe('/shell/claude')
-    expect(claudeConfigDir(withDir('~/.claude-work'), '/home/u', { CLAUDE_CONFIG_DIR: '/shell/claude' })).toBe('/home/u/.claude-work')
-    expect(claudeConfigDir(withDir('/a', '/b'), '/home/u')).toBe('/b')
-    expect(claudeConfigDir(withDir(''), '/home/u')).toBe('/home/u/.claude')
   })
 
   test('extraEnv values: a leading ~/ (or a bare ~) means the home folder', () => {

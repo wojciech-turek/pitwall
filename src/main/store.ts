@@ -33,7 +33,11 @@ export function settingsFrom(input: unknown, current: AppSettings): AppSettings 
   const monoFontSize = Number.isFinite(size) ? Math.min(32, Math.max(8, Math.round(size))) : DEFAULT_SETTINGS.monoFontSize
   const checkForUpdates = typeof s.checkForUpdates === 'boolean' ? s.checkForUpdates : current.checkForUpdates !== false
   const agentCli = typeof s.agentCli === 'boolean' ? s.agentCli : current.agentCli !== false
-  return { monoFont, monoFontSize, checkForUpdates, agentCli }
+  const out: AppSettings = { monoFont, monoFontSize, checkForUpdates, agentCli }
+  // Accounts are added, removed and switched by the app itself, never saved from the Settings dialog.
+  if (current.claudeAccounts) out.claudeAccounts = current.claudeAccounts
+  if (current.claudeAccounts?.some((a) => a.id === current.activeAccount)) out.activeAccount = current.activeAccount
+  return out
 }
 
 async function tryLoad(file: string): Promise<PersistedState | 'missing' | 'corrupt'> {

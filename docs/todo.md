@@ -29,9 +29,6 @@ subagents, the `pitwall` command, the resource view, accounts, and running witho
   - `stop()` should key on "listen succeeded", not on "server created".
 - **SystemMonitor:** `start()` after `stop()` lets a sample that was already in flight publish. Use a generation
   counter.
-- **Accounts:**
-  - A `CLAUDE_CONFIG_DIR` in the app's own environment that starts with `~` isn't expanded.
-  - Symlinked spellings of one folder count as two accounts.
 - **Sidebar:**
   - The hover card can say "Started by" a parent that has been archived.
   - In the warning popover, a session that has since been removed can't be selected.
@@ -82,10 +79,8 @@ subagents, the `pitwall` command, the resource view, accounts, and running witho
   - the third copy of the gh-token block in `pitwall-server`
 - `configureParking` only runs because `TitleBar` uses `useAppInfo()`. Call it from `main.tsx`.
 - Dead or unused code:
-  - the trailing-slash strip in `accounts.ts`
   - `deps.now` in the CLI server
   - `_gone` in `state/review.ts`
-- The `defaultAccount` computation in `index.ts` should call `accountKey`, so the two can't drift apart.
 - The comment in `parking-bench.spec.ts` says it repaints about 20 times a second. The real rate is lower.
 
 ## Ideas, not decided

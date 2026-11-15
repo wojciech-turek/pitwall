@@ -91,6 +91,29 @@ async function ready(firstEventTimeoutMs?: number): Promise<SessionManager> {
 }
 
 describe('SessionManager', () => {
+  test("a session shows the account it runs on: its own, its project's pinned one, or the default when its own is gone", async () => {
+    const acct = { id: 'a1', dir: join(t.tmp, 'claude-accounts', 'a1'), addedAt: 1 }
+    await store.update((d) => {
+      d.settings.claudeAccounts = [acct]
+      d.projects.push({ ...structuredClone(project), id: 'p_pin', extraEnv: [{ key: 'CLAUDE_CONFIG_DIR', value: join(t.tmp, 'pinned') }] })
+      d.subProjects.push({ id: 'sp_pin', projectId: 'p_pin', name: 'Pinned', kind: 'folder', path: join(t.tmp, 'folder'), createdAt: 0 })
+    })
+    await addSession('own', { account: 'a1' })
+    await addSession('plain')
+    await addSession('pin', { subProjectId: 'sp_pin', account: 'a1' })
+    await addSession('gone', { account: 'nope' })
+    const m = await ready()
+    const view = (id: string) => m.snapshot().sessions.find((s) => s.id === id)!
+    expect(view('own')).toMatchObject({ accountId: 'a1', account: acct.dir })
+    expect(view('own').accountPinned).toBeUndefined()
+    expect(view('plain')).toMatchObject({ accountId: 'default', account: join(t.tmp, '.claude') })
+    expect(view('pin')).toMatchObject({ accountPinned: true, account: join(t.tmp, 'pinned') })
+    expect(view('pin').accountId).toBeUndefined()
+    expect(view('gone')).toMatchObject({ accountId: 'default', account: join(t.tmp, '.claude') })
+    expect(view('gone').startWarning).toBe("This session's Claude account was removed. It runs on the default account.")
+    expect(view('plain').startWarning).toBeUndefined()
+  })
+
   test('init gives a live session without a port block one, and leaves another its own', async () => {
     await addSession('a')
     await addSession('b', { portBase: 40000 })

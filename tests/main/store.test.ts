@@ -186,4 +186,18 @@ describe('settingsFrom (what the renderer may save)', () => {
     expect(settingsFrom({ monoFont: '   ', monoFontSize: 'big' }, current))
       .toEqual({ monoFont: DEFAULT_SETTINGS.monoFont, monoFontSize: DEFAULT_SETTINGS.monoFontSize, checkForUpdates: false, agentCli: true })
   })
+
+  test("accounts are never the renderer's to save: they stay as they are", () => {
+    const acct = { id: 'a1', dir: '/data/claude-accounts/a1', addedAt: 1 }
+    const cur = { ...DEFAULT_SETTINGS, claudeAccounts: [acct], activeAccount: 'a1' }
+    const out = settingsFrom({ monoFont: 'x', monoFontSize: 13, claudeAccounts: [], activeAccount: 'evil' }, cur)
+    expect(out.claudeAccounts).toEqual([acct])
+    expect(out.activeAccount).toBe('a1')
+    expect('claudeAccounts' in settingsFrom({}, DEFAULT_SETTINGS)).toBe(false)
+    expect('activeAccount' in settingsFrom({}, DEFAULT_SETTINGS)).toBe(false)
+  })
+
+  test('an active account that names no account is dropped', () => {
+    expect('activeAccount' in settingsFrom({}, { ...DEFAULT_SETTINGS, activeAccount: 'gone' })).toBe(false)
+  })
 })

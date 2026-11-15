@@ -29,7 +29,7 @@ import { Store } from './store'
 import { Tmux } from './tmux'
 import { TmuxBackend } from './tmux-backend'
 import { releasesUrl, UpdateChecker } from './updates'
-import { accountKey, accountLabel } from './accounts'
+import { accountKey, accountLabel, defaultAccountDir } from './accounts'
 import { UsageTracker } from './usage'
 import { ContinueScheduler } from './sessions/continue-at'
 import { SystemMonitor } from './system-monitor'
@@ -279,12 +279,12 @@ async function bootstrap(): Promise<void> {
   disposeServers = () => servers.stop()
   const usage = new UsageTracker({
     file: paths.usageFile,
-    defaultAccount: resolve(env.CLAUDE_CONFIG_DIR || join(home, '.claude')),
+    defaultAccount: defaultAccountDir({ settings: store.state.settings, home, env }),
     labelFor: (k) => accountLabel(k, home),
     sessions: () => store.state.sessions.filter((s) => s.archivedAt === undefined).flatMap((s) => {
       const sp = store.state.subProjects.find((x) => x.id === s.subProjectId)
       const project = store.state.projects.find((p) => p.id === sp?.projectId)
-      return project ? [{ dir: sessionDir(paths, s.id), account: accountKey(project, home, env) }] : []
+      return project ? [{ dir: sessionDir(paths, s.id), account: accountKey(project, s, { settings: store.state.settings, home, env }) }] : []
     })
   })
   await usage.load()
