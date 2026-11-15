@@ -81,7 +81,8 @@ export default function StrayWorktreesDialog({ subProjectId }: { subProjectId: s
     <Dialog title={`Clean up worktrees${name ? ` · ${name}` : ''}`} testId="stray-dialog" onClose={close} width={620}>
       <p className="muted-text help">
         Worktrees agents made themselves with <code>git worktree add</code>, outside Pitwall. Ones with uncommitted
-        changes, ones something is running in and ones not merged are never removed.
+        changes, ones something is running in and ones not merged are never removed. Removing a worktree also deletes
+        its ignored files, such as .env files, local databases and build output.
       </p>
       {error && <div className="banner error" data-testid="stray-error">{error}</div>}
       {!list && !error && <p className="muted-text">Looking…</p>}

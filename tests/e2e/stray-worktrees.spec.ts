@@ -48,6 +48,8 @@ test('"Clean up worktrees…" lists strays, picks the merged one, and removes on
 
   const rows = page.getByTestId('stray-row')
   await expect(rows).toHaveCount(2)
+  // Git deletes a removed worktree's ignored files with it: the dialog says so before anything goes.
+  await expect(page.getByTestId('stray-dialog')).toContainText('also deletes its ignored files, such as .env files, local databases and build output')
   const mergedRow = rows.filter({ hasText: 'merged-one' }).filter({ hasNotText: 'unmerged-one' })
   const unmergedRow = rows.filter({ hasText: 'unmerged-one' })
   await expect(mergedRow.getByTestId('stray-check')).toBeChecked()
