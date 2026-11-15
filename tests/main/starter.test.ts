@@ -116,6 +116,19 @@ describe('startSession', () => {
     expect(r.root).toBeTruthy()
   })
 
+  test('files listed in .worktreeinclude are copied into the new worktree', async () => {
+    const { r, sp } = await addRepo()
+    await writeFile(join(r.root, '.gitignore'), '.env.local\n')
+    await writeFile(join(r.root, '.worktreeinclude'), '.env.local\n')
+    await run('git', ['add', '-A'], { cwd: r.root, env: r.env })
+    await run('git', ['commit', '-m', 'include'], { cwd: r.root, env: r.env })
+    await writeFile(join(r.root, '.env.local'), 'TOKEN=1\n')
+    const res = await start(input(sp))
+    expect(res.ok).toBe(true)
+    expect(await readFile(join(store.state.sessions[0].worktreePath!, '.env.local'), 'utf8')).toBe('TOKEN=1\n')
+    expect(progress.find((p) => p.step === 'worktree' && p.state === 'done')?.message).toBe('Copied 1 file listed in .worktreeinclude')
+  })
+
   test('with a port allocator, a new session gets its own block, exported as PITWALL_PORT', async () => {
     const { sp } = await addRepo()
     deps = mkDeps({ ports: new PortAllocator({ isFree: async () => true }) }, deps.env)

@@ -18,6 +18,7 @@ import { eventsFile, sessionDir, type AppPaths } from '../paths'
 import { findGitBash, windowsPowerShell } from '../platform'
 import type { PortAllocator } from '../ports'
 import { newId, type Store } from '../store'
+import { copyWorktreeIncludes } from '../worktree-include'
 import { claudeTmuxName } from '../tmux'
 import type { KeyedMutex } from './mutex'
 
@@ -289,7 +290,9 @@ export async function startSessionLocked(
         if (input.branchMode === 'new') created.branch = branch
         await git.addWorktree({ repoRoot: root, path: worktreePath, branch, mode: input.branchMode, base })
         cwd = join(worktreePath, sub.relPath ?? '')
-      })
+        const inc = await copyWorktreeIncludes({ repoRoot: root, worktree: worktreePath, exec: deps.exec, env: deps.env })
+        return inc.copied.length
+      }, (n) => (n > 0 ? `Copied ${n} file${n === 1 ? '' : 's'} listed in .worktreeinclude` : undefined))
     } else {
       emit('worktree', 'running')
       emit('worktree', 'done', 'No git — runs in the folder')

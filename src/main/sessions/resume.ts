@@ -5,6 +5,7 @@ import { defaultBranchName, slugify } from '@shared/slug'
 import { samePath, uniquePath } from '../git'
 import { sessionDir } from '../paths'
 import { claudeTmuxName } from '../tmux'
+import { copyWorktreeIncludes } from '../worktree-include'
 import { checkIdentity, launchTmuxFor, msg, progressSteps, StepError, takenPorts, writeSessionFiles, type StarterDeps } from './starter'
 
 const isDir = (p: string) => stat(p).then((s) => s.isDirectory(), () => false)
@@ -163,6 +164,8 @@ async function doResume(
         await git.addWorktree({ repoRoot: root, path, branch: r.branch!, mode: makeBranch ? 'new' : 'existing', base, track })
         r.worktreePath = path
         r.cwd = join(path, sub.relPath ?? '')
+        const inc = await copyWorktreeIncludes({ repoRoot: root, worktree: path, exec: deps.exec, env: deps.env })
+        if (inc.copied.length) notes.push(`Copied ${inc.copied.length} file${inc.copied.length === 1 ? '' : 's'} listed in .worktreeinclude`)
         return notes.join('. ') || undefined
       }, (note) => note)
     } else {
