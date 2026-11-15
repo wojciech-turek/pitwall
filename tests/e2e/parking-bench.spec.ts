@@ -10,6 +10,9 @@ test.setTimeout(240_000)
 
 const N = 8
 
+// Repaints the whole screen about 20 times a second, as Claude's TUI does.
+const LOOP = `while :; do printf '\\033[H\\033[2J'; i=0; while [ $i -lt 40 ]; do printf '%s %s\\n' "$i" "$(date +%s%N)xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"; i=$((i+1)); done; sleep 0.05; done`
+
 async function measure(parkAfterMs: string): Promise<number> {
   const e: E2eEnv = await makeE2eEnv()
   e.env.PITWALL_PARK_AFTER_MS = parkAfterMs
@@ -36,20 +39,35 @@ async function measure(parkAfterMs: string): Promise<number> {
       ids.push(id)
       await page.getByTestId('tab-shell').click()
       await page.getByTestId('terminal-shell').click()
-      await page.keyboard.type('while :; do date; sleep 0.02; done')
+      await page.keyboard.type(LOOP)
       await page.keyboard.press('Enter')
-      await waitFor(async () => (await tmux(e.socket, 'capture-pane', '-p', '-t', `=pw-${id}-sh:`).catch(() => '')).includes('20'), 15_000, `S${i} looping`)
+      await waitFor(async () => (await tmux(e.socket, 'capture-pane', '-p', '-t', `=pw-${id}-sh:`).catch(() => '')).includes('xxxxxxxx'), 15_000, `S${i} looping`)
     }
     await page.getByTestId('session-row').filter({ hasText: 'S0' }).click() // one left selected
     await page.waitForTimeout(3000) // parking
+    const attached = async (): Promise<number> => {
+      let n = 0
+      for (const id of ids) if ((await tmux(e.socket, 'list-clients', '-t', `=pw-${id}-sh`).catch(() => '')).trim() !== '') n++
+      return n
+    }
+    const expected = parkAfterMs === '500' ? 1 : N
+    const got = await attached()
+    console.log(`BENCH park_after_ms=${parkAfterMs} attached_shell_clients=${got} (expected ${expected})`)
+    expect(got).toBe(expected)
+    const mem: Array<{ gpu: number; renderer: number }> = []
     const samples: number[] = []
     for (let i = 0; i < 3; i++) {
-      const m = await app.evaluate(({ app }) => app.getAppMetrics().map((p) => ({ type: p.type, cpu: p.cpu.percentCPUUsage })))
-      samples.push(m.filter((p) => p.type === 'Tab' || p.type === 'Renderer').reduce((s, p) => s + p.cpu, 0))
+      const m = await app.evaluate(({ app }) => app.getAppMetrics().map((p) => ({ type: p.type, cpu: p.cpu.percentCPUUsage, ws: p.memory.workingSetSize })))
+      samples.push(m.filter((p) => ['Tab', 'Renderer'].includes(p.type)).reduce((s, p) => s + p.cpu, 0))
+      const kb = (t: (p: string) => boolean): number => m.filter((p) => t(p.type)).reduce((s, p) => s + p.ws, 0)
+      mem.push({ gpu: kb((t) => t === 'GPU'), renderer: kb((t) => ['Tab', 'Renderer'].includes(t)) })
       await page.waitForTimeout(5000)
     }
     const avg = samples.reduce((s, x) => s + x, 0) / samples.length
     console.log(`BENCH park_after_ms=${parkAfterMs} renderer_cpu_samples=${samples.map((x) => x.toFixed(1)).join(',')} avg=${avg.toFixed(1)}%`)
+    const mb = (k: number): string => (k / 1024).toFixed(0)
+    const last = mem[mem.length - 1]
+    console.log(`BENCH park_after_ms=${parkAfterMs} gpu_ws_mb=${mem.map((x) => mb(x.gpu)).join(',')} renderer_ws_mb=${mem.map((x) => mb(x.renderer)).join(',')} (last gpu=${mb(last.gpu)} renderer=${mb(last.renderer)})`)
     return avg
   } finally {
     await app?.close().catch(() => undefined)
