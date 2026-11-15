@@ -357,8 +357,8 @@ describe('archive', () => {
   test("a folder git never had as this repo's worktree is never deleted by hand when git refuses to remove it", async () => {
     const { r, sp } = await addRepo()
     class StrangerGit extends GitClient {
-      override async listWorktrees(): Promise<{ path: string; prunable: boolean }[]> {
-        return [{ path: r.root, prunable: false }] // not the session's folder: git never registered it
+      override async listWorktrees(): Promise<{ path: string; prunable: boolean; detached: boolean }[]> {
+        return [{ path: r.root, prunable: false, detached: false }] // not the session's folder: git never registered it
       }
       override async removeWorktree(_repo: string, path: string): Promise<void> {
         throw new Error(`fatal: '${path}' is not a working tree`)

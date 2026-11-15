@@ -1,3 +1,4 @@
+import { dirname } from 'node:path'
 import { ipcMain, shell } from 'electron'
 import { IPC } from '@shared/api'
 import type { NewSessionInput, StartResult, TermKind } from '@shared/types'
@@ -7,6 +8,7 @@ import type { Exec } from './exec'
 import { formatAgentReference, listSessionFiles, readForEditor, writeFromEditor } from './files'
 import type { GitClient } from './git'
 import { settingsFrom, type Store } from './store'
+import { findStrayWorktrees, knownLiveWorktrees, removeStrayWorktrees, strayCandidates, worktreeSize } from './stray-worktrees'
 import { claudeTmuxName } from './tmux'
 import type { SessionHistory } from './history'
 import { listGhAccounts, listSshKeys } from './identity'
@@ -154,6 +156,27 @@ export function registerIpc(d: IpcDeps): () => void {
     typeof id === 'string' && typeof claudeId === 'string' && typeof requestId === 'string'
       ? manager.continueConversation(id, claudeId, requestId, (p) => send(IPC.startProgress, p))
       : { ok: false, step: 'identity', error: 'Invalid request.' })
+  // A repo folder's worktrees no session owns. Sessions of this app and of the sibling Pitwall data dirs are protected.
+  const strayOptions = async (subProjectId: unknown) => {
+    const sp = typeof subProjectId === 'string' ? store.state.subProjects.find((x) => x.id === subProjectId) : undefined
+    if (!sp || sp.kind !== 'repo' || !sp.repoRoot) return null
+    return { repoRoot: sp.repoRoot, liveWorktrees: await knownLiveWorktrees(store, dirname(paths.dataDir)), git, exec, env }
+  }
+  handle(IPC.listStrayWorktrees, async (id: unknown) => {
+    const o = await strayOptions(id)
+    return o ? findStrayWorktrees(o) : []
+  })
+  handle(IPC.worktreeSize, async (id: unknown, path: unknown): Promise<number | null> => {
+    const o = await strayOptions(id)
+    // Only a worktree of this folder that could be a stray: never `du` a path the renderer made up.
+    if (!o || typeof path !== 'string' || !(await strayCandidates(o)).includes(path)) return null
+    return worktreeSize(exec, path, env)
+  })
+  handle(IPC.removeStrayWorktrees, async (id: unknown, wanted: unknown, deleteBranches: unknown) => {
+    const o = await strayOptions(id)
+    if (!o || !Array.isArray(wanted) || !wanted.every((p) => typeof p === 'string')) return []
+    return removeStrayWorktrees({ ...o, paths: wanted as string[], deleteBranches: deleteBranches === true })
+  })
   handle(IPC.openExternal, async (url: string) => {
     // Only web links; never let the renderer open file: or custom-scheme URLs.
     if (/^https?:\/\//i.test(url)) await shell.openExternal(url)

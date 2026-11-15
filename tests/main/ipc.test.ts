@@ -110,3 +110,49 @@ describe('IPC from the renderer', () => {
     expect(manager.setPinned.mock.calls).toEqual([['s_1', true], ['s_1', false], ['s_1', false]])
   })
 })
+
+describe('IPC: stray worktrees', () => {
+  const calls: string[][] = []
+  const store = { state: { sessions: [], subProjects: [
+    { id: 'sp_repo', kind: 'repo', repoRoot: '/r' }, { id: 'sp_plain', kind: 'folder' }
+  ] } }
+  const git = { listWorktrees: vi.fn(async () => [{ path: '/r', prunable: false, detached: false }, { path: '/w/a', prunable: false, detached: false, branch: 'a' }]) }
+  const exec = vi.fn(async (file: string, args: string[]) => { calls.push([file, ...args]); return { code: 0, stdout: '', stderr: '' } })
+
+  beforeEach(() => {
+    calls.length = 0
+    git.listWorktrees.mockClear()
+    registerIpc({
+      manager, history, store, git, exec, paths: { dataDir: '/nowhere/pitwall' },
+      pr: { feedbackContext: async () => ({ ok: false as const, message: 'x' }) },
+      usage: { current: () => null, onChange: () => () => {} },
+      updates: { state: () => null, checkNow: async () => {}, onChange: () => () => {}, hasFeed: () => false },
+      send: () => {}, onViewing: () => {}, env: {}, home: '/home/me', dev: false
+    } as unknown as IpcDeps)
+  })
+
+  test('worktreeSize measures only a path the folder could list as a stray', async () => {
+    expect(await call(IPC.worktreeSize, 'sp_repo', '/etc')).toBeNull()
+    expect(await call(IPC.worktreeSize, 'sp_repo', '/r')).toBeNull() // the main checkout
+    expect(await call(IPC.worktreeSize, 'sp_repo', '/w/a/../../etc')).toBeNull()
+    expect(await call(IPC.worktreeSize, 'sp_plain', '/w/a')).toBeNull()
+    expect(await call(IPC.worktreeSize, 'nope', '/w/a')).toBeNull()
+    for (const bad of [undefined, null, 1, {}, ['/w/a']]) expect(await call(IPC.worktreeSize, 'sp_repo', bad)).toBeNull()
+    expect(calls.filter((c) => c[0] === 'du')).toEqual([])
+    await call(IPC.worktreeSize, 'sp_repo', '/w/a')
+    expect(calls.filter((c) => c[0] === 'du')).toEqual([['du', '-sk', '/w/a']])
+  })
+
+  test('arguments of the wrong type never reach git: nothing is listed or removed', async () => {
+    for (const bad of [undefined, null, 1, {}, ['sp_repo']]) {
+      expect(await call(IPC.listStrayWorktrees, bad)).toEqual([])
+      expect(await call(IPC.removeStrayWorktrees, bad, ['/w/a'], true)).toEqual([])
+    }
+    for (const bad of [undefined, null, 'x', 1, [1], ['/w/a', 2], {}]) {
+      expect(await call(IPC.removeStrayWorktrees, 'sp_repo', bad, true)).toEqual([])
+    }
+    expect(await call(IPC.listStrayWorktrees, 'sp_plain')).toEqual([])
+    expect(await call(IPC.removeStrayWorktrees, 'sp_plain', ['/w/a'], true)).toEqual([])
+    expect(git.listWorktrees).not.toHaveBeenCalled()
+  })
+})

@@ -1,6 +1,6 @@
 import type {
   AppSettings, AppSnapshot, ArchiveCheck, ArchiveResult, ChangedFile, ClaudeUsage, ConversationList, ConversationMatch, EnvVar, FileContent, FileEntry, GhAccount, GitIdentity, HistoryHit, NewSessionDefaults, NewSessionInput, Project, RepoIdentity,
-  StartProgress, StartResult, SubProject, TermKind, UpdateState
+  StartProgress, StartResult, StrayWorktree, SubProject, TermKind, UpdateState
 } from './types'
 
 export interface ProjectInput { name: string; identity: GitIdentity; extraEnv: EnvVar[] }
@@ -78,6 +78,18 @@ export interface PitwallApi {
    * progress arrives on onStartProgress.
    */
   continueConversation(subProjectId: string, claudeId: string, requestId: string): Promise<StartResult>
+  /**
+   * A repo folder's worktrees that no session owns (agents made them with `git worktree add`), never the main checkout,
+   * a session's, or one whose folder is gone.
+   */
+  listStrayWorktrees(subProjectId: string): Promise<StrayWorktree[]>
+  /** A stray worktree's size in bytes (`du`), or null. Only for a path listStrayWorktrees can return. */
+  worktreeSize(subProjectId: string, path: string): Promise<number | null>
+  /**
+   * Removes stray worktrees (never with force), and with deleteBranches their merged branches. Each is checked again
+   * first; one with changes, in use, unmerged or no longer a stray is refused, with a message.
+   */
+  removeStrayWorktrees(subProjectId: string, paths: string[], deleteBranches: boolean): Promise<{ path: string; ok: boolean; message?: string }[]>
   openExternal(url: string): Promise<void>
   openInCursor(sessionId: string): Promise<{ ok: boolean; message?: string }>
   setSettings(s: AppSettings): Promise<void>
@@ -145,6 +157,9 @@ export const IPC = {
   searchConversations: 'pitwall:searchConversations',
   forgetConversationText: 'pitwall:forgetConversationText',
   continueConversation: 'pitwall:continueConversation',
+  listStrayWorktrees: 'pitwall:listStrayWorktrees',
+  worktreeSize: 'pitwall:worktreeSize',
+  removeStrayWorktrees: 'pitwall:removeStrayWorktrees',
   openExternal: 'pitwall:openExternal',
   openInCursor: 'pitwall:openInCursor',
   setSettings: 'pitwall:setSettings',

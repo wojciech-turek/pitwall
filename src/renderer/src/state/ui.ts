@@ -16,6 +16,7 @@ export type DialogState =
   | { type: 'resume'; sessionId: string }
   | { type: 'conversations'; subProjectId: string }
   | { type: 'subproject-settings'; subProjectId: string }
+  | { type: 'stray-worktrees'; subProjectId: string }
   | { type: 'settings' }
   | { type: 'update' }
   | { type: 'review-comment'; sessionId: string; path: string; fromLine: number; toLine: number; quote: string }
