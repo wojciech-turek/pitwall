@@ -20,11 +20,13 @@ let page: Page
 let host: HostBackend
 let sessionId = ''
 
+const hasTmux = (dir: string): boolean => {
+  try { accessSync(join(dir, 'tmux'), constants.X_OK); return true } catch { return false }
+}
+
 /** PATH without any directory that holds an executable `tmux`. */
 function pathWithoutTmux(path: string): string {
-  return path.split(delimiter).filter((dir) => {
-    try { accessSync(join(dir, 'tmux'), constants.X_OK); return false } catch { return true }
-  }).join(delimiter)
+  return path.split(delimiter).filter((dir) => !hasTmux(dir)).join(delimiter)
 }
 
 test.beforeAll(async () => {
@@ -56,13 +58,14 @@ test('with no tmux installed, a session runs in Pitwall\'s own host', async () =
   await expect(page.getByTestId('new-session-dialog')).toHaveCount(0, { timeout: 30_000 })
   sessionId = (await page.getByTestId('session-row').getAttribute('data-session-id'))!
   await expect(page.getByTestId('terminal-claude')).toBeVisible()
+  // First: written at startup, so a wrongly found tmux fails here, not as an "agent ready" timeout.
+  await waitFor(async () => (await readFile(join(e.dataDir, 'backend.json'), 'utf8').catch(() => '')).includes('"host"'), 5_000, 'host chosen')
+  expect(JSON.parse(await readFile(join(e.dataDir, 'backend.json'), 'utf8'))).toEqual({ kind: 'host' })
   await waitFor(async () => (await host.capture(`pw-${sessionId}`).catch(() => '')).includes('STUB CLAUDE READY'), 20_000, 'agent ready')
 
-  expect(JSON.parse(await readFile(join(e.dataDir, 'backend.json'), 'utf8'))).toEqual({ kind: 'host' })
   // No tmux server on the test's socket (tmux, if this machine has it, is used by its absolute path).
-  const tmuxBin = ['/opt/homebrew/bin/tmux', '/usr/local/bin/tmux', '/usr/bin/tmux'].find((p) => {
-    try { accessSync(p, constants.X_OK); return true } catch { return false }
-  })
+  const tmuxDir = e.env.PATH.split(delimiter).find(hasTmux)
+  const tmuxBin = tmuxDir && join(tmuxDir, 'tmux')
   if (tmuxBin) await expect(run(tmuxBin, ['-L', e.socket, 'list-sessions'])).rejects.toThrow()
 })
 

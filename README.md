@@ -30,7 +30,7 @@ Like a pit wall in a race, you watch every car at once and only radio in when on
 → Each session gets its **own git worktree and branch**, started from your main branch. Archiving a session removes its worktree, but first warns you about uncommitted or unpushed work. Nothing is deleted silently.
 
 **Closing the app kills your agents.**
-→ Sessions run inside tmux on Pitwall's own private socket. If you quit the app, or it crashes, your agents keep working, and they reattach when you reopen it.
+→ Sessions run inside tmux on Pitwall's own private socket, or in Pitwall's own background process if tmux isn't installed. If you quit the app, or it crashes, your agents keep working, and they reattach when you reopen it.
 
 **Constant context switching.**
 → Drag sessions from the sidebar into a **split view** (up to 4 panes), browse and edit files, review diffs, and send a file to the agent with one click. Your Claude **5-hour and weekly usage** sits in the corner.
@@ -86,7 +86,7 @@ cp -R release/mac-arm64/Pitwall.app /Applications/
 
 ## Updating
 
-When a new release is out, Pitwall shows **Update available** with the changelog. Download the new DMG, quit Pitwall, and replace the app in Applications. Your agents keep running in tmux and reattach when you reopen it. macOS treats each new download as unverified, so the first launch of a new version needs **Open Anyway** again (see Install). On Windows, see [Windows (beta)](#windows-beta).
+When a new release is out, Pitwall shows **Update available** with the changelog. Download the new DMG, quit Pitwall, and replace the app in Applications. Your agents keep running (in tmux, or Pitwall's own host) and reattach when you reopen it. macOS treats each new download as unverified, so the first launch of a new version needs **Open Anyway** again (see Install). On Windows, see [Windows (beta)](#windows-beta).
 
 ## Windows (beta)
 
@@ -142,7 +142,7 @@ To update, download the new installer, quit Pitwall and run it (SmartScreen asks
 
 ## How it works
 
-- **Each session runs in tmux** on a private socket (`tmux -L pitwall`), never your own tmux server, so agents outlive the app. A small launcher script starts `claude` with `--session-id` and `--resume`, so a restarted session continues the same conversation.
+- **Each session runs in tmux** on a private socket (`tmux -L pitwall`), never your own tmux server, or in Pitwall's own host process when tmux isn't installed, so agents outlive the app. A small launcher script starts `claude` with `--session-id` and `--resume`, so a restarted session continues the same conversation.
 - **Status comes from Claude Code hooks.** Pitwall passes its own settings file with `--settings`. The hooks append events to a per-session log, and a pure reducer turns them into the status you see.
 - **Identity travels as environment variables.** Each session gets `GIT_SSH_COMMAND` (your key, with `IdentitiesOnly=yes`) and `GIT_AUTHOR_*`/`GIT_COMMITTER_*`. The `gh` token is fetched with `gh auth token --user <account>` when the agent starts. It never appears in a command line, a file, or the app's UI.
 - **Worktrees** live in `~/pitwall/worktrees/<folder>/<session>`, on branches named `pitwall/<session>` (you can rename them).
@@ -179,7 +179,7 @@ On Windows the same shortcuts use Ctrl instead of ⌘ (`Ctrl+K`, `Ctrl+Enter`, �
 
 - **App data:** `~/Library/Application Support/pitwall`. This holds state, per-session event logs, the last known Claude usage, the last update check, helper scripts and `tmux.conf`.
 - **Worktrees:** `~/pitwall/worktrees/<folder>/<session>`
-- **tmux:** `tmux -L pitwall ls`
+- **tmux:** `tmux -L pitwall ls` (if you use tmux)
 - **Dev builds** (`pnpm dev`) use `pitwall-dev` for all three, so they never share agents with the installed app.
 - **On Windows:** see [Where things live on Windows](#where-things-live-on-windows).
 
