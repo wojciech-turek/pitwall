@@ -62,6 +62,13 @@ test('comment on lines of a diff, then send the review to the agent', async () =
   await expect(page.getByTestId('diff-comment')).toBeDisabled()
   await diff.locator('.cm-merge-b .cm-line').nth(2).click({ position: { x: 60, y: 5 }, modifiers: ['Shift'] })
   await expect(page.getByTestId('diff-comment')).toBeEnabled()
+
+  // Selecting in the old pane afterwards turns Comment off again: it only comments on the new side.
+  await diff.locator('.cm-merge-a .cm-line').nth(1).dblclick()
+  await expect(page.getByTestId('diff-comment')).toBeDisabled()
+  await diff.locator('.cm-merge-b .cm-line').nth(1).click({ position: { x: 2, y: 5 } })
+  await diff.locator('.cm-merge-b .cm-line').nth(2).click({ position: { x: 60, y: 5 }, modifiers: ['Shift'] })
+  await expect(page.getByTestId('diff-comment')).toBeEnabled()
   await page.getByTestId('diff-comment').click()
   await page.getByTestId('review-note').fill('Use a constant')
   await page.getByTestId('review-save').click()

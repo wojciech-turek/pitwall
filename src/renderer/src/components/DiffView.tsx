@@ -55,9 +55,19 @@ export default function DiffView({ snap, sessionId, path, active }: {
         if (u.selectionSet || u.docChanged) setHasSel(!u.state.selection.main.empty)
       })
       if (mode === 'split') {
+        // The old side can't be commented on: once it is selected in or focused, drop the new side's selection.
+        const leaveNew = (): void => {
+          setHasSel(false)
+          const b = newSide.current
+          if (b && !b.state.selection.main.empty) b.dispatch({ selection: { anchor: b.state.selection.main.head } })
+        }
+        const watchOld = EditorView.updateListener.of((u) => {
+          if (u.selectionSet && !u.state.selection.main.empty) leaveNew()
+        })
+        const onFocus = EditorView.domEventHandlers({ focus: () => { leaveNew() } })
         const mv = new MergeView({
           parent: el,
-          a: { doc: sides.original, extensions: ext },
+          a: { doc: sides.original, extensions: [...ext, watchOld, onFocus] },
           b: { doc: sides.modified, extensions: [...ext, watch] },
           highlightChanges: true, gutter: true, collapseUnchanged
         })
