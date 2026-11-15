@@ -3,6 +3,7 @@ import { countStatuses } from '@shared/runtime'
 import { useAppInfo } from '../state/appInfo'
 import { useUi } from '../state/ui'
 import { useUpdates } from '../state/updates'
+import SystemPill from './SystemPill'
 import { CheckCircleIcon, HandIcon, SpinnerIcon } from './Icons'
 
 export default function TitleBar({ sessions }: { sessions: SessionView[] }): React.JSX.Element {
@@ -29,6 +30,7 @@ export default function TitleBar({ sessions }: { sessions: SessionView[] }): Rea
             </span>
           ))}
         </div>
+        <SystemPill sessions={sessions} />
         {latest && (
           <button type="button" className="update-pill" data-testid="update-pill" title="See what's new"
             onClick={() => openDialog({ type: 'update' })}>

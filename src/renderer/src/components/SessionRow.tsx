@@ -9,6 +9,7 @@ import HoverCard, { useHoverCard } from './HoverCard'
 import { useUi } from '../state/ui'
 import { SESSION_MIME } from '../state/dropZone'
 import { setSubagentsOpen, subagentSummary, useSubagentsOpen } from '../state/subagentsOpen'
+import { heavyLabel, useSessionHistory } from '../state/system'
 import { rowFaded, rowLineCounts } from '../state/badges'
 
 /** The chip under the cursor while a row is dragged (drawn behind the app; the drag image is taken from it). */
@@ -65,6 +66,7 @@ export default function SessionRow({ session, onSelect, projectName, subProjectN
   }
 
   const counts = rowLineCounts(session)
+  const heavy = heavyLabel(useSessionHistory(session.id))
   return (
     <div className={`row session-row${selected ? ' selected' : visible ? ' visible' : ''}${dragging ? ' dragging' : ''}${rowFaded(session) ? ' faded' : ''}`}
       data-testid="session-row" data-status={session.status} data-session-id={session.id} data-depth={depth} {...hover.bind}
@@ -103,6 +105,7 @@ export default function SessionRow({ session, onSelect, projectName, subProjectN
         </>
       )}
       {!editing && session.pinned && <span className="pin-mark" data-testid="pin-mark" title="Pinned"><PinIcon /></span>}
+      {!editing && heavy && <span className="heavy-chip" data-testid="heavy-chip" title="Using a lot of memory or CPU">{heavy}</span>}
       {!editing && session.pr && <PrBadge pr={session.pr} />}
       {!editing && counts && <LineCounts additions={counts.additions} deletions={counts.deletions} />}
       {!editing && (

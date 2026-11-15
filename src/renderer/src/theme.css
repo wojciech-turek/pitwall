@@ -493,3 +493,17 @@ input:focus-visible, .terminal-host :focus-visible, .cm-editor :focus-visible { 
 .stray-age { width: 56px; text-align: right; }
 .stray-size { width: 60px; text-align: right; }
 .stray-branches { margin-top: 12px; }
+
+/* Resource view: heavy-session chip, title-bar pill and its popover */
+.heavy-chip { flex: none; height: 16px; padding: 0 5px; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--st-needs) 45%, transparent); background: color-mix(in srgb, var(--st-needs) 12%, transparent); color: var(--st-needs); font-size: 10.5px; line-height: 14px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.hc-usage { font-variant-numeric: tabular-nums; }
+.system-pill-wrap { position: relative; -webkit-app-region: no-drag; flex: none; }
+.system-pill { height: 22px; padding: 0 10px; border-radius: 11px; font: inherit; font-size: 11.5px; font-weight: 600; white-space: nowrap; cursor: pointer; border: 1px solid color-mix(in srgb, var(--st-needs) 45%, transparent); background: color-mix(in srgb, var(--st-needs) 12%, transparent); color: var(--st-needs); }
+.system-pill.critical { border-color: color-mix(in srgb, var(--st-exited) 50%, transparent); background: color-mix(in srgb, var(--st-exited) 14%, transparent); color: var(--st-exited); }
+.system-pop { position: absolute; right: 0; top: 28px; z-index: 60; width: 340px; padding: 8px; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.45); font-size: 12px; }
+.sp-head { color: var(--text-faint); font-size: 11px; margin: 4px 4px 2px; }
+.sp-row { display: flex; justify-content: space-between; gap: 10px; width: 100%; text-align: left; background: transparent; border: 0; color: var(--text); font: inherit; padding: 5px 4px; border-radius: 5px; cursor: pointer; }
+.sp-row:hover { background: var(--bg-selected); }
+.sp-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sp-usage { flex: none; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.sp-line { color: var(--text-muted); padding: 2px 4px; font-variant-numeric: tabular-nums; }
