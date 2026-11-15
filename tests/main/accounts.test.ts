@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, test } from 'vitest'
@@ -62,6 +62,24 @@ describe('accountLabel', () => {
   test('a non-string email falls back to the ~ form', async () => {
     const home = await tmpHome()
     await writeFile(join(home, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 42 } }))
+    expect(await accountLabel(join(home, '.claude'), home)).toBe(join('~', '.claude'))
+  })
+
+  test('the file is read again only when its mtime changes', async () => {
+    const home = await tmpHome()
+    const file = join(home, '.claude.json')
+    const at = new Date('2026-11-01T10:00:00Z')
+    await writeFile(file, JSON.stringify({ oauthAccount: { emailAddress: 'aaa@example.com' } }))
+    await utimes(file, at, at)
+    expect(await accountLabel(join(home, '.claude'), home)).toBe('aaa@example.com')
+    // New contents, same mtime: the cached label stands (the file wasn't read).
+    await writeFile(file, JSON.stringify({ oauthAccount: { emailAddress: 'bbb@example.com' } }))
+    await utimes(file, at, at)
+    expect(await accountLabel(join(home, '.claude'), home)).toBe('aaa@example.com')
+    const later = new Date('2026-11-01T10:00:05Z')
+    await utimes(file, later, later)
+    expect(await accountLabel(join(home, '.claude'), home)).toBe('bbb@example.com')
+    await rm(file)
     expect(await accountLabel(join(home, '.claude'), home)).toBe(join('~', '.claude'))
   })
 
