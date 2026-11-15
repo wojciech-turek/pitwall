@@ -271,8 +271,17 @@ export class SessionManager {
     }
     await appendEvent(eventsFile(this.deps.paths, id), { c: id, t: this.now(), e: 'pitwall:sent' })
     await this.tracked.get(id)?.tailer.sync()
-    await this.deps.backend.pasteText(claudeTmuxName(id), text)
-    await this.deps.backend.sendKeys(claudeTmuxName(id), ['Enter'])
+    try {
+      await this.deps.backend.pasteText(claudeTmuxName(id), text)
+      await this.deps.backend.sendKeys(claudeTmuxName(id), ['Enter'])
+    } catch (e) {
+      // Nothing reached Claude, so no UserPromptSubmit is coming: undo "working".
+      try {
+        await appendEvent(eventsFile(this.deps.paths, id), { c: id, t: this.now(), e: 'pitwall:send-failed' })
+        await this.tracked.get(id)?.tailer.sync()
+      } catch { /* the paste's error is the one to report */ }
+      throw e
+    }
   }
 
   /**

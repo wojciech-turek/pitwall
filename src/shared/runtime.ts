@@ -157,6 +157,9 @@ function applyMain(rt: SessionRuntime, ev: HookEvent): SessionRuntime {
     case 'pitwall:sent':
       // Pitwall typed a message and pressed Enter: working now, not only once Claude's UserPromptSubmit is read.
       return { ...clearNeeds(rt), activity: 'working' }
+    case 'pitwall:send-failed':
+      // The paste failed after pitwall:sent: only an idle session is sent to, so back to idle, with nothing new unread.
+      return rt.activity === 'working' ? { ...rt, activity: 'idle' } : rt
     case 'pitwall:warning':
       return ev.msg ? { ...rt, warnings: { ...rt.warnings, [ev.kind || 'other']: ev.msg } } : rt
     case 'pitwall:exited': {

@@ -685,6 +685,18 @@ describe('muted projects and mark as unread', () => {
     expect(status(m, 'a')).toBe('working')
   })
 
+  test('sendText: a paste that fails after "sent" was logged puts the session back to read, and rethrows', async () => {
+    await addSession('a', {}, [{ e: 'SessionStart', src: 'startup' }])
+    const m = await ready()
+    t.backend.pasteText = async () => { throw new Error('no such pane') }
+    await expect(m.sendText('a', 'hi')).rejects.toThrow('no such pane')
+    expect(status(m, 'a')).toBe('read')
+    t.backend.pasteText = async () => {}
+    t.backend.sendKeys = async () => { throw new Error('keys failed') }
+    await expect(m.sendText('a', 'hi')).rejects.toThrow('keys failed')
+    expect(status(m, 'a')).toBe('read')
+  })
+
   test('sendText checks again right before typing: a busy session, or one with a subagent at work, is refused', async () => {
     await addSession('busy', {}, [{ e: 'SessionStart', src: 'startup' }, { e: 'UserPromptSubmit' }])
     await addSession('asks', {}, [{ e: 'SessionStart', src: 'startup' }, { e: 'PermissionRequest', tool: 'Bash' }])

@@ -118,6 +118,12 @@ describe('reduceRuntime', () => {
     expect(r(rt({ activity: 'needs_input', needsInput: 'question' }), 'pitwall:sent').needsInput).toBeUndefined()
     expect(r(o, 'Stop', { msg: 'answered' })).toMatchObject({ activity: 'idle', lastMessage: 'answered' })
   })
+  test('pitwall:send-failed (the paste failed after pitwall:sent): back to idle, nothing newly unread', () => {
+    const sent = r(rt({ activity: 'idle', lastFinishedAt: 50 }), 'pitwall:sent')
+    const o = r(sent, 'pitwall:send-failed')
+    expect(o).toMatchObject({ activity: 'idle', lastFinishedAt: 50 })
+    expect(displayStatus(o, 50)).toBe('read')
+  })
   test('pitwall:prompt-pending: a first prompt is coming, so SessionStart keeps the session working until it is answered', () => {
     let o = r(r(initialRuntime, 'pitwall:launch', { mode: 'new' }), 'pitwall:prompt-pending')
     expect(o.promptPending).toBe(true)

@@ -5,8 +5,6 @@ subagents, the `pitwall` command, the resource view, accounts, and running witho
 
 ## Small bugs worth fixing first
 
-- **A paste that fails after "sent" was logged leaves the session showing Working** until its next event. This
-  affects `pitwall send` and continue-at. On failure, log an event that undoes it.
 - **`initial-prompt.txt` is written with default permissions.** Make it 0600, like `env.sh`.
 - **Split diff:** a selection made earlier on the new side keeps "Comment" enabled while you select on the old side.
 - **Collapsed subagent rows still re-render every second.** Gate the timer on "open and something running".
