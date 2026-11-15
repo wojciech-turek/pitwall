@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import { baseName, blockedReason, formatBytes, removable, removeLabel, removeSummary } from '../../src/renderer/src/state/strays'
 
-const w = (o: Partial<{ merged: boolean; dirty: boolean; inUse: boolean }> = {}) =>
+const w = (o: Partial<{ merged: boolean; dirty: boolean; inUse: boolean; inUseUnknown: boolean }> = {}) =>
   ({ path: '/x/a', merged: true, dirty: false, inUse: false, lastCommitAt: null, ...o })
 
 describe('stray worktree helpers', () => {
@@ -17,6 +17,8 @@ describe('stray worktree helpers', () => {
     expect(removable(w({ dirty: true }))).toBe(false)
     expect(removable(w({ inUse: true }))).toBe(false)
     expect(removable(w({ merged: false }))).toBe(false)
+    expect(removable(w({ inUseUnknown: true }))).toBe(false)
+    expect(blockedReason(w({ inUseUnknown: true }))).toBe("couldn't check whether it's in use")
     expect(blockedReason(w({ dirty: true }))).toBe('uncommitted changes')
     expect(blockedReason(w({ inUse: true }))).toBe('in use')
     expect(blockedReason(w({ merged: false }))).toBe('not merged')

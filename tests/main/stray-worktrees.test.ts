@@ -104,16 +104,28 @@ describe('findStrayWorktrees', () => {
     expect(found.find((w) => w.path === abc)!.inUse).toBe(true)
   })
 
-  test('when lsof fails nothing is marked in use, and it is logged once', async () => {
+  test('when lsof fails every row is inUseUnknown (fail closed), and removal refuses all of them', async () => {
     const t = await setup()
-    await t.stray('a')
-    await t.stray('b')
+    const a = await t.stray('a')
+    const b = await t.stray('b')
     const failing: Exec = (file, args, o) => (file === 'lsof' ? Promise.resolve({ code: 127, stdout: '', stderr: 'nope' }) : exec(file, args, o))
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const first = await findStrayWorktrees({ ...t.base(), exec: failing })
-    await findStrayWorktrees({ ...t.base(), exec: failing })
-    expect(first.map((w) => w.inUse)).toEqual([false, false])
+    const found = await findStrayWorktrees({ ...t.base(), exec: failing })
+    expect(found.map((w) => w.inUseUnknown)).toEqual([true, true])
+    expect(found.map((w) => w.inUse)).toEqual([false, false])
+    const res = await removeStrayWorktrees({ ...t.base(), exec: failing, paths: [a, b], deleteBranches: true })
+    expect(res.map((r) => r.message)).toEqual(['Could not check whether it is in use', 'Could not check whether it is in use'])
+    expect(await exists(a)).toBe(true)
+    expect(await exists(b)).toBe(true)
     expect(warn.mock.calls.length).toBeLessThanOrEqual(1)
+  })
+
+  test('when lsof works, rows are not inUseUnknown and a clean merged idle one is removed', async () => {
+    const t = await setup()
+    const a = await t.stray('a')
+    const found = await findStrayWorktrees(t.base())
+    expect(found[0].inUseUnknown).toBeUndefined()
+    expect(await removeStrayWorktrees({ ...t.base(), paths: [a], deleteBranches: true })).toEqual([{ path: a, ok: true }])
   })
 
   test('on Windows inUse is always false and lsof is never run', async () => {
@@ -123,6 +135,7 @@ describe('findStrayWorktrees', () => {
     const spy: Exec = (file, args, o) => { seen.push(file); return exec(file, args, o) }
     const found = await findStrayWorktrees({ ...t.base(), exec: spy, platform: 'win32' })
     expect(found.map((w) => w.inUse)).toEqual([false])
+    expect(found[0].inUseUnknown).toBeUndefined()
     expect(seen).not.toContain('lsof')
   })
 })
@@ -144,7 +157,7 @@ describe('knownLiveWorktrees', () => {
     const app = join(t.root, '..', 'Application Support')
     await mkdir(join(app, 'pitwall'), { recursive: true })
     await mkdir(join(app, 'pitwall-dev'), { recursive: true })
-    const prod = state([{ id: 'p', worktreePath: '/w/prod' }, { id: 'old', worktreePath: '/w/archived', archivedAt: 5 }, { id: 'nowt' }])
+    const prod = state([{ id: 'p', worktreePath: '/w/prod' }, { id: 'old', worktreePath: '/w/archived', archivedAt: 5 }, { id: 'nowt' }, { id: 'nul', worktreePath: '/w/null-archived', archivedAt: null }])
     const dev = state([{ id: 'd', worktreePath: '/w/dev' }])
     await writeFile(join(app, 'pitwall', 'state.json'), prod)
     await writeFile(join(app, 'pitwall-dev', 'state.json'), dev)
@@ -153,7 +166,7 @@ describe('knownLiveWorktrees', () => {
     await store.update((d) => { d.sessions.push({ id: 'own', worktreePath: '/w/own' } as never) })
     const dirBefore = await readFile(join(app, 'pitwall', 'state.json'), 'utf8')
     const live = await knownLiveWorktrees(store, app)
-    expect(live.sort()).toEqual(['/w/dev', '/w/own', '/w/prod'])
+    expect(live.sort()).toEqual(['/w/dev', '/w/null-archived', '/w/own', '/w/prod'])
     expect(await readFile(join(app, 'pitwall', 'state.json'), 'utf8')).toBe(dirBefore)
     expect((await stat(join(app, 'pitwall', 'state.json'))).mtimeMs).toBe(before[0])
   })

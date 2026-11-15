@@ -187,7 +187,9 @@ export interface ConversationItem {
 }
 /** Newest first; `truncated` when there were more than the 200 most recent outside conversations. */
 /** A worktree of a repo that no Pitwall session owns (an agent made it with `git worktree add`). */
-export interface StrayWorktree { path: string; branch?: string; merged: boolean; dirty: boolean; inUse: boolean; lastCommitAt: number | null }
+export interface StrayWorktree { path: string; branch?: string; merged: boolean; dirty: boolean; inUse: boolean; lastCommitAt: number | null
+  /** Pitwall couldn't check whether a process is using it (lsof failed): treated as in use. */
+  inUseUnknown?: boolean }
 export interface ConversationList { items: ConversationItem[]; truncated: boolean }
 /** A row of the folder's conversations that matches a search: title matches first, then the newest. */
 export interface ConversationMatch {

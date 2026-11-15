@@ -11,12 +11,13 @@ export function formatBytes(bytes: number): string {
 }
 
 /** A stray row can be picked only when removing it loses nothing: merged, no changes, nothing running in it. */
-export const removable = (w: StrayWorktree): boolean => w.merged && !w.dirty && !w.inUse
+export const removable = (w: StrayWorktree): boolean => w.merged && !w.dirty && !w.inUse && !w.inUseUnknown
 
 /** Why a row can't be picked. */
 export function blockedReason(w: StrayWorktree): string | null {
   if (w.dirty) return 'uncommitted changes'
   if (w.inUse) return 'in use'
+  if (w.inUseUnknown) return "couldn't check whether it's in use"
   if (!w.merged) return 'not merged'
   return null
 }

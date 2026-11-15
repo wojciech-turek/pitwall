@@ -100,7 +100,9 @@ export async function findStrayWorktrees(o: StrayOptions): Promise<StrayWorktree
       o.git.lastCommitAt(c.path)
     ])
     const inUse = !!cwds && cwds.some((cwd) => cwd === p || cwd.startsWith(p.endsWith('/') ? p : p + '/'))
-    return { path: c.path, branch: c.branch, merged, dirty, inUse, lastCommitAt }
+    // No answer from lsof (off Windows) is not "idle": fail closed.
+    const inUseUnknown = !cwds && platform !== 'win32'
+    return { path: c.path, branch: c.branch, merged, dirty, inUse, lastCommitAt, ...(inUseUnknown ? { inUseUnknown } : {}) }
   })
 }
 
@@ -114,7 +116,7 @@ export async function knownLiveWorktrees(ownStore: Store, appSupportDir: string)
   const add = (sessions: unknown): void => {
     if (!Array.isArray(sessions)) return
     for (const s of sessions) {
-      if (s && typeof s === 'object' && (s as { archivedAt?: unknown }).archivedAt === undefined) {
+      if (s && typeof s === 'object' && (s as { archivedAt?: unknown }).archivedAt == null) {
         const w = (s as { worktreePath?: unknown }).worktreePath
         if (typeof w === 'string' && w) paths.add(w)
       }
@@ -160,6 +162,7 @@ export async function removeStrayWorktrees(o: StrayOptions & { paths: string[]; 
     const w = hit.w
     if (w.dirty) refuse('Has uncommitted changes')
     else if (w.inUse) refuse('In use by a running process')
+    else if (w.inUseUnknown) refuse('Could not check whether it is in use')
     else if (!w.merged) refuse('Not merged')
     else {
       done.add(hit.key)
