@@ -11,6 +11,11 @@ All notable changes to Pitwall are listed here, newest first. Pitwall shows thes
 - **A Server tab for your dev server.** Set a folder's dev command, and each session runs it in its own tab, next to Claude and Shell, with a button to open it in the browser.
 - **Each session gets its own ports.** `$PITWALL_PORT` and the 9 after it, so sessions' dev servers don't collide with each other.
 - **`.worktreeinclude`.** List gitignored files such as `.env.local` there, and every new worktree gets a copy.
+- **See a session's subagents.** While Claude runs subagents, each one hangs under its session in the sidebar, showing what it's doing and when it's done. Click the arrow to fold them away.
+
+### Changed
+
+- **A subagent still working in the background no longer marks its session as Working** after Claude's reply. Its own row shows it's running.
 
 ### Fixed
 
