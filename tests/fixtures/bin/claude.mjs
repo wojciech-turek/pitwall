@@ -140,6 +140,15 @@ lines.on('line', (line) => {
     case 'clear':
       emit({ hook_event_name: 'SessionStart', session_id: `${id}-cleared`, source: 'clear' })
       break
+    case 'subagent':
+      // Like Claude running one Agent-tool subagent for two seconds.
+      emit({ hook_event_name: 'PreToolUse', session_id: id, tool_name: 'Agent', tool_input: { description: 'Stub task' } })
+      emit({ hook_event_name: 'SubagentStart', session_id: id, agent_id: 'stub-1', agent_type: 'Explore' })
+      setTimeout(() => {
+        emit({ hook_event_name: 'SubagentStop', session_id: id, agent_id: 'stub-1', agent_type: 'Explore', last_assistant_message: 'done' })
+        emit({ hook_event_name: 'Stop', session_id: id })
+      }, 2000)
+      break
     default:
       emit({ hook_event_name: 'UserPromptSubmit', session_id: id })
       console.log(`echo: ${line}`)

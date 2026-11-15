@@ -61,6 +61,13 @@ while IFS= read -r line; do
       echo "STUB ASKS PERMISSION" ;;
     clear)
       emit "{\"hook_event_name\":\"SessionStart\",\"session_id\":\"$id-cleared\",\"source\":\"clear\"}" ;;
+    subagent)
+      # Like Claude running one Agent-tool subagent for two seconds.
+      emit "{\"hook_event_name\":\"PreToolUse\",\"session_id\":\"$id\",\"tool_name\":\"Agent\",\"tool_input\":{\"description\":\"Stub task\"}}"
+      emit "{\"hook_event_name\":\"SubagentStart\",\"session_id\":\"$id\",\"agent_id\":\"stub-1\",\"agent_type\":\"Explore\"}"
+      sleep 2
+      emit "{\"hook_event_name\":\"SubagentStop\",\"session_id\":\"$id\",\"agent_id\":\"stub-1\",\"agent_type\":\"Explore\",\"last_assistant_message\":\"done\"}"
+      emit "{\"hook_event_name\":\"Stop\",\"session_id\":\"$id\"}" ;;
     *)
       emit "{\"hook_event_name\":\"UserPromptSubmit\",\"session_id\":\"$id\"}"
       echo "echo: $line"

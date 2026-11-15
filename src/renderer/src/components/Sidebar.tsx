@@ -1,7 +1,9 @@
+import { Fragment } from 'react'
 import type { AppSnapshot, Project, SubProject } from '@shared/types'
 import { bySessionOrder } from '@shared/runtime'
 import ArchivedList from './ArchivedList'
 import SessionRow from './SessionRow'
+import SubagentRows from './SubagentRows'
 import Menu from './Menu'
 import { FolderIcon, FolderPlusIcon, HistoryIcon, MutedBellIcon, PlusIcon } from './Icons'
 import { useUi } from '../state/ui'
@@ -85,7 +87,12 @@ export default function Sidebar({ snap, onSelect }: { snap: AppSnapshot; onSelec
         </span>
       </div>
       {snap.sessions.filter((s) => s.subProjectId === sp.id).sort(bySessionOrder)
-        .map((s) => <SessionRow key={s.id} session={s} onSelect={onSelect} projectName={projectName} subProjectName={sp.name} />)}
+        .map((s) => (
+          <Fragment key={s.id}>
+            <SessionRow session={s} onSelect={onSelect} projectName={projectName} subProjectName={sp.name} />
+            <SubagentRows session={s} onSelect={onSelect} />
+          </Fragment>
+        ))}
     </div>
   )
 

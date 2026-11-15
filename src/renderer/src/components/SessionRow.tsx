@@ -3,11 +3,12 @@ import type { SessionView } from '@shared/types'
 import { LineCounts } from './ChangesTab'
 import PrBadge from './PrBadge'
 import StatusIcon from './StatusIcon'
-import { PinIcon } from './Icons'
+import { ChevronIcon, PinIcon } from './Icons'
 import Menu from './Menu'
 import HoverCard, { useHoverCard } from './HoverCard'
 import { useUi } from '../state/ui'
 import { SESSION_MIME } from '../state/dropZone'
+import { setSubagentsOpen, subagentSummary, useSubagentsOpen } from '../state/subagentsOpen'
 import { rowFaded, rowLineCounts } from '../state/badges'
 
 /** The chip under the cursor while a row is dragged (drawn behind the app; the drag image is taken from it). */
@@ -43,6 +44,7 @@ export default function SessionRow({ session, onSelect, projectName, subProjectN
   const setDraggingSession = useUi((s) => s.setDraggingSession)
   const paletteOpen = useUi((s) => s.palette !== null)
   const hover = useHoverCard(editing || dragging || paletteOpen)
+  const subsOpen = useSubagentsOpen(session.id)
 
   useEffect(() => {
     if (editing) { done.current = false; input.current?.select() }
@@ -85,6 +87,18 @@ export default function SessionRow({ session, onSelect, projectName, subProjectN
           onBlur={commit} />
       ) : (
         <span className="row-title">{session.title}</span>
+      )}
+      {!editing && !!session.subagents?.length && (
+        <>
+          <button className={`subagents-toggle${subsOpen ? ' open' : ''}`} data-testid="subagents-toggle"
+            title={subsOpen ? 'Hide subagents' : 'Show subagents'} aria-label={subsOpen ? 'Hide subagents' : 'Show subagents'}
+            aria-expanded={subsOpen}
+            onClick={(e) => { e.stopPropagation(); setSubagentsOpen(session.id, !subsOpen) }}
+            onDoubleClick={(e) => e.stopPropagation()}>
+            <ChevronIcon />
+          </button>
+          <span className="subagents-summary" data-testid="subagents-summary">{subagentSummary(session.subagents)}</span>
+        </>
       )}
       {!editing && session.pinned && <span className="pin-mark" data-testid="pin-mark" title="Pinned"><PinIcon /></span>}
       {!editing && session.pr && <PrBadge pr={session.pr} />}
