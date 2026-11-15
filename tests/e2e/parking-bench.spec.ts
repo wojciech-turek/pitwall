@@ -1,11 +1,12 @@
 import { test, type ElectronApplication, type Page } from '@playwright/test'
 import { expect } from '@playwright/test'
 import { waitFor } from '../helpers/wait'
-import { launchApp, makeE2eEnv, paneText, tmux, type E2eEnv } from './helpers'
+import { launchApp, makeE2eEnv, paneText, SESSION_BACKEND, tmux, type E2eEnv } from './helpers'
 
 // Opt-in: PITWALL_BENCH=1. Compares the renderer's CPU with parking off and on; it asserts only that the sessions start.
 test.skip(process.env.PITWALL_BENCH !== '1', 'benchmark, opt-in')
 test.skip(process.platform === 'win32', 'tmux only')
+test.skip(SESSION_BACKEND === 'host', 'reads the tmux socket directly (capture-pane, list-clients)')
 test.setTimeout(240_000)
 
 const N = 8

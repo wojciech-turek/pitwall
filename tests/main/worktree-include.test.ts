@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { exec } from '../../src/main/exec'
 import { copyWorktreeIncludes } from '../../src/main/worktree-include'
+import { WINDOWS } from '../helpers/processes'
 import { makeRepo } from '../helpers/repo'
 
 let r: Awaited<ReturnType<typeof makeRepo>>
@@ -67,7 +68,7 @@ describe('copyWorktreeIncludes', () => {
     expect(await readFile(join(wt, 'café.env'), 'utf8')).toBe('a')
   })
 
-  test('skips a file reached through a symlinked directory out of the repo', async () => {
+  test.skipIf(WINDOWS)('skips a file reached through a symlinked directory out of the repo', async () => {
     const out = await mkdtemp(join(tmpdir(), 'pitwall-out-'))
     try {
       await writeFile(join(out, '.env'), 'x')
@@ -82,7 +83,7 @@ describe('copyWorktreeIncludes', () => {
     }
   })
 
-  test('never writes through a symlinked directory in the worktree', async () => {
+  test.skipIf(WINDOWS)('never writes through a symlinked directory in the worktree', async () => {
     const out = await mkdtemp(join(tmpdir(), 'pitwall-out-'))
     try {
       await symlink(out, join(wt, 'secrets'))

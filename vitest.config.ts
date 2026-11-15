@@ -21,7 +21,8 @@ const POSIX_ONLY = [
   'tests/main/identity.test.ts', // macOS's ssh command and env.sh, the sh gh stub (Windows: windows-platform)
   'tests/main/leftovers.test.ts', // ps (Windows: windows-platform, windows-only)
   'tests/main/paths.test.ts', // macOS paths (Windows: windows-platform)
-  'tests/host/launcher-host.test.ts' // sh hooks and stubs run directly, ps, /bin/sh (Windows: relaunch, the e2e suite)
+  'tests/host/launcher-host.test.ts', // sh hooks and stubs run directly, ps, /bin/sh (Windows: relaunch, the e2e suite)
+  'tests/main/cli-server.test.ts' // the `pitwall` command's unix socket, 0600 modes and symlinks (the command is off on Windows)
 ]
 
 export default defineConfig({

@@ -1,9 +1,10 @@
 import { expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 import { waitFor } from '../helpers/wait'
-import { launchApp, makeE2eEnv, paneText, sessionNames, tmux, type E2eEnv } from './helpers'
+import { launchApp, makeE2eEnv, paneText, SESSION_BACKEND, sessionNames, tmux, type E2eEnv } from './helpers'
 
 test.describe.configure({ mode: 'serial' })
 test.skip(process.env.PACKAGED === '1' || process.platform === 'win32', 'dev build, tmux only')
+test.skip(SESSION_BACKEND === 'host', 'reads the tmux socket directly (list-clients)')
 
 let e: E2eEnv
 let app: ElectronApplication | undefined

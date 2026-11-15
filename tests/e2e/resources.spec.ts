@@ -1,8 +1,9 @@
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test'
-import { launchApp, makeE2eEnv, type E2eEnv } from './helpers'
+import { launchApp, makeE2eEnv, SESSION_BACKEND, type E2eEnv } from './helpers'
 
 test.describe.configure({ mode: 'serial' })
 test.skip(process.env.PACKAGED === '1' || process.platform === 'win32', 'dev build, sampled on macOS and Linux only')
+test.skip(SESSION_BACKEND === 'host', "a session's figures come from tmux's pane roots (listPaneRoots); the host has none, so no hover line")
 
 let e: E2eEnv
 let app: ElectronApplication | undefined

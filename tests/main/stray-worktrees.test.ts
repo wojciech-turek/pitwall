@@ -7,6 +7,7 @@ import { exec, type Exec } from '../../src/main/exec'
 import { GitClient } from '../../src/main/git'
 import { Store } from '../../src/main/store'
 import { findStrayWorktrees, knownLiveWorktrees, removeStrayWorktrees, strayCandidates, worktreeSize } from '../../src/main/stray-worktrees'
+import { WINDOWS } from '../helpers/processes'
 import { makeRepo } from '../helpers/repo'
 
 const run = promisify(execFile)
@@ -79,7 +80,7 @@ describe('findStrayWorktrees', () => {
     expect(w.branch).toBeUndefined()
   })
 
-  test('a process whose cwd is inside a worktree marks it in use (a subfolder too); others stay idle', async () => {
+  test.skipIf(WINDOWS)('a process whose cwd is inside a worktree marks it in use (a subfolder too); others stay idle', async () => {
     const t = await setup()
     const busy = await t.stray('busy')
     const idle = await t.stray('idle')
@@ -92,7 +93,7 @@ describe('findStrayWorktrees', () => {
     expect(found.find((w) => w.path === idle)!.inUse).toBe(false)
   })
 
-  test('a path that merely shares a prefix with a busy one is not in use', async () => {
+  test.skipIf(WINDOWS)('a path that merely shares a prefix with a busy one is not in use', async () => {
     const t = await setup()
     const ab = await t.stray('ab')
     const abc = await t.stray('abc')
@@ -104,7 +105,7 @@ describe('findStrayWorktrees', () => {
     expect(found.find((w) => w.path === abc)!.inUse).toBe(true)
   })
 
-  test('when lsof fails every row is inUseUnknown (fail closed), and removal refuses all of them', async () => {
+  test.skipIf(WINDOWS)('when lsof fails every row is inUseUnknown (fail closed), and removal refuses all of them', async () => {
     const t = await setup()
     const a = await t.stray('a')
     const b = await t.stray('b')
@@ -120,7 +121,7 @@ describe('findStrayWorktrees', () => {
     expect(warn.mock.calls.length).toBeLessThanOrEqual(1)
   })
 
-  test('when lsof works, rows are not inUseUnknown and a clean merged idle one is removed', async () => {
+  test.skipIf(WINDOWS)('when lsof works, rows are not inUseUnknown and a clean merged idle one is removed', async () => {
     const t = await setup()
     const a = await t.stray('a')
     const found = await findStrayWorktrees(t.base())
@@ -254,7 +255,7 @@ describe('removeStrayWorktrees', () => {
     expect(await t.git.branchExists(t.root, 'late')).toBe(true)
   })
 
-  test('a worktree a process is using is refused', async () => {
+  test.skipIf(WINDOWS)('a worktree a process is using is refused', async () => {
     const t = await setup()
     const p = await t.stray('busy')
     children.push(spawn('sleep', ['30'], { cwd: p, stdio: 'ignore' }))

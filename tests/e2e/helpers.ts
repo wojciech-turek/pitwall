@@ -146,6 +146,12 @@ export async function paneText(e: E2eEnv, sessionId: string, window = 'claude'):
   return tmux(e.socket, 'capture-pane', '-p', '-J', '-t', `=pw-${sessionId}:${idx}`).catch(() => '')
 }
 
+/** The Shell tab's pane (its session pw-<id>-sh), from whichever backend runs it. */
+export async function shellPaneText(e: E2eEnv, sessionId: string): Promise<string> {
+  if (SESSION_BACKEND === 'host') return host(e).capture(`pw-${sessionId}-sh`).catch(() => '')
+  return tmux(e.socket, 'capture-pane', '-p', '-J', '-t', `=pw-${sessionId}-sh:`).catch(() => '')
+}
+
 /** Running session names; none when the backend isn't running. */
 export async function sessionNames(e: E2eEnv): Promise<string[]> {
   if (SESSION_BACKEND === 'host') return host(e).listSessions()

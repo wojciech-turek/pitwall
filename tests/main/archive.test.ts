@@ -95,7 +95,7 @@ describe('archive', () => {
   test('clean pushed session archives fully', async () => {
     const { r, sp, deps } = await addRepo({ remote: true })
     const s = await startOne(sp)
-    await t.backend.newSession({ name: serverTmuxName(s.id), cwd: s.cwd, argv: ['sleep', '60'] })
+    await t.backend.newSession({ name: serverTmuxName(s.id), cwd: s.cwd, argv: WINDOWS ? [process.execPath, '-e', 'setTimeout(() => {}, 60000)'] : ['sleep', '60'] })
     await sh(r, s.worktreePath!, 'push', 'origin', s.branch!)
     const check = await checkArchive(s.id, deps)
     expect(check).toMatchObject({

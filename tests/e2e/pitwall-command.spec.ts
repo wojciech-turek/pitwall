@@ -1,6 +1,6 @@
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test'
 import { waitFor } from '../helpers/wait'
-import { launchApp, makeE2eEnv, paneText, tmux, type E2eEnv } from './helpers'
+import { launchApp, makeE2eEnv, paneText, shellPaneText, type E2eEnv } from './helpers'
 
 test.describe.configure({ mode: 'serial' })
 test.skip(process.env.PACKAGED === '1' || process.platform === 'win32', 'dev build, Unix shell')
@@ -15,9 +15,7 @@ test.afterAll(async () => {
   await e?.cleanup()
 })
 
-/** The Shell tab's pane: its own tmux session, pw-<id>-sh. */
-const shellText = (id: string): Promise<string> =>
-  tmux(e.socket, 'capture-pane', '-p', '-J', '-t', `=pw-${id}-sh:`).catch(() => '')
+const shellText = (id: string): Promise<string> => shellPaneText(e, id)
 
 test('a session starts a helper with `pitwall new`; it hangs under it and its first prompt reaches Claude', async () => {
   ;({ app, page } = await launchApp({ ...e.env, SHELL: '/bin/sh' })) // a plain sh, never the developer's own shell setup
