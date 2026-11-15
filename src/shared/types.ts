@@ -167,3 +167,6 @@ export type ArchiveResult =
   | { ok: false; needsConfirm: ArchiveCheck }
   | { ok: false; teardownFailed: { exitCode: number | null; timedOut: boolean; output: string } }
   | { ok: false; error: string }
+
+/** One comment on a line range of an agent's diff. `quote` is at most the first 3 selected lines, each cut to 160 characters. */
+export interface ReviewComment { id: string; path: string; fromLine: number; toLine: number; quote: string; note: string }
