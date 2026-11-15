@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { __pushUsage, __usageStore, formatResetTime, orderAccounts, usageLevel, usageRow } from '../../src/renderer/src/state/usage'
+import { __pushUsage, __usageStore, formatResetTime, usageLevel, usageRow } from '../../src/renderer/src/state/usage'
 
 // Local times, so the tests hold in any time zone.
 const at = (day: number, h: number, m: number, s = 0) => new Date(2026, 9, day, h, m, s).getTime() // Oct 2026; the 27th is a Tuesday
@@ -42,12 +42,4 @@ describe('usage display', () => {
     expect(__usageStore.getState().usage).toEqual([])
   })
 
-  test('orderAccounts puts the selected account first and keeps the rest in order', () => {
-    const mk = (account: string) => ({ account, label: account, usage: { updatedAt: now } })
-    const list = [mk('/a'), mk('/b'), mk('/c')]
-    expect(orderAccounts(list, '/b').map((x) => x.account)).toEqual(['/b', '/a', '/c'])
-    expect(orderAccounts(list, '/a').map((x) => x.account)).toEqual(['/a', '/b', '/c'])
-    expect(orderAccounts(list, undefined).map((x) => x.account)).toEqual(['/a', '/b', '/c'])
-    expect(orderAccounts(list, '/zzz').map((x) => x.account)).toEqual(['/a', '/b', '/c'])
-  })
 })

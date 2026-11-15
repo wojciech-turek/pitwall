@@ -19,6 +19,7 @@ import SubProjectSettingsDialog from './components/dialogs/SubProjectSettingsDia
 import SettingsDialog from './components/dialogs/SettingsDialog'
 import UpdateDialog from './components/dialogs/UpdateDialog'
 import AddAccountDialog from './components/dialogs/AddAccountDialog'
+import SwitchAccountDialog from './components/dialogs/SwitchAccountDialog'
 import { useMenuCommands } from './state/menuCommands'
 import { usePruneTerminals } from './components/MainArea'
 import PaneLayout from './components/PaneLayout'
@@ -42,7 +43,7 @@ function DialogHost(): React.JSX.Element | null {
     case 'settings': return <SettingsDialog />
     case 'update': return <UpdateDialog />
     case 'account-login': return <AddAccountDialog key={dialog.termId} termId={dialog.termId} addId={dialog.addId} accountId={dialog.accountId} label={dialog.label} />
-    case 'switch-account': return null
+    case 'switch-account': return <SwitchAccountDialog key={dialog.accountId} accountId={dialog.accountId} label={dialog.label} now={dialog.now} later={dialog.later} />
   }
 }
 

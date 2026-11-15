@@ -40,7 +40,7 @@ test.describe('dev build', () => {
   test('create project, add repo, start session, agent replies', async () => {
     ;({ app, page } = await launchApp(e.env))
     await expect(page.getByTestId('create-first-project')).toBeVisible()
-    await expect(page.getByTestId('usage-meter')).toHaveText("Usage shows after Claude's next reply")
+    await expect(page.getByTestId('usage-meter')).toContainText("Usage shows after Claude's next reply")
     await shot(page, '1-empty-state')
 
     await page.getByTestId('create-first-project').click()

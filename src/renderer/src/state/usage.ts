@@ -29,12 +29,6 @@ export function useUsage(): AccountUsage[] {
   return useUsageStore((s) => s.usage)
 }
 
-/** The selected session's account first, the rest in their given order. */
-export function orderAccounts(list: AccountUsage[], selected?: string): AccountUsage[] {
-  const mine = list.filter((x) => x.account === selected)
-  return mine.length ? [...mine, ...list.filter((x) => x.account !== selected)] : list
-}
-
 export type UsageLevel = 'ok' | 'warn' | 'high'
 export interface UsageRowView { percent: number; pct: string; reset: string; level: UsageLevel }
 

@@ -2,7 +2,7 @@ import type { AppSnapshot } from '@shared/types'
 import { useUi } from '../state/ui'
 import ChangesTab from './ChangesTab'
 import FilesTab from './FilesTab'
-import UsageMeter from './UsageMeter'
+import AccountsPanel from './AccountsPanel'
 
 export default function RightPanel({ snap, sessionId }: { snap: AppSnapshot; sessionId: string | null }): React.JSX.Element {
   const rightTab = useUi((s) => s.rightTab)
@@ -30,7 +30,7 @@ export default function RightPanel({ snap, sessionId }: { snap: AppSnapshot; ses
           </div>
         </>
       )}
-      <UsageMeter />
+      <AccountsPanel />
     </aside>
   )
 }
