@@ -344,7 +344,7 @@ export async function startSessionLocked(
       if (deps.ports) session.portBase = await deps.ports.allocate(takenPorts(deps))
       await writeSessionFiles(session, deps)
       // Read by the launcher at Claude's first start only (it then renames the file, so a relaunch never repeats it).
-      if (input.initialPrompt) await writeFileAtomic(join(dir, 'initial-prompt.txt'), input.initialPrompt)
+      if (input.initialPrompt) await writeFileAtomic(join(dir, 'initial-prompt.txt'), input.initialPrompt, 0o600)
       // A conversation to continue exists already: the launcher resumes it (as after resuming an archived session).
       if (input.continueClaudeId) await writeFile(join(dir, 'started'), '')
     })

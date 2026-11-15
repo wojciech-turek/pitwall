@@ -125,6 +125,7 @@ describe('startSession', () => {
     expect(s.createdBy).toBe('s_parent')
     const d = sessionDir(t.paths, s.id)
     expect(await readFile(join(d, 'initial-prompt.txt'), 'utf8')).toBe('Add a README line')
+    if (!WINDOWS) expect((await stat(join(d, 'initial-prompt.txt'))).mode & 0o777).toBe(0o600) // (no POSIX modes on Windows)
     const note = await readFile(join(d, 'system-note.txt'), 'utf8')
     expect(note).toContain('You are running inside Pitwall')
     expect(note).toContain('`pitwall new "<title>" --prompt "<task>"`')

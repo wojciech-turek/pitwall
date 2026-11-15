@@ -5,7 +5,6 @@ subagents, the `pitwall` command, the resource view, accounts, and running witho
 
 ## Small bugs worth fixing first
 
-- **`initial-prompt.txt` is written with default permissions.** Make it 0600, like `env.sh`.
 - **Split diff:** a selection made earlier on the new side keeps "Comment" enabled while you select on the old side.
 - **Collapsed subagent rows still re-render every second.** Gate the timer on "open and something running".
 - **`pitwall send <id> "… --json …"` swallows a literal `--json`** in the message text.
