@@ -87,7 +87,8 @@ export class SessionManager {
       try {
         await this.track(s.id)
         await this.refreshSessionFiles(s.id)
-        await this.relaunchIfMissing(s)
+        // As it is now: track() may have recorded a conversation id, refreshSessionFiles a port block.
+        await this.relaunchIfMissing(this.session(s.id) ?? s)
       } catch (e) {
         // One broken session must not block the rest; the error shows on that session.
         this.errors.set(s.id, e instanceof Error ? e.message : String(e))
@@ -257,9 +258,17 @@ export class SessionManager {
   /**
    * Types `text` into the session's Claude and presses Enter (paste first, so newlines don't submit early). Logs
    * pitwall:sent first and reads it back, so the session is working before this returns: a `wait` straight after
-   * never mistakes the previous reply for the answer.
+   * never mistakes the previous reply for the answer. Refuses (throws) unless Claude is idle at its prompt with no
+   * subagent at work, checked right before typing: Enter must never answer a question or land mid-turn.
    */
   async sendText(id: string, text: string): Promise<void> {
+    const s = this.session(id)
+    if (!s || s.archivedAt !== undefined) throw new Error('Session not found.')
+    const status = this.statusOf(id)
+    if (status !== 'read' && status !== 'unread') throw new Error(`${s.title} is busy (${status}); wait for it first.`)
+    if (this.tracked.get(id)?.rt.subagents?.some((x) => x.state === 'running' || x.needsYou)) {
+      throw new Error(`${s.title} has a subagent still at work; wait for it first.`)
+    }
     await appendEvent(eventsFile(this.deps.paths, id), { c: id, t: this.now(), e: 'pitwall:sent' })
     await this.tracked.get(id)?.tailer.sync()
     await this.deps.backend.pasteText(claudeTmuxName(id), text)

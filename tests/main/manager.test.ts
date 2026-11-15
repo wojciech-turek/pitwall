@@ -108,6 +108,22 @@ describe('SessionManager', () => {
     expect(await readFile(join(sessionDir(t.paths, 'b'), 'env.sh'), 'utf8')).toContain("export PITWALL_PORT='40000'")
   })
 
+  test('after a reboot (no tmux session), a session given its port block at init is relaunched with that port', async () => {
+    await addSession('a')
+    await t.backend.killSession(claudeTmuxName('a'))
+    const m = new SessionManager({
+      store, paths: t.paths, git: new GitClient(exec, t.env), backend: t.backend, exec, env: t.env, home: t.tmp,
+      mutex: new KeyedMutex(), firstEventTimeoutMs: 8000, notifier,
+      ports: new PortAllocator({ isFree: async () => true })
+    })
+    managers.push(m)
+    await m.init()
+    expect(await t.backend.hasSession(claudeTmuxName('a'))).toBe(true)
+    expect(store.state.sessions[0].portBase).toBe(40000)
+    // The relaunch wrote env.sh again: from the session as it is now, port and all.
+    expect(await readFile(join(sessionDir(t.paths, 'a'), 'env.sh'), 'utf8')).toContain("export PITWALL_PORT='40000'")
+  })
+
   test('replay derives status without notifying', async () => {
     await addSession('a', {}, [{ e: 'UserPromptSubmit', t: 2000 }, { e: 'Stop', t: 3000, msg: 'done' }])
     const m = await ready()
@@ -657,12 +673,40 @@ describe('muted projects and mark as unread', () => {
     expect(status(m, 'a')).toBe('starting')
   })
 
-  test('sendText pastes the text, then presses Enter', async () => {
-    const m = mkManager()
+  test('sendText pastes the text, then presses Enter; the session is working before it returns', async () => {
+    await addSession('a', {}, [{ e: 'SessionStart', src: 'startup' }])
+    const m = await ready()
+    expect(status(m, 'a')).toBe('read')
     const calls: string[] = []
     t.backend.pasteText = async (n, x) => { calls.push(`paste ${n} ${x}`) }
     t.backend.sendKeys = async (n, k) => { calls.push(`keys ${n} ${k.join(',')}`) }
     await m.sendText('a', 'hello\nthere')
     expect(calls).toEqual([`paste ${claudeTmuxName('a')} hello\nthere`, `keys ${claudeTmuxName('a')} Enter`])
+    expect(status(m, 'a')).toBe('working')
+  })
+
+  test('sendText checks again right before typing: a busy session, or one with a subagent at work, is refused', async () => {
+    await addSession('busy', {}, [{ e: 'SessionStart', src: 'startup' }, { e: 'UserPromptSubmit' }])
+    await addSession('asks', {}, [{ e: 'SessionStart', src: 'startup' }, { e: 'PermissionRequest', tool: 'Bash' }])
+    await addSession('helper', {}, [
+      { e: 'SessionStart', src: 'startup' }, { e: 'UserPromptSubmit' }, { e: 'SubagentStart', aid: 'x', at: 'Explore' }, { e: 'Stop', msg: 'done' }
+    ])
+    await addSession('gone', { archivedAt: 5 })
+    const m = await ready()
+    const calls: string[] = []
+    t.backend.pasteText = async (n, x) => { calls.push(`paste ${n} ${x}`) }
+    t.backend.sendKeys = async (n, k) => { calls.push(`keys ${n} ${k.join(',')}`) }
+    await expect(m.sendText('busy', 'x')).rejects.toThrow('Title busy is busy (working); wait for it first.')
+    await expect(m.sendText('asks', 'x')).rejects.toThrow('Title asks is busy (needs_you); wait for it first.')
+    expect(status(m, 'helper')).toBe('unread') // its reply is in, but a subagent is still at work
+    await expect(m.sendText('helper', 'x')).rejects.toThrow('Title helper has a subagent still at work; wait for it first.')
+    await expect(m.sendText('gone', 'x')).rejects.toThrow('Session not found.')
+    await expect(m.sendText('nope', 'x')).rejects.toThrow('Session not found.')
+    expect(calls).toEqual([])
+    // Once the subagent is done, the message goes.
+    await ev('helper', { e: 'SubagentStop', aid: 'x' })
+    await waitFor(async () => !m.snapshot().sessions.find((x) => x.id === 'helper')!.subagents!.some((r) => r.state === 'running'), 8000, 'subagent done')
+    await m.sendText('helper', 'go on')
+    expect(calls).toEqual([`paste ${claudeTmuxName('helper')} go on`, `keys ${claudeTmuxName('helper')} Enter`])
   })
 })
