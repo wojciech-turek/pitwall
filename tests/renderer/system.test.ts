@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import type { ProcStats, SystemStats } from '../../src/shared/types'
-import { formatProc, heavyLabel, pillLabel, pillLevel, topSessions } from '../../src/renderer/src/state/system'
+import { formatProc, heavyLabel, pillLabel, stepPill, type PillState, topSessions } from '../../src/renderer/src/state/system'
 
 const GB = 1024 ** 3
 const p = (cpu: number, rssGb: number, procs = 3): ProcStats => ({ cpu, rssBytes: rssGb * GB, procs })
@@ -25,34 +25,57 @@ describe('heavyLabel', () => {
   })
 })
 
-describe('pillLevel', () => {
+const OFF: PillState = { level: null, reason: null, run: 0 }
+const run = (samples: SystemStats[], from: PillState = OFF): PillState[] => {
+  const out: PillState[] = []
+  let st = from
+  for (const x of samples) { st = stepPill(st, x); out.push(st) }
+  return out
+}
+
+describe('stepPill', () => {
   const warn = sys({ pressure: 'warn' })
   const ok = sys()
-  test('turns on after 2 warn samples and off after 2 normal ones', () => {
-    expect(pillLevel([ok, warn])).toBeNull()
-    expect(pillLevel([ok, warn, warn])).toBe('warn')
-    expect(pillLevel([warn, warn, ok])).toBe('warn')
-    expect(pillLevel([warn, ok, ok])).toBeNull()
-    expect(pillLevel([ok, ok, ok])).toBeNull()
+  test('one warn sample is not enough; two turn it on', () => {
+    expect(run([warn])[0].level).toBeNull()
+    expect(run([warn, warn])[1].level).toBe('warn')
   })
-  test('critical shows as critical', () => {
-    expect(pillLevel([ok, sys({ pressure: 'critical' }), sys({ pressure: 'critical' })])).toBe('critical')
+  test('stays on through a single normal sample after a long warn run', () => {
+    const levels = run([warn, warn, warn, warn, warn, ok, warn, ok, warn]).map((x) => x.level)
+    expect(levels).toEqual([null, 'warn', 'warn', 'warn', 'warn', 'warn', 'warn', 'warn', 'warn'])
+  })
+  test('two normal samples in a row clear it', () => {
+    const on = run([warn, warn])[1]
+    expect(run([ok, ok], on).map((x) => x.level)).toEqual(['warn', null])
+  })
+  test('a lone warn between normal samples stays off', () => {
+    expect(run([ok, warn, ok, warn, ok]).map((x) => x.level)).toEqual([null, null, null, null, null])
+  })
+  test('critical shows as critical and follows the latest bad sample', () => {
+    const crit = sys({ pressure: 'critical' })
+    expect(run([warn, warn, crit]).map((x) => x.level)).toEqual([null, 'warn', 'critical'])
+    expect(run([crit, crit, warn])[2].level).toBe('warn')
   })
   test('a nearly full disk is a warn: under 10% or under 20 GB free', () => {
     const full = sys({ diskFreeBytes: 15 * GB })
-    expect(pillLevel([full, full])).toBe('warn')
+    expect(run([full, full])[1]).toMatchObject({ level: 'warn', reason: 'disk' })
     const low = sys({ diskFreeBytes: 80 * GB })
-    expect(pillLevel([low, low])).toBe('warn')
+    expect(run([low, low])[1].level).toBe('warn')
     const fine = sys({ diskFreeBytes: 200 * GB })
-    expect(pillLevel([fine, fine])).toBeNull()
+    expect(run([fine, fine])[1].level).toBeNull()
+  })
+  test('memory is the reason when both apply', () => {
+    const both = sys({ pressure: 'warn', diskFreeBytes: 15 * GB })
+    expect(run([both, both])[1].reason).toBe('memory')
   })
 })
 
 describe('pillLabel', () => {
-  test('memory wins over disk', () => {
-    expect(pillLabel(sys({ pressure: 'warn', diskFreeBytes: 15 * GB }), 'warn')).toBe('Memory pressure high')
-    expect(pillLabel(sys({ pressure: 'critical' }), 'critical')).toBe('Memory pressure critical')
-    expect(pillLabel(sys({ diskFreeBytes: 54 * GB }), 'warn')).toBe('Disk almost full · 54 GB free')
+  const st = (level: 'warn' | 'critical', reason: 'memory' | 'disk'): PillState => ({ level, reason, run: 0 })
+  test('comes from the stored reason, not the latest sample', () => {
+    expect(pillLabel(st('warn', 'memory'), sys({ diskFreeBytes: 15 * GB }))).toBe('Memory pressure high')
+    expect(pillLabel(st('critical', 'memory'), sys())).toBe('Memory pressure critical')
+    expect(pillLabel(st('warn', 'disk'), sys({ diskFreeBytes: 54 * GB }))).toBe('Disk almost full · 54 GB free')
   })
 })
 

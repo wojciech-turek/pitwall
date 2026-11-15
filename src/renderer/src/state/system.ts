@@ -6,14 +6,17 @@ import { formatBytes } from './strays'
 
 const KEEP = 3
 const GB = 1024 ** 3
-const useSystemStore = create<{ history: SystemStats[] }>()(() => ({ history: [] }))
+export interface PillState { level: 'warn' | 'critical' | null; reason: 'memory' | 'disk' | null; /** samples in a row that disagree with the level */ run: number }
+const OFF: PillState = { level: null, reason: null, run: 0 }
+
+const useSystemStore = create<{ history: SystemStats[]; pill: PillState }>()(() => ({ history: [], pill: OFF }))
 let started = false
 let pushed = false // a push is newer than the initial fetch
 const api = (): PitwallApi => (globalThis as unknown as { pitwall: PitwallApi }).pitwall
 
 export function __pushSystem(s: SystemStats): void {
   pushed = true
-  useSystemStore.setState((st) => ({ history: [...st.history, s].slice(-KEEP) }))
+  useSystemStore.setState((st) => ({ history: [...st.history, s].slice(-KEEP), pill: stepPill(st.pill, s) }))
 }
 export const __systemStore = useSystemStore
 
@@ -26,16 +29,34 @@ function start(): void {
   })
 }
 
-/** The last few samples, oldest first; empty where nothing is sampled (Windows). One IPC subscription for the renderer. */
-export function useSystemHistory(): SystemStats[] {
+/** The latest sample; null where nothing is sampled (Windows). One IPC subscription for the renderer. */
+export function useLatestSystem(): SystemStats | null {
   useEffect(start, [])
-  return useSystemStore((s) => s.history)
+  return useSystemStore((s) => s.history[s.history.length - 1] ?? null)
 }
 
-/** One session's last few samples (sessions missing from a sample are skipped). */
-export function useSessionHistory(id: string): ProcStats[] {
-  const h = useSystemHistory()
-  return h.flatMap((s) => (s.sessions[id] ? [s.sessions[id]] : []))
+/** The title-bar pill's state. */
+export function usePill(): PillState {
+  useEffect(start, [])
+  return useSystemStore((s) => s.pill)
+}
+
+const sessionHistory = (history: SystemStats[], id: string): ProcStats[] =>
+  history.flatMap((s) => (s.sessions[id] ? [s.sessions[id]] : []))
+
+/** The row chip text for a session. A string, so the row redraws only when it changes. */
+export function useHeavyLabel(id: string): string | null {
+  useEffect(start, [])
+  return useSystemStore((s) => heavyLabel(sessionHistory(s.history, id)))
+}
+
+/** A session's latest figures, as text, so a hover card redraws only when they change. */
+export function useSessionUsageText(id: string): string | null {
+  useEffect(start, [])
+  return useSystemStore((s) => {
+    const p = s.history[s.history.length - 1]?.sessions[id]
+    return p ? formatProc(p) : null
+  })
 }
 
 /** `CPU 35% · 1.2 GB · 14 processes` */
@@ -59,24 +80,21 @@ function sampleLevel(s: SystemStats): 'warn' | 'critical' | null {
   return s.pressure === 'warn' || diskLow(s) ? 'warn' : null
 }
 
-/** The pill turns on after 2 bad samples in a row and off after 2 good ones, so it doesn't flicker. */
-export function pillLevel(history: SystemStats[]): 'warn' | 'critical' | null {
-  let on = false
-  let run = 0
-  for (const s of history) {
-    const bad = sampleLevel(s) !== null
-    run = bad === on ? 0 : run + 1
-    if (run >= 2) { on = bad; run = 0 }
-  }
-  if (!on) return null
-  const last = history[history.length - 1]
-  return sampleLevel(last) ?? 'warn'
+/** Advance the pill by one sample: on after 2 bad samples in a row, off after 2 normal ones, so it doesn't flicker. */
+export function stepPill(state: PillState, s: SystemStats): PillState {
+  const level = sampleLevel(s)
+  const reason = s.pressure !== 'normal' ? 'memory' : 'disk'
+  const on = state.level !== null
+  if (level && on) return { level, reason, run: 0 }
+  if (!level && !on) return OFF
+  if (state.run + 1 < 2) return { ...state, run: state.run + 1 }
+  return level ? { level, reason, run: 0 } : OFF
 }
 
-/** Memory wins over disk. */
-export function pillLabel(s: SystemStats, level: 'warn' | 'critical'): string {
-  if (level === 'critical') return 'Memory pressure critical'
-  if (s.pressure === 'warn') return 'Memory pressure high'
+/** The pill's text; memory wins over disk. */
+export function pillLabel(pill: PillState, s: SystemStats): string {
+  if (pill.level === 'critical') return 'Memory pressure critical'
+  if (pill.reason === 'memory') return 'Memory pressure high'
   return `Disk almost full · ${Math.round(s.diskFreeBytes / GB)} GB free`
 }
 

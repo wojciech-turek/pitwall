@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { useUi } from '../state/ui'
 import { formatBytes } from '../state/strays'
-import { formatProc, pillLabel, pillLevel, topSessions, useSystemHistory } from '../state/system'
+import { formatProc, pillLabel, topSessions, useLatestSystem, usePill } from '../state/system'
 import type { SessionView } from '@shared/types'
 
 /** Shown only while memory pressure is high or the disk is nearly full; the popover says which sessions are biggest. */
 export default function SystemPill({ sessions }: { sessions: SessionView[] }): React.JSX.Element | null {
-  const history = useSystemHistory()
-  const level = pillLevel(history)
+  const last = useLatestSystem()
+  const pill = usePill()
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLSpanElement>(null)
   const select = useUi((s) => s.select)
@@ -19,14 +19,13 @@ export default function SystemPill({ sessions }: { sessions: SessionView[] }): R
     document.addEventListener('keydown', key)
     return () => { document.removeEventListener('mousedown', down); document.removeEventListener('keydown', key) }
   }, [open])
-  const last = history[history.length - 1]
-  if (!level || !last) return null
+  if (!pill.level || !last) return null
   const title = (id: string): string => sessions.find((s) => s.id === id)?.title ?? 'Session'
   return (
     <span className="system-pill-wrap" ref={ref}>
-      <button type="button" className={`system-pill ${level}`} data-testid="system-pill" aria-expanded={open}
+      <button type="button" className={`system-pill ${pill.level}`} data-testid="system-pill" aria-expanded={open}
         onClick={() => setOpen((o) => !o)}>
-        {pillLabel(last, level)}
+        {pillLabel(pill, last)}
       </button>
       {open && (
         <div className="system-pop" data-testid="system-pop">

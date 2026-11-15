@@ -4,7 +4,7 @@ import { STATUS_LABEL } from '@shared/runtime'
 import type { SessionView } from '@shared/types'
 import { LineCounts } from './ChangesTab'
 import StatusIcon from './StatusIcon'
-import { formatProc, useSystemHistory } from '../state/system'
+import { useSessionUsageText } from '../state/system'
 
 export const HOVER_DELAY_MS = 300
 const CARD_WIDTH = 300
@@ -62,7 +62,7 @@ export default function HoverCard({ session, rect, projectName, subProjectName, 
     setTop(Math.max(8, Math.min(rect.top, window.innerHeight - h - 8)))
   }, [rect])
   const left = Math.min(rect.right + 8, window.innerWidth - CARD_WIDTH - 8)
-  const usage = useSystemHistory().at(-1)?.sessions[session.id]
+  const usage = useSessionUsageText(session.id)
   const branch = session.liveBranch ?? session.branch
   return createPortal(
     <div ref={ref} className="hover-card" data-testid="hover-card" role="tooltip" style={{ left, top, width: CARD_WIDTH }}>
@@ -76,7 +76,7 @@ export default function HoverCard({ session, rect, projectName, subProjectName, 
       <div className="hc-line">{[projectName, subProjectName].filter(Boolean).join(' · ')}</div>
       {startedBy && <div className="hc-line" data-testid="hc-started-by">Started by {startedBy}</div>}
       {branch && <div className="hc-line hc-branch">{branch}</div>}
-      {usage && <div className="hc-line hc-usage" data-testid="hc-usage">{formatProc(usage)}</div>}
+      {usage && <div className="hc-line hc-usage" data-testid="hc-usage">{usage}</div>}
       {session.lastMessage && <div className="hc-message">{session.lastMessage}</div>}
       {(session.diffStat || session.pr) && (
         <div className="hc-foot">
