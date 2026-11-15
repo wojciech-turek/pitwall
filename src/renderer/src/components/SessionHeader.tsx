@@ -1,8 +1,10 @@
+import { useState } from 'react'
 import type { SessionView, SubProject } from '@shared/types'
 import { STATUS_LABEL } from '@shared/runtime'
 import { useUi } from '../state/ui'
 import { useToast } from '../state/toast'
 import { cleanIpcError } from '../state/errors'
+import { requestFocus } from '../terminal/termCache'
 import PrBadge from './PrBadge'
 import StatusIcon from './StatusIcon'
 
@@ -15,6 +17,32 @@ export async function openInCursor(sessionId: string): Promise<void> {
   } catch (e) {
     toast(cleanIpcError(e))
   }
+}
+
+/** Pastes the PR's failing checks or review comments into the agent's prompt, then shows it. */
+async function sendPrFeedback(sessionId: string, what: 'checks' | 'reviews'): Promise<void> {
+  const toast = useToast.getState().show
+  try {
+    const r = await window.pitwall.sendPrFeedback(sessionId, what)
+    if (!r.ok) { toast(r.message); return }
+    useUi.getState().setActiveTab(sessionId, 'claude')
+    requestFocus(sessionId, 'claude')
+  } catch (e) {
+    toast(cleanIpcError(e))
+  }
+}
+
+function PrFeedbackBanner({ testId, text, sessionId, what }: {
+  testId: string; text: string; sessionId: string; what: 'checks' | 'reviews'
+}): React.JSX.Element {
+  const [sending, setSending] = useState(false)
+  return (
+    <div className="banner warn" role="status" data-testid={`${testId}-banner`}>
+      <span>{text}</span>
+      <button className="btn" data-testid={`${testId}-send`} disabled={sending}
+        onClick={() => { setSending(true); void sendPrFeedback(sessionId, what).finally(() => setSending(false)) }}>Send to agent</button>
+    </div>
+  )
 }
 
 export default function SessionHeader({ session, subProject, multi = false, onClose }: {
@@ -49,6 +77,14 @@ export default function SessionHeader({ session, subProject, multi = false, onCl
           <span>PR #{session.pr.number} was merged. Archive this session?</span>
           <button className="btn" data-testid="pr-archive" onClick={() => openDialog({ type: 'archive', sessionId: session.id })}>Archive…</button>
         </div>
+      )}
+      {session.pr?.state === 'OPEN' && session.pr.checks === 'failing' && !!session.pr.failing?.length && (
+        <PrFeedbackBanner testId="pr-checks" sessionId={session.id} what="checks"
+          text={`Checks failing on PR #${session.pr.number}: ${session.pr.failing.map((f) => f.name).join(', ')}`} />
+      )}
+      {session.pr?.state === 'OPEN' && (session.pr.openThreads ?? 0) > 0 && (
+        <PrFeedbackBanner testId="pr-reviews" sessionId={session.id} what="reviews"
+          text={`${session.pr.openThreads} unresolved review comment${session.pr.openThreads === 1 ? '' : 's'} on PR #${session.pr.number}`} />
       )}
       {session.startWarning && <div className="banner warn" role="status" data-testid="start-warning">{session.startWarning}</div>}
       {session.launchWarnings?.map((w) => <div key={w} className="banner warn" role="status" data-testid="launch-warning">{w}</div>)}

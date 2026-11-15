@@ -21,6 +21,8 @@ import { APP_VERSION } from '@shared/version'
 import { PARK_AFTER_MS } from '@shared/parking'
 import type { UpdateChecker } from './updates'
 import type { UsageTracker } from './usage'
+import type { PrPoller } from './pr'
+import { checksMessage, fetchReviewThreads, reviewsMessage } from './pr-feedback'
 
 export interface IpcDeps {
   manager: SessionManager
@@ -38,6 +40,7 @@ export interface IpcDeps {
   history: Pick<SessionHistory, 'search' | 'forgetFiles'>
   usage: Pick<UsageTracker, 'current' | 'onChange'>
   updates: Pick<UpdateChecker, 'state' | 'checkNow' | 'onChange' | 'hasFeed'>
+  pr: Pick<PrPoller, 'feedbackContext'>
   /** True for an unpackaged (dev) run. */
   dev: boolean
   /** What starts Claude (archiving relaunches it when the worktree can't be removed). */
@@ -105,6 +108,28 @@ export function registerIpc(d: IpcDeps): () => void {
   handle(IPC.sendToAgent, async (id: string, text: string) => {
     sessionFolder(id)
     await backend.pasteText(claudeTmuxName(id), text) // bracketed paste, never Enter
+  })
+  handle(IPC.sendPrFeedback, async (id: unknown, what: unknown): Promise<{ ok: true; count: number } | { ok: false; message: string }> => {
+    if (typeof id !== 'string' || (what !== 'checks' && what !== 'reviews')) return { ok: false, message: 'Invalid request.' }
+    const c = await d.pr.feedbackContext(id)
+    if (!c.ok) return c
+    let text: string
+    let count: number
+    if (what === 'checks') {
+      count = c.pr.failing?.length ?? 0
+      if (!count) return { ok: false, message: 'No failing checks on this PR.' }
+      text = checksMessage(c.pr)
+    } else {
+      const threads = await fetchReviewThreads({
+        ghBin: paths.ghBin, cwd: c.dir, token: c.token, owner: c.owner, repo: c.repo, number: c.pr.number, exec, env
+      })
+      if (!threads) return { ok: false, message: "Couldn't read the review comments from GitHub." }
+      if (!threads.length) return { ok: false, message: 'No unresolved review comments.' }
+      count = threads.length
+      text = reviewsMessage(c.pr, threads)
+    }
+    await backend.pasteText(claudeTmuxName(id), text) // bracketed paste, never Enter
+    return { ok: true, count }
   })
   handle(IPC.listChanges, (id: string) => d.changes.list(id))
   handle(IPC.readDiff, (id: string, rel: string) => d.changes.readDiff(id, rel))

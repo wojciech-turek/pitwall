@@ -48,6 +48,7 @@ beforeEach(() => {
   history = { search: vi.fn(async () => []), forgetFiles: vi.fn() }
   registerIpc({
     manager, history,
+    pr: { feedbackContext: async () => ({ ok: false as const, message: 'x' }) },
     usage: { current: () => null, onChange: () => () => {} },
     updates: { state: () => null, checkNow: async () => {}, onChange: () => () => {}, hasFeed: () => false },
     send: () => {}, onViewing: () => {}, env: {}, home: '/home/me', dev: false

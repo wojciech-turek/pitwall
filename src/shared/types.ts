@@ -20,6 +20,8 @@ export interface PrInfo {
   /** Review threads still open on the current diff; set only while the PR is open. */
   openThreads?: number
 }
+/** An unresolved, current review thread on a PR (each body cut to 2000 characters). */
+export interface ReviewThread { path: string; line: number | null; comments: { author: string; body: string }[] }
 export interface Session {
   id: string; subProjectId: string; title: string; slug: string; claudeSessionId: string; cwd: string
   worktreePath?: string; branch?: string; branchCreatedByPitwall: boolean; baseBranch?: string; baseCommit?: string

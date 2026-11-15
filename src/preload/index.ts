@@ -57,6 +57,7 @@ const api: PitwallApi = {
   readFile: (id, rel) => ipcRenderer.invoke(IPC.readFile, id, rel),
   writeFile: (id, rel, content, mtime) => ipcRenderer.invoke(IPC.writeFile, id, rel, content, mtime),
   sendToAgent: (id, text) => ipcRenderer.invoke(IPC.sendToAgent, id, text),
+  sendPrFeedback: (id, what) => ipcRenderer.invoke(IPC.sendPrFeedback, id, what),
   listChanges: (id) => ipcRenderer.invoke(IPC.listChanges, id),
   readDiff: (id, rel) => ipcRenderer.invoke(IPC.readDiff, id, rel),
   checkArchive: (id) => ipcRenderer.invoke(IPC.checkArchive, id),

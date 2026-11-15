@@ -51,6 +51,8 @@ export interface PitwallApi {
   writeFile(sessionId: string, rel: string, content: string, expectedMtimeMs?: number):
     Promise<{ ok: true; mtimeMs: number } | { ok: false; reason: 'changed_on_disk' }>
   sendToAgent(sessionId: string, text: string): Promise<void>
+  /** Pastes the PR's failing checks or open review comments into the session's prompt (no Enter). */
+  sendPrFeedback(sessionId: string, what: 'checks' | 'reviews'): Promise<{ ok: true; count: number } | { ok: false; message: string }>
   listChanges(sessionId: string): Promise<{ base: string; baseLabel: string; files: ChangedFile[] }>
   readDiff(sessionId: string, rel: string): Promise<{ original: string; modified: string; binary: boolean; tooLarge: boolean }>
   checkArchive(sessionId: string): Promise<ArchiveCheck>
@@ -132,6 +134,7 @@ export const IPC = {
   readFile: 'pitwall:readFile',
   writeFile: 'pitwall:writeFile',
   sendToAgent: 'pitwall:sendToAgent',
+  sendPrFeedback: 'pitwall:sendPrFeedback',
   listChanges: 'pitwall:listChanges',
   readDiff: 'pitwall:readDiff',
   checkArchive: 'pitwall:checkArchive',

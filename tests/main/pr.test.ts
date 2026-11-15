@@ -175,6 +175,24 @@ function setup(o: { remote?: boolean; ghAccount?: string; pr?: Session['pr']; ar
   return { poller, calls, notes, state, emit, setJson: (j: unknown[]) => { json = j }, setGhFails: (f: boolean) => { ghFails = f }, setThreads: (n: number | null) => { threads = n } }
 }
 
+describe('PrPoller.feedbackContext', () => {
+  const OPEN = { number: 12, url: 'https://github.com/o/r/pull/12', title: 't', state: 'OPEN' as const, checks: 'failing' as const, updatedAt: 0 }
+  test('gives the dir, token, repo and PR', async () => {
+    const t = setup({ pr: OPEN })
+    expect(await t.poller.feedbackContext('s1')).toEqual({ ok: true, dir: '/w', token: 'tok', owner: 'o', repo: 'r', pr: OPEN })
+  })
+  test('plain messages for each failure', async () => {
+    expect(await setup({ pr: OPEN, ghAccount: '' }).poller.feedbackContext('s1')).toEqual({ ok: false, message: 'This project has no GitHub account set.' })
+    expect(await setup({ pr: OPEN }).poller.feedbackContext('s2')).toEqual({ ok: false, message: 'This session has no pull request.' })
+    expect(await setup({ pr: OPEN }).poller.feedbackContext('nope')).toEqual({ ok: false, message: 'This session has no pull request.' })
+    expect(await setup({ pr: { ...OPEN, url: 'https://example.com/x' } }).poller.feedbackContext('s1'))
+      .toEqual({ ok: false, message: "Couldn't tell which GitHub repo the PR is in." })
+    const bad = setup({ pr: OPEN })
+    ;(bad.poller as unknown as { deps: { exec: unknown } }).deps.exec = async () => ({ code: 1, stdout: '', stderr: '' })
+    expect(await bad.poller.feedbackContext('s1')).toEqual({ ok: false, message: "Couldn't get a GitHub token for dev-work." })
+  })
+})
+
 const listCalls = <T extends { args: string[] }>(c: T[]) => c.filter((x) => x.args[0] === 'pr')
 
 describe('PrPoller', () => {

@@ -183,16 +183,39 @@ export class PrPoller {
     }
   }
 
+  /** The session's repo folder and its project's GitHub account; null when it isn't a live session in a git repo. */
+  private target(sessionId: string) {
+    const st = this.deps.store.state
+    const s = st.sessions.find((x) => x.id === sessionId)
+    if (!s || s.archivedAt !== undefined) return null
+    const sub = st.subProjects.find((p) => p.id === s.subProjectId)
+    if (sub?.kind !== 'repo') return null
+    // Never fall back to the machine's active gh account.
+    const account = st.projects.find((p) => p.id === sub.projectId)?.identity.ghAccount || undefined
+    return { s, sub, account, dir: s.worktreePath ?? s.cwd }
+  }
+
+  /** What sending the session's PR feedback to its agent needs, or a plain reason it can't. */
+  async feedbackContext(sessionId: string): Promise<
+    { ok: true; dir: string; token: string; owner: string; repo: string; pr: PrInfo } | { ok: false; message: string }
+  > {
+    const t = this.target(sessionId)
+    if (!t) return { ok: false, message: 'This session has no pull request.' }
+    if (!t.account) return { ok: false, message: 'This project has no GitHub account set.' }
+    const pr = t.s.pr
+    if (!pr) return { ok: false, message: 'This session has no pull request.' }
+    const token = await this.token(t.account)
+    if (!token) return { ok: false, message: `Couldn't get a GitHub token for ${t.account}.` }
+    const repo = parsePrUrl(pr.url)
+    if (!repo) return { ok: false, message: "Couldn't tell which GitHub repo the PR is in." }
+    return { ok: true, dir: t.dir, token, ...repo, pr }
+  }
+
   private async check(sessionId: string): Promise<void> {
     const { store, git, notifier, paths, exec, env } = this.deps
-    const st = store.state
-    const s = st.sessions.find((x) => x.id === sessionId)
-    if (!s || s.archivedAt !== undefined) return
-    const sub = st.subProjects.find((p) => p.id === s.subProjectId)
-    if (sub?.kind !== 'repo') return
-    const account = st.projects.find((p) => p.id === sub.projectId)?.identity.ghAccount
-    if (!account) return // never fall back to the machine's active gh account
-    const dir = s.worktreePath ?? s.cwd
+    const t = this.target(sessionId)
+    if (!t?.account) return
+    const { s, sub, account, dir } = t
     const branch = this.deps.manager.snapshot().sessions.find((x) => x.id === sessionId)?.liveBranch ?? s.branch
     if (!branch || !(await git.hasRemote(dir))) return
     const token = await this.token(account)
