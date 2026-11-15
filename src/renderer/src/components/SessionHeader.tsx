@@ -7,6 +7,8 @@ import { useToast } from '../state/toast'
 import { cleanIpcError } from '../state/errors'
 import { requestFocus } from '../terminal/termCache'
 import { useUsage } from '../state/usage'
+import { bestOther, moveNotice, moveTargets, switchAccount, useAccounts } from '../state/accounts'
+import Menu from './Menu'
 import PrBadge from './PrBadge'
 import StatusIcon from './StatusIcon'
 
@@ -52,6 +54,10 @@ const shortTime = (at: number): string => new Date(at).toLocaleTimeString([], { 
 /** A session Claude stopped at a usage limit: offers to type "continue" when the limit resets. */
 function LimitBanner({ session }: { session: SessionView }): React.JSX.Element {
   const usage = useUsage()
+  const accounts = useAccounts()
+  const openDialog = useUi((u) => u.openDialog)
+  // Another account to carry on with: the one with the most room. Not for a session whose project sets its own.
+  const elsewhere = session.accountPinned || session.moveTo !== undefined ? undefined : bestOther(accounts, session.accountId, Date.now())
   const [busy, setBusy] = useState(false)
   const run = (fn: () => Promise<unknown>): void => {
     setBusy(true)
@@ -72,8 +78,34 @@ function LimitBanner({ session }: { session: SessionView }): React.JSX.Element {
             onClick={() => run(() => window.pitwall.scheduleContinue(session.id))}>
             Continue at {shortTime(resetTimeFor(usage.find((a) => a.account === session.account)?.usage, Date.now()))}
           </button>
+          {elsewhere?.id !== undefined && (
+            <button className="btn" data-testid="limit-switch" disabled={busy}
+              onClick={() => run(() => switchAccount(window.pitwall, { id: elsewhere.id!, label: elsewhere.label }, openDialog))}>
+              Switch to {elsewhere.label}
+            </button>
+          )}
         </>
       )}
+    </div>
+  )
+}
+
+/** A move to another account that is waiting to happen, or was made and hasn't started there yet. */
+function MoveBanner({ session }: { session: SessionView }): React.JSX.Element | null {
+  const accounts = useAccounts()
+  const [busy, setBusy] = useState(false)
+  const notice = moveNotice(session, accounts)
+  if (!notice) return null
+  const run = (fn: () => Promise<unknown>): void => {
+    setBusy(true)
+    void fn().catch((e) => useToast.getState().show(cleanIpcError(e))).finally(() => setBusy(false))
+  }
+  return (
+    <div className="banner warn" role="status" data-testid={notice.kind === 'waiting' ? 'move-waiting' : 'move-pending'}>
+      <span>{notice.text}</span>
+      {notice.kind === 'waiting'
+        ? <button className="btn" data-testid="move-back" disabled={busy} onClick={() => run(() => window.pitwall.moveBack(session.id))}>Move back</button>
+        : <button className="btn" data-testid="move-cancel" disabled={busy} onClick={() => run(() => window.pitwall.cancelMove(session.id))}>Cancel</button>}
     </div>
   )
 }
@@ -84,6 +116,7 @@ export default function SessionHeader({ session, subProject, multi = false, onCl
   const name = subProject?.name ?? ''
   const branch = session.liveBranch ?? session.branch
   const openDialog = useUi((u) => u.openDialog)
+  const targets = moveTargets(useAccounts(), session)
   return (
     <div className="session-header">
       <div className="session-header-row">
@@ -96,6 +129,12 @@ export default function SessionHeader({ session, subProject, multi = false, onCl
         </span>
         {session.pr && <PrBadge pr={session.pr} />}
         <button className="btn small header-open" data-testid="open-in-cursor" onClick={() => void openInCursor(session.id)}>Open in Cursor</button>
+        {targets.length > 0 && (
+          <Menu testId="move-menu" label="Move to another Claude account" items={targets.map((a) => ({
+            label: `Move to ${a.label}`, testId: `move-to-${a.id}`,
+            onClick: () => { void window.pitwall.moveSession(session.id, a.id!).catch((e) => useToast.getState().show(cleanIpcError(e))) }
+          }))} />
+        )}
         <span className="header-status" data-testid="session-status">
           <StatusIcon status={session.status} exitCode={session.exitCode} />
           <span className="header-status-label">{STATUS_LABEL[session.status]}</span>
@@ -120,6 +159,7 @@ export default function SessionHeader({ session, subProject, multi = false, onCl
           text={`${session.pr.openThreads} unresolved review comment${session.pr.openThreads === 1 ? '' : 's'} on PR #${session.pr.number}`} />
       )}
       {session.limitHit && <LimitBanner session={session} />}
+      <MoveBanner session={session} />
       {session.startWarning && <div className="banner warn" role="status" data-testid="start-warning">{session.startWarning}</div>}
       {session.launchWarnings?.map((w) => <div key={w} className="banner warn" role="status" data-testid="launch-warning">{w}</div>)}
       {session.lastError && <div className="banner error" role="alert" data-testid="last-error">{session.lastError}</div>}

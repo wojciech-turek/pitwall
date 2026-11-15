@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import {
-  __accountsStore, __pushAccounts, panelMode, panelRows, staleNote, switchAccount, switchPrompt
+  __accountsStore, __pushAccounts, bestOther, moveNotice, moveTargets, panelMode, panelRows, staleNote, switchAccount, switchPrompt
 } from '../../src/renderer/src/state/accounts'
 import type { AccountView } from '../../src/shared/types'
 
@@ -111,5 +111,44 @@ describe('Switch', () => {
     await switchAccount(api, { id: 'a1', label: 'b@x.com' }, (d) => dialogs.push(d))
     expect(calls).toEqual([['count', 'a1']])
     expect(dialogs).toEqual([{ type: 'switch-account', accountId: 'a1', label: 'b@x.com', now: 3, later: 1 }])
+  })
+})
+
+describe("a session's own account controls", () => {
+  const a2 = other({ id: 'a2', account: '/d/a2', label: 'c@x.com' })
+  const pinnedRow = acct({ id: undefined, account: '/p/pinned', label: 'p@x.com', active: false })
+
+  test('Move to: every other account that can be moved to; none for a pinned session or with one account', () => {
+    const list = [acct(), other(), a2, pinnedRow]
+    expect(moveTargets(list, { accountId: 'default' }).map((a) => a.id)).toEqual(['a1', 'a2'])
+    expect(moveTargets(list, { accountId: 'a1' }).map((a) => a.id)).toEqual(['default', 'a2'])
+    expect(moveTargets(list, { accountPinned: true })).toEqual([])
+    expect(moveTargets([acct()], { accountId: 'default' })).toEqual([])
+  })
+
+  test('a pending move and a waiting one say where to', () => {
+    const list = [acct(), other()]
+    expect(moveNotice({ moveTo: 'a1' }, list)).toEqual({ kind: 'pending', text: 'Moves to b@x.com when it finishes.' })
+    expect(moveNotice({ moveWaiting: true, accountId: 'a1' }, list)).toEqual({ kind: 'waiting', text: 'Waiting on b@x.com: check the terminal.' })
+    expect(moveNotice({ moveTo: 'gone' }, list)).toEqual({ kind: 'pending', text: 'Moves to another account when it finishes.' })
+    expect(moveNotice({ accountId: 'a1' }, list)).toBeNull()
+  })
+
+  test('the limit banner offers the other account with the most room in its 5-hour window', () => {
+    const list = [acct({ usage: usage(96) }), other({ usage: usage(40) }), { ...a2, usage: usage(8) }, { ...pinnedRow, usage: usage(1) }]
+    expect(bestOther(list, 'default', now)?.id).toBe('a2')
+    expect(bestOther(list, 'a2', now)?.id).toBe('a1')
+  })
+
+  test('a window that has reset, or an account that never reported, counts as empty; ties go by label', () => {
+    const reset = { fiveHour: { usedPercentage: 99, resetsAt: now - MIN }, updatedAt: now - 300 * MIN }
+    expect(bestOther([acct(), other({ usage: usage(8) }), { ...a2, usage: reset }], 'default', now)?.id).toBe('a2')
+    expect(bestOther([acct(), other({ usage: usage(8) }), a2], 'default', now)?.id).toBe('a2')
+    expect(bestOther([acct(), other(), a2], 'default', now)?.id).toBe('a1') // b@x.com before c@x.com
+  })
+
+  test('no other account: nothing to offer', () => {
+    expect(bestOther([acct()], 'default', now)).toBeUndefined()
+    expect(bestOther([acct(), pinnedRow], 'default', now)).toBeUndefined()
   })
 })

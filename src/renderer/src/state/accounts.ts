@@ -114,3 +114,32 @@ export async function switchAccount(
   }
   openDialog({ type: 'switch-account', accountId: to.id, label: to.label, now: n.now, later: n.later })
 }
+
+// ---- a session's own account controls ----------------------------------------------------
+
+type SessionAccount = Pick<SessionView, 'accountId' | 'accountPinned' | 'moveTo' | 'moveWaiting'>
+
+/** The accounts a session can be moved to: every other one with an id. None when its project sets its own. */
+export function moveTargets(accounts: AccountView[], session: SessionAccount): AccountView[] {
+  if (session.accountPinned || session.accountId === undefined) return []
+  return accounts.filter((a) => a.id !== undefined && a.id !== session.accountId)
+}
+
+/** What a session's header says about a move: waiting to happen, or made and not yet started on the new account. */
+export function moveNotice(session: SessionAccount, accounts: AccountView[]): { kind: 'pending' | 'waiting'; text: string } | null {
+  const label = (id: string | undefined): string => accounts.find((a) => a.id !== undefined && a.id === id)?.label ?? 'another account'
+  if (session.moveWaiting) return { kind: 'waiting', text: `Waiting on ${label(session.accountId)}: check the terminal.` }
+  if (session.moveTo !== undefined) return { kind: 'pending', text: `Moves to ${label(session.moveTo)} when it finishes.` }
+  return null
+}
+
+/** For the limit banner: among the other accounts, the one with the most room in its 5-hour window (ties by label). */
+export function bestOther(accounts: AccountView[], currentId: string | undefined, now: number): AccountView | undefined {
+  const used = (a: AccountView): number => {
+    const w = a.usage?.fiveHour
+    return w && w.resetsAt > now ? w.usedPercentage : 0 // reset since, or never reported: empty
+  }
+  return accounts
+    .filter((a) => a.id !== undefined && a.id !== currentId)
+    .sort((a, b) => used(a) - used(b) || a.label.localeCompare(b.label))[0]
+}

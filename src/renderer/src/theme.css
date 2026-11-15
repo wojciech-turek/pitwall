@@ -303,7 +303,7 @@ body.pane-resizing-column, body.pane-resizing-column * { cursor: row-resize !imp
 .account-add { grid-column: 1 / -1; justify-self: start; margin-top: 2px; padding: 0; border: 0; background: none; font: inherit; color: var(--text-faint); cursor: pointer; }
 .account-add:hover, .account-add:focus-visible { color: var(--text); }
 .usage-meter .menu-pop { top: auto; bottom: 24px; }
-.btn.small { flex: none; height: 20px; padding: 0 8px; font-size: 10.5px; }
+.usage-meter .btn.small { flex: none; align-self: center; height: 20px; padding: 0 8px; font-size: 10.5px; }
 .usage-row { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; align-items: center; }
 .usage-label { color: var(--text-faint); }
 .usage-bar { height: 4px; min-width: 40px; border-radius: 2px; background: var(--usage-track); overflow: hidden; }
