@@ -4,6 +4,11 @@ All notable changes to Pitwall are listed here, newest first. Pitwall shows thes
 
 ## [Unreleased]
 
+### Added
+
+- **Review an agent's changes and send the review in one go.** Select lines in a diff, add a comment, and "Send review to agent" pastes every comment into Claude's prompt.
+- **Failing checks and open review comments on a session's PR** show above its terminal, and "Send to agent" hands them over.
+
 ### Fixed
 
 - **Typing stays quick with many sessions open.** A terminal you haven't looked at for a minute stops receiving output in the background, and catches up instantly when you open it again.
