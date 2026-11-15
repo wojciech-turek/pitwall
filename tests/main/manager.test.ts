@@ -398,7 +398,8 @@ describe('SessionManager', () => {
     expect(m2.snapshot().sessions).toHaveLength(1)
   })
 
-  test('ensureTerminalTarget creates the server session only for a folder with a dev command', async () => {
+  // Windows: the host launcher has no Server tab yet (it refuses; the message is checked in the launcher tests).
+  test.skipIf(WINDOWS)('ensureTerminalTarget creates the server session only for a folder with a dev command', async () => {
     await addSession('a')
     const m = await ready()
     await expect(m.ensureTerminalTarget('a', 'server')).rejects.toThrow('No dev server command is set for this folder.')

@@ -60,7 +60,7 @@ test('tmux uninstalled while tmux sessions run: still tmux, with no path (it fai
 })
 
 test('the launcher stays the script on macOS when the host is only the fallback', () => {
-  expect(launcherChoice({})).toBe('script')
+  expect(launcherChoice({}, 'darwin')).toBe('script')
   expect(launcherChoice({ PITWALL_LAUNCHER: 'host' }, 'darwin')).toBe('script')
   expect(launcherChoice({ PITWALL_SESSION_BACKEND: 'host', PITWALL_LAUNCHER: 'host' }, 'darwin')).toBe('host')
   expect(launcherChoice({}, 'win32')).toBe('host')

@@ -26,9 +26,12 @@ test('a program found by path: exit code, output, input and timeout (every platf
 })
 
 test('findExecutable returns the first match on the path, or null', () => {
-  expect(findExecutable('tmux', '/a:/b', (p) => p === '/b/tmux')).toBe('/b/tmux')
-  expect(findExecutable('tmux', '/a:/b', (p) => p.endsWith('/tmux'))).toBe('/a/tmux')
-  expect(findExecutable('tmux', '/a:/b', () => false)).toBeNull()
+  const a = join('/a', 'tmux')
+  const b = join('/b', 'tmux')
+  const path = ['/a', '/b'].join(delimiter)
+  expect(findExecutable('tmux', path, (p) => p === b)).toBe(b)
+  expect(findExecutable('tmux', path, (p) => p.endsWith('tmux'))).toBe(a)
+  expect(findExecutable('tmux', path, () => false)).toBeNull()
   expect(findExecutable('tmux', undefined, () => true)).toBeNull()
   expect(findExecutable('tmux', '', () => true)).toBeNull()
 })

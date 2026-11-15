@@ -126,10 +126,13 @@ describe('startSession', () => {
     const d = sessionDir(t.paths, s.id)
     expect(await readFile(join(d, 'initial-prompt.txt'), 'utf8')).toBe('Add a README line')
     if (!WINDOWS) expect((await stat(join(d, 'initial-prompt.txt'))).mode & 0o777).toBe(0o600) // (no POSIX modes on Windows)
-    const note = await readFile(join(d, 'system-note.txt'), 'utf8')
-    expect(note).toContain('You are running inside Pitwall')
-    expect(note).toContain('`pitwall new "<title>" --prompt "<task>"`')
-    expect(note).toBe(AGENT_NOTE + '\n')
+    if (WINDOWS) expect(await has(join(d, 'system-note.txt'))).toBe(false) // no agent note on Windows
+    else {
+      const note = await readFile(join(d, 'system-note.txt'), 'utf8')
+      expect(note).toContain('You are running inside Pitwall')
+      expect(note).toContain('`pitwall new "<title>" --prompt "<task>"`')
+      expect(note).toBe(AGENT_NOTE + '\n')
+    }
     expect(AGENT_NOTE.endsWith(' Run `pitwall --help` for details. `pitwall wait` blocks until the session finishes; give it a `--timeout` shorter than your command timeout and run it again if it times out (exit 124).')).toBe(true)
     expect(await has(join(d, 'continue-note.txt'))).toBe(false)
   })
@@ -146,7 +149,7 @@ describe('startSession', () => {
     await start(input(sp))
     const s = store.state.sessions[0]
     const f = join(sessionDir(t.paths, s.id), 'system-note.txt')
-    expect(await has(f)).toBe(true)
+    expect(await has(f)).toBe(!WINDOWS) // (Windows never writes the agent note)
     await store.update((d) => { d.settings.agentCli = false })
     await writeSessionFiles(s, deps)
     expect(await has(f)).toBe(false)
@@ -158,8 +161,11 @@ describe('startSession', () => {
     const d = sessionDir(t.paths, store.state.sessions[0].id)
     const cont = await readFile(join(d, 'continue-note.txt'), 'utf8')
     const note = await readFile(join(d, 'system-note.txt'), 'utf8')
-    expect(note.startsWith(cont + '\n')).toBe(true)
-    expect(note).toContain('You are running inside Pitwall')
+    if (WINDOWS) expect(note).toBe(cont.trimEnd() + '\n') // the continue note alone
+    else {
+      expect(note.startsWith(cont + '\n')).toBe(true)
+      expect(note).toContain('You are running inside Pitwall')
+    }
     await store.update((x) => { x.settings.agentCli = false })
     await writeSessionFiles(store.state.sessions[0], deps)
     expect(await readFile(join(d, 'system-note.txt'), 'utf8')).toBe(cont)

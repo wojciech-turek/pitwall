@@ -101,7 +101,7 @@ describe('ServerWatcher', () => {
 
   test('looks every 5 seconds by default', async () => {
     vi.useFakeTimers()
-    const m = make()
+    const m = make({ devCommand: 'npm run dev', platform: 'darwin' }) // (the watcher never starts on win32)
     m.w.start()
     await vi.advanceTimersByTimeAsync(0)
     expect(m.listed()).toBe(1)

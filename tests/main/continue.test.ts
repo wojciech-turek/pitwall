@@ -15,6 +15,7 @@ import { Store } from '../../src/main/store'
 import { claudeTmuxName } from '../../src/main/tmux'
 import type { Project, Session, StartProgress, StartResult, SubProject } from '../../src/shared/types'
 import { makeTestEnv } from '../helpers/env'
+import { WINDOWS } from '../helpers/processes'
 import { makeRepo } from '../helpers/repo'
 import { waitFor } from '../helpers/wait'
 
@@ -374,7 +375,9 @@ describe('continuing a conversation run outside Pitwall', () => {
     const own = (await launches()).filter((l) => l.includes(normal.claudeSessionId))
     expect(own).toHaveLength(1)
     expect(own[0]).not.toContain('--system-prompt-snapshot')
-    expect(own[0]).toContain(`--append-system-prompt-file ${join(sessionDir(t.paths, normal.id), 'system-note.txt')}`) // the agent note only
+    // The agent note only; Windows has none, so no flag at all.
+    if (WINDOWS) expect(own[0]).not.toContain('--append-system-prompt-file')
+    else expect(own[0]).toContain(`--append-system-prompt-file ${join(sessionDir(t.paths, normal.id), 'system-note.txt')}`)
     expect(await has(join(sessionDir(t.paths, normal.id), 'continue-note.txt'))).toBe(false)
   })
 
