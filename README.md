@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/hero.png" alt="Pitwall: sessions grouped by project in the sidebar, two agents side by side, changes and Claude usage on the right">
+  <img src="docs/screenshots/hero.png" alt="Pitwall: sessions grouped by project in the sidebar with their status and subagents, two agents one above the other, changes and the usage of two Claude accounts on the right">
 </p>
 
 Like a pit wall in a race, you watch every car at once and only radio in when one needs you.
@@ -33,13 +33,18 @@ Like a pit wall in a race, you watch every car at once and only radio in when on
 → Sessions run inside tmux on Pitwall's own private socket, or in Pitwall's own background process if tmux isn't installed. If you quit the app, or it crashes, your agents keep working, and they reattach when you reopen it.
 
 **Constant context switching.**
-→ Drag sessions from the sidebar into a **split view** (up to 4 panes), browse and edit files, review diffs, and send a file to the agent with one click. Your Claude **5-hour and weekly usage** sits in the corner.
+→ Drag sessions from the sidebar into a **split view** (up to 4 panes), browse and edit files, review diffs and send your comments back to the agent, and run each session's dev server in its own tab.
+
+**You hit your Claude limit in the middle of the work.**
+→ Your **5-hour and weekly usage** sits in the corner, for every Claude account you use. **Switch** moves your running sessions to another subscription (personal beside work, say) and they carry on the same conversations. Or let a stopped session **continue by itself** when the limit resets.
 
 ## Screenshots
 
-| Drag a session to split the view | Review an agent's changes |
+| Drag a session to split the view | Review an agent's changes and send your comments back |
 | --- | --- |
-| ![Dragging a session onto the bottom edge of a pane shows where it will land](docs/screenshots/drag-to-split.png) | ![Side-by-side diff of the agent's change](docs/screenshots/diff.png) |
+| ![Dragging a session onto the right edge of a pane shows where it will land](docs/screenshots/drag-to-split.png) | ![Side-by-side diff of the agent's change, with a review comment ready to send to the agent](docs/screenshots/diff.png) |
+| **Move your sessions to another Claude account** | **A dev server per session, on its own port** |
+| ![Switching Claude account asks whether to move the four running sessions too](docs/screenshots/accounts.png) | ![The Server tab of a session running its dev command on its own port](docs/screenshots/server.png) |
 | **Each session gets its own branch, from main** | **One identity per project** |
 | ![New session dialog with branch name and base branch](docs/screenshots/new-session.png) | ![Project dialog with SSH key, GitHub account and commit identity](docs/screenshots/project.png) |
 
@@ -55,6 +60,8 @@ Like a pit wall in a race, you watch every car at once and only radio in when on
 - **Drop files onto a terminal** from Finder or Cursor to paste their paths, as in Terminal.app.
 - **PR badges** (when `gh` is set up for the project): open, merged or closed, with checks status. Failing checks and unresolved review comments show above the terminal, and **Send to agent** pastes them into Claude's prompt. When a PR is merged, Pitwall offers to archive the session.
 - **Claude usage meter and accounts**: your 5-hour and weekly subscription limits and when they reset. **Add account…** below the meters signs in to another Claude subscription (work beside personal) without signing the first one out; each account gets its own block, named by its email, the active one first. **Switch** makes another account the one new sessions start on and offers to move the running sessions too: idle ones restart on it and continue the same conversation, busy ones move when they finish. A session's ⋯ moves just that one, and a session stopped at a limit offers to switch to the account with the most room.
+- **Continue when a limit resets.** A session Claude stopped at a limit says so above its terminal and offers **Continue at 3:05 PM**. Click it, and Pitwall types `continue` at that time if the session is still idle.
+- **See what each session costs your Mac.** Hover a session for its CPU and memory. A session using a lot shows it on its row, and the title bar warns when the Mac runs short of memory or disk, with the biggest sessions one click away. Mac only, and only with tmux.
 - **Search and resume past sessions.** Find a session by its title or anything said in its Claude conversation, including archived ones, and bring an archived session back in its folder to continue the same conversation: on its branch if it still exists (or from its pushed copy), otherwise on a new branch from main. The clock button on a folder's row, **Continue a conversation**, lists that folder's archived sessions and the Claude conversations you ran there outside Pitwall (with plain `claude`); picking one of those continues it in a new session on a branch of its own, starting from the branch it was on (this needs Claude Code 2.1.257 or newer). Pitwall only reads the conversation files Claude already keeps.
 - **Setup, dev server and teardown commands per folder.** Setup (for example `pnpm install`) runs once in each new worktree; teardown (for example `docker compose down`) runs when you archive a session, before its folder is deleted. Archiving also stops processes the session left running, so nothing is left behind. A dev command (for example `pnpm dev`) runs in the session's own Server tab, with a button to open it in the browser. Each session gets its own block of 10 ports, starting at `$PITWALL_PORT`, so sessions' dev servers don't collide with each other. List gitignored files such as `.env.local` in a `.worktreeinclude` file and every new worktree gets a copy. A folder's **Clean up worktrees…** removes worktrees agents left behind outside Pitwall, but only merged ones with no changes. **Open in Cursor** opens a session's worktree in Cursor.
 
