@@ -7,6 +7,8 @@ import type { HookEvent, SessionRuntime } from '../../src/shared/types'
 const E = (e: string, x: Partial<HookEvent> = {}): HookEvent => ({ c: 's', t: 100, e, ...x })
 const rt = (x: Partial<SessionRuntime>): SessionRuntime => ({ ...initialRuntime, ...x })
 const r = (s: SessionRuntime, e: string, x: Partial<HookEvent> = {}) => reduceRuntime(s, E(e, x))
+const fold = (evs: [string, Partial<HookEvent>?][], from: SessionRuntime = rt({ activity: 'idle', firstEventSeen: true })) =>
+  evs.reduce((s, [e, x], i) => reduceRuntime(s, E(e, { t: 1000 + i, ...x })), from)
 
 describe('reduceRuntime', () => {
   test('SessionStart', () => {
@@ -97,6 +99,20 @@ describe('reduceRuntime', () => {
     expect(reduceRuntime(o, E('SessionStart', { src: 'startup' })).warnings).toEqual(o.warnings)
     expect(r(initialRuntime, 'pitwall:warning', { kind: 'x' }).warnings).toBeUndefined() // no message: nothing
   })
+  test('a relaunch over a running Claude: the late SessionEnd of the old one is ignored, the next one counts', () => {
+    // Pitwall killed Claude and started it again (an account move): the old one says goodbye after the new one started.
+    const o = fold([['pitwall:launch', { mode: 'resume' }], ['SessionStart', { src: 'resume' }], ['SessionEnd', { reason: 'other' }]], rt({ activity: 'idle' }))
+    expect(o.activity).toBe('idle')
+    expect(r(o, 'SessionEnd', { reason: 'other' }).activity).toBe('exited')
+    // Before the new one started, too.
+    expect(fold([['pitwall:launch', { mode: 'resume' }], ['SessionEnd', { reason: 'other' }]], rt({ activity: 'working' })).activity).toBe('starting')
+    // Claude had already exited when it was started again: there is no old one, so a SessionEnd is the new one's.
+    const fresh = fold([['pitwall:launch', { mode: 'resume' }], ['SessionStart', { src: 'resume' }], ['SessionEnd', { reason: 'other' }]], rt({ activity: 'exited' }))
+    expect(fresh.activity).toBe('exited')
+    // The old one never said goodbye: the launcher's own report still shows the exit.
+    const quiet = fold([['pitwall:launch', { mode: 'resume' }], ['SessionStart', { src: 'resume' }], ['SessionEnd', { reason: 'prompt_input_exit' }], ['pitwall:exited', { code: 0 }]], rt({ activity: 'idle' }))
+    expect(quiet).toMatchObject({ activity: 'exited', exitCode: 0 })
+  })
   test('pitwall:exited', () => {
     expect(r(rt({ activity: 'working' }), 'pitwall:exited', { code: 3 })).toMatchObject({ activity: 'exited', exitCode: 3 })
   })
@@ -166,8 +182,6 @@ describe('reduceRuntime', () => {
 })
 
 describe('observed Claude Code 2.1.314 sequences', () => {
-  const fold = (evs: [string, Partial<HookEvent>?][], from: SessionRuntime = rt({ activity: 'idle', firstEventSeen: true })) =>
-    evs.reduce((s, [e, x], i) => reduceRuntime(s, E(e, { t: 1000 + i, ...x })), from)
   const asking: [string, Partial<HookEvent>?][] = [
     ['UserPromptSubmit'], ['PreToolUse', { tool: 'Bash' }], ['PermissionRequest', { tool: 'Bash' }], ['Notification', { nt: 'permission_prompt' }]
   ]

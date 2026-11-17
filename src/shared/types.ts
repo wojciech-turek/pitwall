@@ -102,6 +102,8 @@ export interface SessionRuntime {
   resumeActivity?: Activity
   /** Claude stopped its last turn at a usage limit. */
   limitHit?: boolean
+  /** Claude was started over one never seen to exit: the next SessionEnd is the old one's and is ignored. */
+  staleEnd?: boolean
   /** The newest subagent runs, oldest first. */
   subagents?: SubagentRun[]
   /** Agent-tool descriptions waiting for their SubagentStart, oldest first, at most 20. */

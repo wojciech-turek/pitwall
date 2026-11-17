@@ -2,6 +2,12 @@
 
 All notable changes to Pitwall are listed here, newest first. Pitwall shows these notes when an update is available, before you download it.
 
+## [0.5.1] - 2026-11-17
+
+### Fixed
+
+- After switching accounts with running sessions, many of them showed a red warning triangle ("Exited") although they had restarted and were running fine. The Claude that Pitwall stops to move a session reports its end a few seconds late, after the new one has started, and Pitwall took that for the new one exiting. It is now ignored.
+
 ## [0.5.0] - 2026-11-16
 
 ### Added

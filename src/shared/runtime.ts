@@ -94,6 +94,11 @@ function apply(rt: SessionRuntime, ev: HookEvent): SessionRuntime {
   return applySubagent(rt, ev) ?? applyMain(rt, ev)
 }
 
+function withoutStaleEnd(rt: SessionRuntime): SessionRuntime {
+  const { staleEnd: _s, ...rest } = rt
+  return rest
+}
+
 function applyMain(rt: SessionRuntime, ev: HookEvent): SessionRuntime {
   const busy = rt.activity === 'working' || rt.activity === 'needs_input'
   switch (ev.e) {
@@ -146,11 +151,16 @@ function applyMain(rt: SessionRuntime, ev: HookEvent): SessionRuntime {
       return next
     }
     case 'SessionEnd':
-      return ev.reason === 'clear' || ev.reason === 'resume' ? rt : { ...clearPending(clearNeeds(rt)), activity: 'exited' }
+      if (ev.reason === 'clear' || ev.reason === 'resume') return rt
+      // The goodbye of the Claude that Pitwall killed to start this one (it can take seconds, and a resumed
+      // conversation keeps its id): not this one's.
+      if (rt.staleEnd) return withoutStaleEnd(rt)
+      return { ...clearPending(clearNeeds(rt)), activity: 'exited' }
     case 'pitwall:launch': {
       // A new run of Claude: its launcher reports its warnings (and a first prompt) again after this.
-      const { exitCode: _x, warnings: _w, ...rest } = clearPending(clearNeeds(rt))
-      return { ...rest, activity: 'starting' }
+      const { exitCode: _x, warnings: _w, ...rest } = clearPending(clearNeeds(withoutStaleEnd(rt)))
+      // Started over a Claude never seen to exit: that one's SessionEnd is still to come.
+      return rt.activity === 'exited' ? { ...rest, activity: 'starting' } : { ...rest, activity: 'starting', staleEnd: true }
     }
     case 'pitwall:prompt-pending':
       return { ...rt, promptPending: true }
@@ -163,7 +173,7 @@ function applyMain(rt: SessionRuntime, ev: HookEvent): SessionRuntime {
     case 'pitwall:warning':
       return ev.msg ? { ...rt, warnings: { ...rt.warnings, [ev.kind || 'other']: ev.msg } } : rt
     case 'pitwall:exited': {
-      const next: SessionRuntime = { ...clearPending(clearLimit(clearNeeds(clearRuns(rt)))), activity: 'exited' }
+      const next: SessionRuntime = { ...clearPending(clearLimit(clearNeeds(clearRuns(withoutStaleEnd(rt))))), activity: 'exited' }
       if (ev.code != null) next.exitCode = ev.code
       return next
     }
