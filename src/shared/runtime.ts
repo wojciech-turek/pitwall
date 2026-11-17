@@ -29,6 +29,10 @@ const MAX_RUNS = 30
 const MAX_DESCS = 20
 const TOOL_EVENTS = new Set(['PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Notification', 'PermissionRequest'])
 
+function isLimit(ev: HookEvent): boolean {
+  return ev.err === 'rate_limit' || LIMIT_TEXT.test(ev.err ?? '') || LIMIT_TEXT.test(ev.msg ?? '')
+}
+
 /** A permission prompt or question raised from inside a subagent still needs the user. */
 function needsUser(ev: HookEvent): boolean {
   return ev.e === 'PermissionRequest' ||
@@ -59,6 +63,12 @@ function applySubagent(rt: SessionRuntime, ev: HookEvent): SessionRuntime | null
   if (ev.e === 'SubagentStop') {
     if (!id) return rt
     return withRun(rt, id, (x) => ({ ...x, state: 'done', endedAt: ev.t, lastMessage: ev.msg ?? undefined, needsYou: false }))
+  }
+  if (ev.e === 'StopFailure' && id) {
+    // The subagent's own failure (no SubagentStop follows): its run is over. The session carries on, but a usage
+    // limit is its account's too.
+    const out = withRun(rt, id, (x) => ({ ...x, state: 'done', endedAt: ev.t, needsYou: false }))
+    return isLimit(ev) ? { ...out, limitHit: true } : out
   }
   if (id && TOOL_EVENTS.has(ev.e)) {
     const need = needsUser(ev)
@@ -147,7 +157,7 @@ function applyMain(rt: SessionRuntime, ev: HookEvent): SessionRuntime {
     case 'StopFailure': {
       const { lastMessage: _m, ...rest } = clearNeeds(rt)
       const next: SessionRuntime = { ...rest, activity: 'idle', lastFinishedAt: ev.t, lastError: ev.err ?? 'Claude stopped with an error' }
-      if (ev.err === 'rate_limit' || LIMIT_TEXT.test(ev.err ?? '') || LIMIT_TEXT.test(ev.msg ?? '')) next.limitHit = true
+      if (isLimit(ev)) next.limitHit = true
       return next
     }
     case 'SessionEnd':

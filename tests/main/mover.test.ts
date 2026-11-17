@@ -140,6 +140,13 @@ describe('moving a session to another account', () => {
     expect(restarts).toEqual(['s1'])
   })
 
+  test('a session stopped at a limit moves at once, also with a subagent still shown at work (it is stopped too)', async () => {
+    await add(mkSession('s1'))
+    busySubagent.add('s1'); limitHit.add('s1')
+    await mover.request('s1', 'a1')
+    expect(restarts).toEqual(['s1'])
+  })
+
   test('an idle session with a subagent still at work waits for it', async () => {
     await add(mkSession('s1'))
     busySubagent.add('s1')

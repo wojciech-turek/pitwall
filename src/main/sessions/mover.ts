@@ -404,9 +404,13 @@ export class AccountMover {
   }
 }
 
-/** Idle at its prompt (or its Claude has exited), with no subagent at work: restarting it interrupts nothing. */
+/**
+ * Idle at its prompt (or its Claude has exited), with no subagent at work: restarting it interrupts nothing. Stopped
+ * at a usage limit, its subagents don't count: they run on the same account, so they are stopped too.
+ */
 function ready(v: SessionView | undefined): boolean {
   if (!v) return false
   if (v.status !== 'read' && v.status !== 'unread' && v.status !== 'exited') return false
+  if (v.limitHit) return true
   return !v.subagents?.some((x) => x.state === 'running' || x.needsYou)
 }

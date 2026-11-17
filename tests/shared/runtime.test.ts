@@ -391,6 +391,16 @@ describe('subagent runs', () => {
     expect(o.subagents![0].needsYou).toBe(true)
     expect(r(started(), 'Notification', { aid: 'a', nt: 'idle_prompt' }).activity).toBe('idle')
   })
+  test('a subagent that fails (StopFailure with its id) is done, and the session itself is not taken as stopped', () => {
+    const working = { ...started(), activity: 'working' as const }
+    const o = r(working, 'StopFailure', { aid: 'a', err: 'server_error', msg: 'oops', t: 300 })
+    expect(o.subagents![0]).toMatchObject({ state: 'done', endedAt: 300 })
+    expect(o).toMatchObject({ activity: 'working' })
+    expect(o.lastError).toBeUndefined()
+    expect(o.limitHit).toBeUndefined()
+    // At a usage limit: the session's account is at it too.
+    expect(r(working, 'StopFailure', { aid: 'a', err: 'rate_limit', t: 300 }).limitHit).toBe(true)
+  })
   test('SubagentStop marks the run done; unknown ids are ignored', () => {
     const o = r(started(), 'SubagentStop', { aid: 'a', msg: 'found it', t: 300 })
     expect(o.subagents![0]).toMatchObject({ state: 'done', endedAt: 300, lastMessage: 'found it', needsYou: false })

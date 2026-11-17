@@ -2,6 +2,13 @@
 
 All notable changes to Pitwall are listed here, newest first. Pitwall shows these notes when an update is available, before you download it.
 
+## [0.5.2] - 2026-11-17
+
+### Fixed
+
+- A session whose helper (a subagent or teammate) had failed, for example at a usage limit, kept showing that helper as running, so a move to another account waited for it forever. A helper that fails now counts as finished.
+- A session stopped at a usage limit moves to another account at once, without waiting for its helpers: they run on the same account and are stopped too.
+
 ## [0.5.1] - 2026-11-17
 
 ### Fixed
