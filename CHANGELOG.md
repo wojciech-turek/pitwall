@@ -2,6 +2,12 @@
 
 All notable changes to Pitwall are listed here, newest first. Pitwall shows these notes when an update is available, before you download it.
 
+## [0.5.3] - 2026-11-20
+
+### Fixed
+
+- A session kept showing helpers (subagents) as running, with the timer counting, after Claude had stopped them itself, for example when it stopped a workflow. Claude doesn't report that stop, so Pitwall now reads it from the helper's transcript and shows the helper as finished within a few seconds.
+
 ## [0.5.2] - 2026-11-17
 
 ### Fixed

@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { exec } from '../../src/main/exec'
 import { GitClient } from '../../src/main/git'
+import { claudeProjectDirName } from '../../src/main/conversations'
 import { appendEvent } from '../../src/main/hooks/events'
 import { eventsFile, sessionDir } from '../../src/main/paths'
 import { SessionManager } from '../../src/main/sessions/manager'
@@ -771,5 +772,34 @@ describe('muted projects and mark as unread', () => {
     await waitFor(async () => !m.snapshot().sessions.find((x) => x.id === 'helper')!.subagents!.some((r) => r.state === 'running'), 8000, 'subagent done')
     await m.sendText('helper', 'go on')
     expect(calls).toEqual([`paste ${claudeTmuxName('helper')} go on`, `keys ${claudeTmuxName('helper')} Enter`])
+  })
+  test('a subagent Claude stopped without a SubagentStop (its transcript ends interrupted) stops showing as running', async () => {
+    await addSession('a', {}, [
+      { e: 'SessionStart', src: 'startup', sid: 'claude-a' }, { e: 'UserPromptSubmit' },
+      { e: 'SubagentStart', aid: 'killed', at: 'workflow-subagent', t: 1000 }, { e: 'SubagentStart', aid: 'busy', at: 'workflow-subagent', t: 1000 },
+      { e: 'SubagentStart', aid: 'resumed', at: 'workflow-subagent', t: 9000 }
+    ])
+    const m = mkManager()
+    m.sweepMs = 100
+    await m.init()
+    const runs = () => Object.fromEntries((m.snapshot().sessions.find((x) => x.id === 'a')!.subagents ?? []).map((r) => [r.id, r]))
+    expect(runs().killed.state).toBe('running')
+    const dir = join(m.snapshot().sessions[0].account!, 'projects', claudeProjectDirName(join(t.tmp, 'folder')), 'claude-a', 'subagents', 'workflows', 'wf_1')
+    await mkdir(dir, { recursive: true })
+    const says = (text: string, at: number) => JSON.stringify({
+      isSidechain: true, type: 'user', message: { role: 'user', content: [{ type: 'text', text }] }, timestamp: new Date(at).toISOString()
+    }) + '\n'
+    await writeFile(join(dir, 'agent-killed.jsonl'), says('do it', 1000) + says('[Request interrupted by user]', 5000))
+    await writeFile(join(dir, 'agent-busy.jsonl'), says('do it', 1000))
+    // Interrupted earlier, then started again: the old interruption isn't this run's end.
+    await writeFile(join(dir, 'agent-resumed.jsonl'), says('do it', 1000) + says('[Request interrupted by user]', 5000))
+    await waitFor(async () => runs().killed.state === 'done', 8000, 'the stopped subagent is done')
+    expect(runs().killed.endedAt).toBe(5000)
+    expect(runs().busy.state).toBe('running')
+    expect(runs().resumed.state).toBe('running')
+    // Said once, in the session's events, so a restart of Pitwall knows it too.
+    await new Promise((r) => setTimeout(r, 400))
+    const gone = (await readFile(eventsFile(t.paths, 'a'), 'utf8')).split('\n').filter((l) => l.includes('pitwall:subagent-gone'))
+    expect(gone.map((l) => JSON.parse(l).aid)).toEqual(['killed'])
   })
 })

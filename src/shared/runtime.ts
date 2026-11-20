@@ -70,6 +70,11 @@ function applySubagent(rt: SessionRuntime, ev: HookEvent): SessionRuntime | null
     const out = withRun(rt, id, (x) => ({ ...x, state: 'done', endedAt: ev.t, needsYou: false }))
     return isLimit(ev) ? { ...out, limitHit: true } : out
   }
+  if (ev.e === 'pitwall:subagent-gone') {
+    // Claude ended the run without a SubagentStop (it stopped the run's task); Pitwall read that in its transcript.
+    if (!id) return rt
+    return withRun(rt, id, (x) => ({ ...x, state: 'done', endedAt: ev.end ?? ev.t, needsYou: false }))
+  }
   if (id && TOOL_EVENTS.has(ev.e)) {
     const need = needsUser(ev)
     let base = rt

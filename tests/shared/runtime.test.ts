@@ -401,6 +401,14 @@ describe('subagent runs', () => {
     // At a usage limit: the session's account is at it too.
     expect(r(working, 'StopFailure', { aid: 'a', err: 'rate_limit', t: 300 }).limitHit).toBe(true)
   })
+  test('pitwall:subagent-gone (Claude ended the run without a SubagentStop) marks it done at the time it ended', () => {
+    const working = { ...started(), activity: 'working' as const }
+    const o = r(working, 'pitwall:subagent-gone', { aid: 'a', end: 250, t: 900 })
+    expect(o.subagents![0]).toMatchObject({ state: 'done', endedAt: 250, needsYou: false })
+    expect(o.activity).toBe('working')
+    expect(r(working, 'pitwall:subagent-gone', { aid: 'a', t: 900 }).subagents![0].endedAt).toBe(900)
+    expect(r(o, 'pitwall:subagent-gone', { aid: 'zz' }).subagents).toEqual(o.subagents)
+  })
   test('SubagentStop marks the run done; unknown ids are ignored', () => {
     const o = r(started(), 'SubagentStop', { aid: 'a', msg: 'found it', t: 300 })
     expect(o.subagents![0]).toMatchObject({ state: 'done', endedAt: 300, lastMessage: 'found it', needsYou: false })

@@ -18,6 +18,7 @@ import { Conversations } from './continue'
 import { isAnswerInput } from './input'
 import { notificationBody } from './notify-text'
 import { resumeSession } from './resume'
+import { agentTranscript, interruptedAt } from './subagent-watch'
 import {
   assertSessionFolder, launchTmuxFor, prepareNewSession, startSession, takenPorts, usesHostLauncher, writeSessionFiles, type StarterDeps
 } from './starter'
@@ -30,6 +31,10 @@ type Deps = StarterDeps & {
 type Extras = Partial<Pick<SessionView, 'diffStat' | 'liveBranch' | 'server' | 'moveWaiting' | 'moveError'>>
 
 const FIRST_EVENT_TIMEOUT_MS = 20000
+/** How often running subagents are checked for an end Claude didn't report. */
+const SWEEP_MS = 5000
+/** A hook's event is stamped a moment after Claude acts, so one can carry a time just past the interruption that ended its run. */
+const SWEEP_SLACK_MS = 2000
 export const ACCOUNT_GONE_WARNING = "This session's Claude account was removed. It runs on the default account."
 /** The account a session runs on: its folder, its id (null when its project sets its own) and whether the one it names is gone. */
 interface SessionAccount { key: string; id: string | null; missing: boolean }
@@ -42,6 +47,10 @@ interface Tracked {
   tailer: EventTailer
   viewedAt: number
   inputSent: boolean
+  /** Subagent id -> when it last reported (its start, a tool). */
+  runSeen: Map<string, number>
+  /** Subagent id -> its transcript, once found. */
+  runFiles: Map<string, string>
 }
 
 const PERSIST_DEBOUNCE_MS = 250
@@ -68,6 +77,10 @@ export class SessionManager {
   private waiters = new Map<string, Set<() => void>>()
   private persistTimers = new Map<string, NodeJS.Timeout>()
   private publishTimer: NodeJS.Timeout | null = null
+  private sweepTimer: NodeJS.Timeout | null = null
+  private sweeping = false
+  /** How often running subagents are checked for an end Claude didn't report (set before init). */
+  sweepMs = SWEEP_MS
   private unsubStore: (() => void) | null = null
   private viewing: { ids: Set<string>; focused: boolean } = { ids: new Set(), focused: false }
   private disposed = false
@@ -99,6 +112,7 @@ export class SessionManager {
     }
     this.updateBadge()
     this.publish()
+    if (!this.disposed) this.sweepTimer = setInterval(() => { void this.sweepRuns() }, this.sweepMs)
   }
 
   dispose(): void {
@@ -112,6 +126,8 @@ export class SessionManager {
     this.persistTimers.clear()
     if (this.publishTimer) clearTimeout(this.publishTimer)
     this.publishTimer = null
+    if (this.sweepTimer) clearInterval(this.sweepTimer)
+    this.sweepTimer = null
     for (const set of this.waiters.values()) for (const w of [...set]) w()
   }
 
@@ -466,10 +482,11 @@ export class SessionManager {
       const s = this.session(id)
       if (!s || this.disposed) return
       const tailer = new EventTailer(eventsFile(this.deps.paths, id), (e) => this.onLive(id, e))
-      const t: Tracked = { rt: initialRuntime, tailer, viewedAt: s.lastViewedAt, inputSent: false }
+      const t: Tracked = { rt: initialRuntime, tailer, viewedAt: s.lastViewedAt, inputSent: false, runSeen: new Map(), runFiles: new Map() }
       const sids: string[] = [] // every conversation id the log mentions, in order
       for (const e of await tailer.readAll()) {
         t.rt = reduceRuntime(t.rt, e)
+        if (e.aid) t.runSeen.set(e.aid, e.t)
         if (e.sid && e.sid !== sids.at(-1)) sids.push(e.sid)
       }
       if (this.disposed || this.tracking.get(id) !== p) return
@@ -555,6 +572,7 @@ export class SessionManager {
     if (!t || !s || this.disposed) return
     const before = this.statusOf(id)
     t.rt = reduceRuntime(t.rt, e)
+    if (e.aid) t.runSeen.set(e.aid, e.t)
     if (this.viewing.focused && this.viewing.ids.has(id)) this.markViewed(id)
     const after = this.statusOf(id)
     if (s.markedUnread && after !== 'unread') this.clearMarkedUnread(id) // new activity replaces the mark
@@ -569,6 +587,43 @@ export class SessionManager {
     this.updateBadge()
     for (const cb of [...this.eventCbs]) cb(id, e)
     this.publish()
+  }
+
+  /**
+   * Claude sends no SubagentStop for a subagent it stops itself (TaskStop on its workflow), so its row would run for
+   * ever. Its transcript then ends with an interruption: that goes into the session's events as pitwall:subagent-gone.
+   * An interruption older than the run's last report is from before it was started again, so it doesn't count.
+   */
+  private async sweepRuns(): Promise<void> {
+    if (this.sweeping || this.disposed) return
+    this.sweeping = true
+    try {
+      for (const [id, t] of this.tracked) {
+        const running = new Set((t.rt.subagents ?? []).filter((x) => x.state === 'running').map((x) => x.id))
+        for (const m of [t.runSeen, t.runFiles]) for (const k of m.keys()) if (!running.has(k)) m.delete(k)
+        const s = this.session(id)
+        const account = s && this.accountOf(s)
+        const claudeId = t.rt.claudeSessionId ?? s?.claudeSessionId
+        if (!s || !account || !claudeId) continue
+        let found = false
+        for (const aid of running) {
+          const file = t.runFiles.get(aid) ?? await agentTranscript(account.key, s.cwd, claudeId, aid)
+          if (!file) continue
+          t.runFiles.set(aid, file)
+          const end = await interruptedAt(file)
+          if (end === null || end < (t.runSeen.get(aid) ?? 0) - SWEEP_SLACK_MS) continue
+          if (this.disposed || this.tracked.get(id) !== t) break
+          await appendEvent(eventsFile(this.deps.paths, id), { c: id, t: this.now(), e: 'pitwall:subagent-gone', aid, end })
+          found = true
+        }
+        // Read back before the next sweep, so the same end is never written twice.
+        if (found) await t.tailer.sync()
+      }
+    } catch {
+      // best effort: the next sweep tries again
+    } finally {
+      this.sweeping = false
+    }
   }
 
   /** A helper another session started, finished while that session is still live: it has nothing to tell the user yet. */

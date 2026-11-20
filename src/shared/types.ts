@@ -83,6 +83,8 @@ export interface HookEvent {
   kind?: string | null
   /** Subagent id and type: on SubagentStart/Stop, and on tool events fired inside a subagent. */
   aid?: string | null; at?: string | null
+  /** pitwall:subagent-gone: when the subagent's run ended (ms), which is before Pitwall noticed. */
+  end?: number | null
   /** PreToolUse of the Agent tool: the task description, up to 120 characters. */
   desc?: string | null
 }
