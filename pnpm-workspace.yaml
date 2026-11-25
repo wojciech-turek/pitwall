@@ -4,3 +4,5 @@ allowBuilds:
   node-pty: true
   electron-winstaller: false
   core-js: false
+patchedDependencies:
+  node-pty@1.1.0: patches/node-pty@1.1.0.patch

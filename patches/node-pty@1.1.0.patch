@@ -1,0 +1,35 @@
+diff --git a/scripts/prebuild.js b/scripts/prebuild.js
+index 17f1d980e62e017d77058627a7a15c4c29f9470c..431a9c3895dad17e72ae25f796dcdf4d1ea86423 100644
+--- a/scripts/prebuild.js
++++ b/scripts/prebuild.js
+@@ -24,6 +24,12 @@ if (process.env.npm_config_build_from_source === 'true') {
+   process.exit(1);
+ }
+ 
++// Pitwall patch: the macOS prebuilds leak a pty per spawn; src/unix/pty.cc is patched, so build it.
++if (process.platform === 'darwin') {
++  console.log('\x1b[33m> Rebuilding on macOS: the prebuilt binary lacks the pty leak fix\x1b[0m');
++  process.exit(1);
++}
++
+ // Check whether the correct prebuilt files exist
+ console.log('\x1b[32m> Checking prebuilds...\x1b[0m');
+ if (!fs.existsSync(PREBUILD_DIR)) {
+diff --git a/src/unix/pty.cc b/src/unix/pty.cc
+index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..f1e00a461288febe204094975f4318bd4d0fd00e 100644
+--- a/src/unix/pty.cc
++++ b/src/unix/pty.cc
+@@ -777,9 +777,11 @@ pty_posix_spawn(char** argv, char** env,
+ done:
+   posix_spawn_file_actions_destroy(&acts);
+   posix_spawnattr_destroy(&attrs);
++  close(slave);
+ 
+-  for (; count > 0; count--) {
+-    close(low_fds[count]);
++  // Pitwall patch: every pty opened above is closed, the last one too (it was left open for good, one per spawn).
++  for (size_t i = 0; i <= count && i < 3; i++) {
++    close(low_fds[i]);
+   }
+ }
+ #endif

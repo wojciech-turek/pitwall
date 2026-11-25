@@ -2,6 +2,12 @@
 
 All notable changes to Pitwall are listed here, newest first. Pitwall shows these notes when an update is available, before you download it.
 
+## [0.5.5] - 2026-11-25
+
+### Fixed
+
+- After Pitwall had been open for a long time, terminals could stop starting ("posix_spawnp failed."), in Pitwall and in every other app on the Mac, until Pitwall was quit. Each terminal Pitwall opened, including one shown again after being hidden for a while, kept one of the Mac's 511 terminal slots for good. They are now given back when the terminal ends.
+
 ## [0.5.4] - 2026-11-25
 
 ### Fixed
