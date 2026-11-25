@@ -110,6 +110,10 @@ describe('Tmux', () => {
       a.write('\x1b[<0;1;1M')
       a.write('\x1b[<32;6;1M')
       a.write('\x1b[<32;12;1M')
+      // As a hand does it: the release comes once the drag is on screen. (tmux drops a clipboard write while a
+      // redraw is pending, so a release in the same burst as the drag that started the selection copies nothing.)
+      await waitFor(async () => (await pane('#{selection_present}')) === '1', 8000, 'the selection')
+      await new Promise((r) => setTimeout(r, 200))
       a.write('\x1b[<0;12;1m')
       const copied = `\x1b]52;;${Buffer.from('hello world').toString('base64')}\x07`
       await waitFor(async () => out.includes(copied), 8000, 'the clipboard write')
