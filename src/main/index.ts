@@ -199,7 +199,9 @@ async function createBackend(env: Record<string, string>, store: Store): Promise
   })
   if (choice.record) await recordBackend(file, choice.kind, recorded)
   if (choice.kind === 'tmux') {
-    return new TmuxBackend(new Tmux({ socket: paths.tmuxSocket, confPath: paths.tmuxConf, env, exec, tmuxBin: tmuxPath ?? undefined }), env)
+    const tmux = new Tmux({ socket: paths.tmuxSocket, confPath: paths.tmuxConf, env, exec, tmuxBin: tmuxPath ?? undefined })
+    await tmux.reloadConfig().catch(() => {}) // a server left running by an older version takes this version's config
+    return new TmuxBackend(tmux, env)
   }
   return new HostBackend({
     dataDir: paths.dataDir,

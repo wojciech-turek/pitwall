@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { exec } from '../../src/main/exec'
 import { claudeTmuxName, serverTmuxName, shellTmuxName, tmuxNameFor } from '../../src/main/tmux'
-import { access, readFile } from 'node:fs/promises'
+import { access, appendFile, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { makeTestEnv, tmuxSocketPath } from '../helpers/env'
 import { waitFor } from '../helpers/wait'
@@ -95,5 +95,40 @@ describe('Tmux', () => {
     await waitFor(async () => (await t.tmux.capturePane('pw-k')).includes('typed'), 8000, 'typed text')
     const a = t.tmux.attachCommand('pw-k')
     expect(a.args).toEqual(['-u', '-L', t.paths.tmuxSocket, '-f', t.paths.tmuxConf, 'attach-session', '-t', '=pw-k'])
+  })
+
+  // The Shell tab: tmux's own binding copied on release and dropped the highlight at once, so nothing looked selected.
+  test('a mouse selection is copied on release and stays highlighted until a key, which is still typed', async () => {
+    await t.tmux.newSession({ name: 'pw-m', cwd: t.tmp, argv: ['sh', '-c', 'echo hello world; exec cat'] })
+    let out = ''
+    const a = await t.backend.attach('pw-m', 80, 24, { onData: (d) => { out += d }, onExit: () => {} })
+    const pane = async (format: string): Promise<string> =>
+      (await exec('tmux', ['-L', t.paths.tmuxSocket, 'display-message', '-p', '-t', '=pw-m:', format], { env: t.env })).stdout.trim()
+    try {
+      await waitFor(async () => out.includes('hello world'), 8000, 'the pane on screen')
+      // Press on the first column of the first line, drag to the twelfth, release (SGR mouse reports).
+      a.write('\x1b[<0;1;1M')
+      a.write('\x1b[<32;6;1M')
+      a.write('\x1b[<32;12;1M')
+      a.write('\x1b[<0;12;1m')
+      const copied = `\x1b]52;;${Buffer.from('hello world').toString('base64')}\x07`
+      await waitFor(async () => out.includes(copied), 8000, 'the clipboard write')
+      expect(await pane('#{pane_in_mode} #{selection_present}')).toBe('1 1')
+      a.write('typed\r')
+      await waitFor(async () => (await t.tmux.capturePane('pw-m')).includes('typed'), 8000, 'the key reaching the program')
+      expect(await pane('#{pane_in_mode}')).toBe('0')
+    } finally {
+      a.close()
+    }
+  })
+
+  test('reloadConfig: a running server takes the config file as it is now; with no server it does nothing', async () => {
+    await t.tmux.reloadConfig()
+    expect(await t.tmux.listSessions()).toEqual([])
+    await t.tmux.newSession({ name: 'pw-r', cwd: t.tmp, argv: ['sleep', '30'] })
+    await appendFile(t.paths.tmuxConf, '\nset -g @pitwall-reloaded yes\n')
+    await t.tmux.reloadConfig()
+    const r = await exec('tmux', ['-L', t.paths.tmuxSocket, 'show-options', '-gv', '@pitwall-reloaded'], { env: t.env })
+    expect(r.stdout.trim()).toBe('yes')
   })
 })

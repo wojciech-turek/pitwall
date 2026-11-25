@@ -112,6 +112,15 @@ export class Tmux {
     return { file: this.bin, args: ['-u', ...this.baseArgs(), 'attach-session', '-t', `=${name}`] }
   }
 
+  /**
+   * Applies the config file to a server that is already running (one reads it only when it starts, and it outlives
+   * the app: without this, a changed config would reach nobody until every session had ended). Nothing with no server.
+   */
+  async reloadConfig(): Promise<void> {
+    if ((await this.listSessions()).length === 0) return
+    await this.run(['source-file', this.o.confPath])
+  }
+
   async killServer(): Promise<void> {
     await this.run(['kill-server'])
   }

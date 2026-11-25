@@ -2,6 +2,13 @@
 
 All notable changes to Pitwall are listed here, newest first. Pitwall shows these notes when an update is available, before you download it.
 
+## [0.5.4] - 2026-11-25
+
+### Fixed
+
+- Selecting text with the mouse in a terminal (the Shell tab above all) did nothing: the highlight vanished as soon as you let go, and nothing reached the clipboard. Text you drag over, double-click or triple-click is now copied when you let go and stays highlighted until you click or press a key. That key is typed as usual, also when you had scrolled back.
+- Sessions that were already running when you update get terminal setting changes like this one at once, without being restarted.
+
 ## [0.5.3] - 2026-11-20
 
 ### Fixed

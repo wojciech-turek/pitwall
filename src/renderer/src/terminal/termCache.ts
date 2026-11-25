@@ -5,6 +5,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { ClipboardAddon } from '@xterm/addon-clipboard'
 import type { TermKind } from '@shared/types'
 import { shouldPassToApp } from './keys'
+import { clipboardProvider } from './clipboard'
 import { plainText } from './plain-text'
 import { TERMINAL_THEME } from './theme'
 import { DEFAULT_SETTINGS } from '@shared/types'
@@ -89,7 +90,7 @@ export function getTerminal(sessionId: string, kind: TermKind): Entry {
   const fit = new FitAddon()
   term.loadAddon(fit)
   term.loadAddon(new WebLinksAddon((_e, uri) => { void window.pitwall.openExternal(uri).catch(() => {}) }))
-  term.loadAddon(new ClipboardAddon())
+  term.loadAddon(new ClipboardAddon(undefined, clipboardProvider(navigator.clipboard)))
   term.attachCustomKeyEventHandler((e) => !shouldPassToApp(e, { hasSelection: term.hasSelection() }))
   const entry: Entry = { term, fit, opened: false, rendered: false, reopenOnKey: false }
   term.onData((data) => {
